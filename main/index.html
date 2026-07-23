@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLE Lock S3 — этап 3</title>
+<style>body{font-family:Arial,sans-serif;max-width:760px;margin:32px auto;padding:0 16px;line-height:1.5}code{background:#eee;padding:2px 5px}section{border:1px solid #ddd;border-radius:10px;padding:16px;margin:16px 0}</style>
+</head>
+<body>
+<h1>BLE Lock S3 — этап 3</h1>
+<section>
+<p>Рабочий веб-интерфейс встроен строкой <code>INDEX_HTML</code> в файл <code>web_ui.c</code>.</p>
+<p>ESP32-S3 подключается к сети <b>Cisco</b> в режиме STA и получает IP по DHCP. Точка доступа устройством не создаётся.</p>
+</section>
+<section>
+<h2>Бипер</h2>
+<p>GPIO назначается через веб-интерфейс и сохраняется в NVS. Начальное значение — GPIO4.</p>
+<p>Управление активным нулём: уровень 0 включает звук, уровень 1 выключает.</p>
+</section>
+</body>
+</html>

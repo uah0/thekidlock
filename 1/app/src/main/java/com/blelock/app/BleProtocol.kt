@@ -1,0 +1,21 @@
+package com.blelock.app
+
+import android.os.ParcelUuid
+import java.util.UUID
+
+object BleProtocol {
+    const val DEVICE_NAME = "BLE Lock"
+
+    val SERVICE_UUID: UUID = UUID.fromString("6f4f0001-9a7b-4c21-8d32-5e6f708192a3")
+    val INFO_UUID: UUID = UUID.fromString("6f4f0002-9a7b-4c21-8d32-5e6f708192a3")
+    val COMMAND_UUID: UUID = UUID.fromString("6f4f0003-9a7b-4c21-8d32-5e6f708192a3")
+    val STATUS_UUID: UUID = UUID.fromString("6f4f0004-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_CONFIG_UUID: UUID = UUID.fromString("6f4f0006-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_STATE_UUID: UUID = UUID.fromString("6f4f0007-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_BONDS_UUID: UUID = UUID.fromString("6f4f0008-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_CONTROL_UUID: UUID = UUID.fromString("6f4f0009-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_EVENTS_UUID: UUID = UUID.fromString("6f4f000a-9a7b-4c21-8d32-5e6f708192a3")
+    val PHONE_NAME_UUID: UUID = UUID.fromString("6f4f000b-9a7b-4c21-8d32-5e6f708192a3")
+    val SERVICE_PARCEL_UUID = ParcelUuid(SERVICE_UUID)
+    val OPEN_COMMAND: ByteArray = "OPEN".toByteArray(Charsets.US_ASCII)
+}

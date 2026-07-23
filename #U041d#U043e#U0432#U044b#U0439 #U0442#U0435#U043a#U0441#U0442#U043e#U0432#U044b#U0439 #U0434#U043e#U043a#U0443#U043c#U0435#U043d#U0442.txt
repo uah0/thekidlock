@@ -1,0 +1,5 @@
+idf.py -p COM29 flash
+
+Get-ChildItem -Recurse -File | ForEach-Object { $_.LastWriteTime = Get-Date }
+
+idf.py build

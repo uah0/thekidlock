@@ -1,0 +1,26 @@
+﻿# Gradle caches
+.gradle/
+**/.gradle/
+.gradle-project/
+**/.gradle-project/
+
+# Build results
+build/
+**/build/
+out/
+**/out/
+
+# Android Studio
+.idea/
+*.iml
+local.properties
+
+# Generated application files
+*.apk
+*.aab
+
+# OS files
+Thumbs.db
+.DS_Store
+
+**/.gradle-project/
