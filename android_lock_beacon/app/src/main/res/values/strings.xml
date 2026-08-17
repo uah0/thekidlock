@@ -26,7 +26,7 @@
     <string name="current_rssi_label">Текущий сигнал</string>
     <string name="esp_open_rssi_threshold">RSSI открытия (ESP), dBm (например -68)</string>
     <string name="esp_hold_rssi_threshold">RSSI удержания (ESP), dBm (например -78)</string>
-    <string name="admin_long_open">Таймер длительного открытия, мс</string>
+    <string name="admin_long_open">Таймер длительного открытия, мин</string>
     <string name="admin_timer_a">Таймер A, мс</string>
     <string name="admin_timer_b">Таймер Б выхода из жёлтого, с</string>
     <string name="admin_lock_gpio">GPIO управления замком</string>

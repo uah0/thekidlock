@@ -151,7 +151,14 @@ class MainActivity : Activity() {
                 }
                 espOpenRssiField.setText(fields[0])
                 espHoldRssiField.setText(fields[1])
-                adminLongOpen.setText(fields[2])
+                val longOpenMs = fields[2].toLongOrNull()
+                val longOpenMinutes = if (longOpenMs == null || longOpenMs <= 0L) {
+                    0L
+                } else {
+                    ((longOpenMs + LONG_OPEN_MINUTE_MS - 1L) / LONG_OPEN_MINUTE_MS)
+                        .coerceAtMost(MAX_LONG_OPEN_MINUTES)
+                }
+                adminLongOpen.setText(longOpenMinutes.toString())
                 adminTimerA.setText(fields[3])
                 adminTimerB.setText(fields[4])
                 adminLockGpio.setText(fields[5])
@@ -161,7 +168,11 @@ class MainActivity : Activity() {
                     ?: ADV_TX_POWER_VALUES.indexOf(DEFAULT_ADV_TX_POWER_DBM)
                 adminAdvTxPower.setSelection(powerIndex)
                 adminAdvTxPowerValue.text = ADV_TX_POWER_LABELS.getOrElse(powerIndex) { "" }
+                serviceMenuRequested = true
+                adminModeAvailable = true
+                adminContainer.visibility = View.VISIBLE
                 appendLog("Настройки замка прочитаны")
+                repository.readAdminBonds()
                 swipeRefresh.isRefreshing = false
             }
 
@@ -367,7 +378,10 @@ class MainActivity : Activity() {
         adminLongOpen = adminNumberField(false)
         adminTimerA = adminNumberField(false)
         adminTimerB = adminNumberField(false)
-        addRow(timersCard, stepperRow(getString(R.string.admin_long_open), adminLongOpen, 0, 10_000, 100))
+        addRow(timersCard, stepperRow(
+            getString(R.string.admin_long_open), adminLongOpen,
+            0, MAX_LONG_OPEN_MINUTES, 1
+        ))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_a), adminTimerA, 0, 10_000, 100))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_b), adminTimerB, 0, 120, 1))
         adminContainer.addView(timersCard, fullWidth())
@@ -867,7 +881,10 @@ class MainActivity : Activity() {
     private fun saveAdminConfig() {
         val values = listOf(
             espOpenRssiField.text.toString(), espHoldRssiField.text.toString(),
-            adminLongOpen.text.toString(), adminTimerA.text.toString(),
+            adminLongOpen.text.toString().toLongOrNull()
+                ?.coerceIn(0L, MAX_LONG_OPEN_MINUTES)
+                ?.times(LONG_OPEN_MINUTE_MS)
+                ?.toString() ?: "", adminTimerA.text.toString(),
             adminTimerB.text.toString(),
             adminLockGpio.text.toString()
         )
@@ -963,6 +980,8 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val LONG_OPEN_MINUTE_MS = 60_000L
+        private const val MAX_LONG_OPEN_MINUTES = 60L
         private const val REQUEST_BLE_PERMISSIONS = 100
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L
         private const val SERVICE_RESUME_DELAY_MS = 700L

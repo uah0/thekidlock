@@ -824,8 +824,9 @@ pairing отклоняется без автоматического удале�
 
 # Интеграция ULP-контроллера замка (17.08.2026)
 
-- Исходники `ulp_lock_controller/ulp/main.c`, `shared_state.h` и конфигурация
-  ULP RISC-V подключены к основной ESP-IDF-сборке через `ulp_embed_binary`.
+- Исходники ULP RISC-V перенесены в `main/ulp/`: `main.c`, `shared_state.h` и
+  `experiment_config.h`; основная ESP-IDF-сборка подключает их через
+  `ulp_embed_binary`.
 - После инициализации ULP владеет GPIO8 (затвор MOSFET), ADC1 GPIO7/CH6
   (SENSE) и ADC1 GPIO5/CH4 (VBAT). Основная программа больше не переключает
   GPIO8 и не читает эти ADC-каналы.
