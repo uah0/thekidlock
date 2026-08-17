@@ -466,6 +466,7 @@ class BleRepository(
         gatt?.readCharacteristic(characteristic)
     }
     fun readAdminBonds() = readAdmin(BleProtocol.ADMIN_BONDS_UUID, "список телефонов")
+    fun writeCurrentPhoneName() = writePhoneName()
     fun readAdminEvents() = readAdmin(BleProtocol.ADMIN_EVENTS_UUID, "журнал событий")
     fun allowRegistration() = writeAdminControl("REGISTER")
     fun deleteBond(address: String) {
@@ -694,7 +695,6 @@ class BleRepository(
                     if (adminProbePending) {
                         adminProbePending = false
                         setAdminAvailability(true)
-                        handler.post { writePhoneName() }
                     }
                 }
                 BleProtocol.ADMIN_BONDS_UUID -> listener.onAdminBonds(text)

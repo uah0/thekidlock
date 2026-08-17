@@ -28,7 +28,7 @@ static esp_err_t init_nvs(void)
 
 static esp_err_t configuration_start(void)
 {
-    ble_phone_set_registration_mode(true);
+    ble_phone_allow_registration();
     led_set_configuration(true);
     ap_mode_set_configuration(true);
     event_log_add("Режим настройки BLE включён");

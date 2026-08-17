@@ -156,7 +156,7 @@ static esp_err_t bonds_get(httpd_req_t *req)
 {
     ble_phone_bond_t bonds[BLE_PHONE_MAX_BONDS];
     size_t count = ble_phone_get_bonds(bonds, BLE_PHONE_MAX_BONDS);
-    char json[1024];
+    char json[2048];
     size_t pos = snprintf(json, sizeof(json), "[");
     for (size_t i = 0; i < count; i++) {
         pos += snprintf(json + pos, sizeof(json) - pos,

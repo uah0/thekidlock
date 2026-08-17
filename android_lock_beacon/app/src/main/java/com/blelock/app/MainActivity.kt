@@ -26,6 +26,7 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.widget.AdapterView
 import android.widget.Button
 import android.widget.EditText
@@ -186,7 +187,10 @@ class MainActivity : Activity() {
             }
 
             override fun onAdminBonds(value: String) {
-                runOnUiThread { renderBondList(value) }
+                runOnUiThread {
+                    renderBondList(value)
+                    repository.writeCurrentPhoneName()
+                }
             }
 
         })
@@ -474,10 +478,22 @@ class MainActivity : Activity() {
         }
         return FrameLayout(this).apply {
             setBackgroundColor(getColor(R.color.screen_background))
+            setOnApplyWindowInsetsListener { view, insets ->
+                val systemBars = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    insets.getInsets(WindowInsets.Type.systemBars())
+                } else {
+                    null
+                }
+                val topInset = systemBars?.top ?: insets.systemWindowInsetTop
+                val bottomInset = systemBars?.bottom ?: insets.systemWindowInsetBottom
+                view.setPadding(0, topInset, 0, bottomInset)
+                insets
+            }
             addView(swipeRefresh, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             ))
+            post { requestApplyInsets() }
         }
     }
 
@@ -987,7 +1003,7 @@ class MainActivity : Activity() {
         private const val SERVICE_RESUME_DELAY_MS = 700L
         private const val MANUAL_CONNECT_DELAY_MS = 1_500L
         private const val SWIPE_REFRESH_TIMEOUT_MS = 4_000L
-        private const val MAX_BONDED_KEYS = 3
+        private const val MAX_BONDED_KEYS = 20
         private const val DEFAULT_ADV_TX_POWER_DBM = 0
         private val ADV_TX_POWER_VALUES = intArrayOf(-12, -9, -6, -3, 0, 3, 6, 9)
         private val ADV_TX_POWER_LABELS = arrayOf(

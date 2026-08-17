@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 
-#define BLE_PHONE_MAX_BONDS 10
+#define BLE_PHONE_MAX_BONDS 20
 #define BLE_PHONE_NAME_MAX_LEN 48
 
 typedef struct {

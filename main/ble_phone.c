@@ -24,7 +24,7 @@
 
 #define BLE_PHONE_NAME "BLE Lock"
 #define REGISTRATION_WINDOW_US (60LL * 1000000LL)
-#define MAX_BONDED_PHONES 10
+#define MAX_BONDED_PHONES 20
 #define BOND_NAMES_NVS_NS "ble_names"
 #define OWNER_NVS_NS "ble_owner"
 #define OWNER_NVS_KEY "identity"
@@ -380,8 +380,7 @@ static int append_value(struct os_mbuf *om, const void *value, size_t len)
 static bool connection_is_admin(uint16_t conn_handle, bool claim_if_unset)
 {
     struct ble_gap_conn_desc desc;
-    if (!ap_mode_is_configuration() ||
-        ble_gap_conn_find(conn_handle, &desc) != 0 ||
+    if (ble_gap_conn_find(conn_handle, &desc) != 0 ||
         !desc.sec_state.encrypted || !desc.sec_state.bonded) {
         return false;
     }
@@ -481,9 +480,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
     }
 
     if (characteristic >= CHR_ADMIN_CONFIG && characteristic <= CHR_ADMIN_EVENTS) {
-        bool claim_owner = characteristic == CHR_ADMIN_STATE &&
-                           ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR;
-        if (!connection_is_admin(conn_handle, claim_owner)) {
+        if (!connection_is_admin(conn_handle, false)) {
             return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
         }
         if (characteristic == CHR_ADMIN_CONFIG && ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
@@ -548,7 +545,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
         if (characteristic == CHR_ADMIN_BONDS && ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
             event_log_add("BLE admin: чтение списка bonds");
             ble_phone_bond_t bonds[BLE_PHONE_MAX_BONDS];
-            char value[768];
+            char value[2048];
             size_t count = ble_phone_get_bonds(bonds, BLE_PHONE_MAX_BONDS);
             size_t pos = 0;
             for (size_t i = 0; i < count; i++) {
@@ -576,8 +573,12 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
                 return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             }
             if (strcmp(command, "REGISTER") == 0) {
+                if (!ap_mode_is_configuration()) {
+                    event_log_add("BLE admin: REGISTER отклонён вне синего режима");
+                    return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+                }
                 event_log_add("BLE admin: команда REGISTER");
-                ble_phone_set_registration_mode(true);
+                ble_phone_allow_registration();
                 return 0;
             }
             if (strcmp(command, "DELETE_ALL") == 0) {
@@ -705,7 +706,7 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                     return 0;
                 }
                 if (!bonded_peer && bond_count >= MAX_BONDED_PHONES) {
-                    event_log_add("BLE security: лимит 10 bonds, удалите телефон через Web UI");
+                    event_log_add("BLE security: лимит 20 bonds, удалите телефон через Web UI");
                     ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
                     return 0;
                 }
@@ -754,6 +755,20 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                                       !s_peer_was_bonded && ap_mode_is_configuration();
                 if (disconnect_new_bond) s_peer_was_bonded = true;
                 portEXIT_CRITICAL(&s_connection_lock);
+                if (disconnect_new_bond) {
+                    ble_addr_t owner;
+                    esp_err_t owner_err = owner_load(&owner);
+                    if (owner_err == ESP_ERR_NVS_NOT_FOUND) {
+                        if (owner_save(&desc.peer_id_addr) == ESP_OK) {
+                            char address[18];
+                            address_to_string(&desc.peer_id_addr, address);
+                            event_log_add("BLE owner назначен при первом pairing: %s",
+                                          address);
+                        } else {
+                            event_log_add("BLE owner: ошибка сохранения владельца");
+                        }
+                    }
+                }
                 if (disconnect_new_bond &&
                     xTaskCreate(disconnect_after_bond_task, "ble_bond_done", 3072,
                                 (void *)(uintptr_t)event->enc_change.conn_handle,
