@@ -1,0 +1,46 @@
+#pragma once
+
+// Change only this value for the next timing experiment.
+// 0: known conservative baseline, 500 ms between ULP wakeups
+// 1: 200 ms timer period
+// 2: 100 ms timer period
+// 3: 50 ms timer period
+// 4: 50 ms timer period, 100 ms off-guard
+// 5: 500 ms timer period, 100 ms off-guard
+// 6: 50 ms timer period, 25 ms off-guard
+// 7: 50 ms timer period, 10 ms off-guard
+// 8: 40 ms timer period, 10 ms off-guard
+#define ULP_EXPERIMENT_PROFILE 8
+
+#if ULP_EXPERIMENT_PROFILE == 0
+#define ULP_EXPERIMENT_PERIOD_US 500000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 50000U
+#elif ULP_EXPERIMENT_PROFILE == 1
+#define ULP_EXPERIMENT_PERIOD_US 200000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 50000U
+#elif ULP_EXPERIMENT_PROFILE == 2
+#define ULP_EXPERIMENT_PERIOD_US 100000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 50000U
+#elif ULP_EXPERIMENT_PROFILE == 3
+#define ULP_EXPERIMENT_PERIOD_US 50000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 50000U
+#elif ULP_EXPERIMENT_PROFILE == 4
+#define ULP_EXPERIMENT_PERIOD_US 50000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 100000U
+#elif ULP_EXPERIMENT_PROFILE == 5
+#define ULP_EXPERIMENT_PERIOD_US 500000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 100000U
+#elif ULP_EXPERIMENT_PROFILE == 6
+#define ULP_EXPERIMENT_PERIOD_US 50000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 25000U
+#elif ULP_EXPERIMENT_PROFILE == 7
+#define ULP_EXPERIMENT_PERIOD_US 50000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 10000U
+#elif ULP_EXPERIMENT_PROFILE == 8
+#define ULP_EXPERIMENT_PERIOD_US 40000U
+#define ULP_EXPERIMENT_OFF_GUARD_US 10000U
+#else
+#error "Unknown ULP_EXPERIMENT_PROFILE"
+#endif
+
+#define ULP_EXPERIMENT_PULSE_US 2000U
