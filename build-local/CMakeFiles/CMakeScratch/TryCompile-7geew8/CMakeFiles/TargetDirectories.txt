@@ -1,3 +1,0 @@
-C:/Users/User/Downloads/ble_lock_stage1/AP/build-local/CMakeFiles/CMakeScratch/TryCompile-7geew8/CMakeFiles/cmTC_e5a86.dir
-C:/Users/User/Downloads/ble_lock_stage1/AP/build-local/CMakeFiles/CMakeScratch/TryCompile-7geew8/CMakeFiles/edit_cache.dir
-C:/Users/User/Downloads/ble_lock_stage1/AP/build-local/CMakeFiles/CMakeScratch/TryCompile-7geew8/CMakeFiles/rebuild_cache.dir

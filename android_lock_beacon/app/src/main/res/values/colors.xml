@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="screen_background">#EFEFF4</color>
+    <color name="card_background">#FFFFFF</color>
+    <color name="section_header_text">#6D6D72</color>
+    <color name="divider">#DEDEE3</color>
+    <color name="primary_text">#1C1C1E</color>
+    <color name="secondary_text">#8E8E93</color>
+    <color name="accent_blue">#1565C0</color>
+    <color name="switch_track_on">#34C759</color>
+    <color name="switch_track_off">#E9E9EA</color>
+    <color name="switch_thumb">#FFFFFF</color>
+    <color name="danger_red">#FF3B30</color>
+    <color name="stepper_pill_background">#EFEFF0</color>
+    <color name="row_pressed">#E5E5EA</color>
+    <color name="row_selected">#D6E9FF</color>
+</resources>

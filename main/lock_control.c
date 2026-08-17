@@ -3,8 +3,8 @@
 #include "app_config.h"
 #include "event_log.h"
 #include "led.h"
-#include "driver/gpio.h"
 #include "esp_timer.h"
+#include "ulp_controller.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -31,15 +31,10 @@ static esp_err_t apply_state(bool open)
 {
     if (!s_initialized || !s_mutex) return ESP_ERR_INVALID_STATE;
 
-    app_config_t cfg;
-    app_config_get(&cfg);
-    int level = open ? cfg.lock_open_level : !cfg.lock_open_level;
-
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    esp_err_t err = gpio_set_level((gpio_num_t)s_gpio, level);
-    if (err == ESP_OK) {
-        s_is_open = open;
-    }
+    ulp_controller_request(open ? ULP_CMD_OPEN : ULP_CMD_CLOSE);
+    esp_err_t err = ESP_OK;
+    s_is_open = open;
     xSemaphoreGive(s_mutex);
     return err;
 }
@@ -225,24 +220,9 @@ esp_err_t lock_control_init(void)
     s_events = xQueueCreate(8, sizeof(lock_event_t));
     if (!s_events) return ESP_ERR_NO_MEM;
 
-    app_config_t cfg;
-    app_config_get(&cfg);
-    int closed_level = !cfg.lock_open_level;
-    s_gpio = cfg.lock_gpio;
+    s_gpio = APP_LOCK_GPIO;
 
-    /* Preload the safe (energized/locked) level before enabling the output. */
-    gpio_set_level((gpio_num_t)s_gpio, closed_level);
-    gpio_config_t io = {
-        .pin_bit_mask = 1ULL << s_gpio,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    esp_err_t err = gpio_config(&io);
-    if (err != ESP_OK) return err;
-    err = gpio_set_level((gpio_num_t)s_gpio, closed_level);
-    if (err != ESP_OK) return err;
+    ulp_controller_request(ULP_CMD_CLOSE);
 
     s_is_open = false;
     s_initialized = true;
@@ -259,36 +239,9 @@ esp_err_t lock_control_init(void)
 
 esp_err_t lock_control_set_gpio(int gpio_num)
 {
-    if (!GPIO_IS_VALID_OUTPUT_GPIO(gpio_num)) return ESP_ERR_INVALID_ARG;
+    if (gpio_num != APP_LOCK_GPIO) return ESP_ERR_INVALID_ARG;
     if (!s_initialized || !s_mutex) return ESP_ERR_INVALID_STATE;
-    if (gpio_num == s_gpio) return ESP_OK;
-
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-
-    app_config_t cfg;
-    app_config_get(&cfg);
-    int level = s_is_open ? cfg.lock_open_level : !cfg.lock_open_level;
-
-    /* Release the old pin safely, then move the same logical level to the
-     * new pin so the physical lock state doesn't change mid-switch. */
-    gpio_set_level((gpio_num_t)s_gpio, !cfg.lock_open_level);
-    gpio_reset_pin((gpio_num_t)s_gpio);
-
-    gpio_config_t io = {
-        .pin_bit_mask = 1ULL << gpio_num,
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    esp_err_t err = gpio_config(&io);
-    if (err == ESP_OK) {
-        s_gpio = gpio_num;
-        err = gpio_set_level((gpio_num_t)s_gpio, level);
-    }
-
-    xSemaphoreGive(s_mutex);
-    return err;
+    return gpio_num == s_gpio ? ESP_OK : ESP_ERR_INVALID_ARG;
 }
 
 esp_err_t lock_request_open(void)

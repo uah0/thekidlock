@@ -34,7 +34,7 @@ static bool values_valid(int phone_rssi, int phone_rssi_hold, uint32_t long_open
            timer_a_ms <= APP_TIMER_A_MS_MAX &&
            timer_b_s <= APP_TIMER_B_S_MAX &&
            (timer_a_ms == 0 || long_open_ms > timer_a_ms) &&
-           GPIO_IS_VALID_OUTPUT_GPIO(lock_gpio);
+           lock_gpio == APP_LOCK_GPIO;
 }
 
 esp_err_t app_config_init(void)
@@ -50,25 +50,23 @@ esp_err_t app_config_init(void)
     uint32_t long_open_ms = s_cfg.long_open_ms;
     uint32_t timer_a_ms = s_cfg.timer_a_ms;
     uint32_t timer_b_s = s_cfg.timer_b_s;
-    int32_t lock_gpio = s_cfg.lock_gpio;
     uint8_t lock_open_level = s_cfg.lock_open_level;
     nvs_get_i8(h, "phone_rssi", &phone_rssi);
     nvs_get_i8(h, "phone_rssi_hold", &phone_rssi_hold);
     nvs_get_u32(h, "long_open_ms", &long_open_ms);
     nvs_get_u32(h, "timer_a_ms", &timer_a_ms);
     nvs_get_u32(h, "timer_b_s", &timer_b_s);
-    nvs_get_i32(h, "lock_gpio", &lock_gpio);
     nvs_get_u8(h, "lock_open", &lock_open_level);
     nvs_close(h);
 
     if (values_valid(phone_rssi, phone_rssi_hold, long_open_ms, timer_a_ms, timer_b_s,
-                     lock_gpio)) {
+                     APP_LOCK_GPIO)) {
         s_cfg.phone_rssi_threshold = phone_rssi;
         s_cfg.phone_rssi_hold_threshold = phone_rssi_hold;
         s_cfg.long_open_ms = long_open_ms;
         s_cfg.timer_a_ms = timer_a_ms;
         s_cfg.timer_b_s = timer_b_s;
-        s_cfg.lock_gpio = lock_gpio;
+        s_cfg.lock_gpio = APP_LOCK_GPIO;
         s_cfg.lock_open_level = lock_open_level != 0;
     }
     return ESP_OK;

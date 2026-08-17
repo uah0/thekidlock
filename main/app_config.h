@@ -10,7 +10,7 @@
 #define APP_CONFIG_AP_SSID              "lock"
 #define APP_CONFIG_AP_PASSWORD          "123456798"
 #define APP_CONFIG_BUTTON_GPIO          0
-#define APP_LOCK_GPIO                    5
+#define APP_LOCK_GPIO                    8
 #define APP_LOCK_DEFAULT_OPEN_LEVEL      0
 #define APP_RGB_LED_GPIO                 48
 

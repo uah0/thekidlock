@@ -5,6 +5,7 @@
 #include "ble_phone.h"
 #include "led.h"
 #include "lock_control.h"
+#include "ulp_controller.h"
 #include "event_log.h"
 #include "esp_err.h"
 #include "esp_log.h"
@@ -100,6 +101,7 @@ void app_main(void)
     ESP_ERROR_CHECK(app_config_init());
     ESP_ERROR_CHECK(led_init());
     led_set_state(LED_STATE_BOOT);
+    ESP_ERROR_CHECK(ulp_controller_init());
     ESP_ERROR_CHECK(lock_control_init());
     ESP_ERROR_CHECK(ble_phone_init());
     s_ble_initialized = true;
