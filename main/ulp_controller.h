@@ -9,3 +9,27 @@ esp_err_t ulp_controller_init(void);
 void ulp_controller_request(ulp_command_t command);
 bool ulp_controller_read_state(lock_state_t *state, uint32_t *faults,
                                uint32_t *events);
+
+typedef struct {
+    lock_state_t lock_state;
+    lock_fsm_state_t fsm_state;
+    plate_state_t plate_state;
+    uint32_t fault_flags;
+    uint32_t event_flags;
+    int32_t baseline_raw;
+    int32_t vbat_raw;
+    int32_t sense_raw;
+    int32_t delta_raw;
+    uint32_t normalized_feature;
+    uint32_t coil_current_raw;
+    uint32_t measurement_counter;
+    uint32_t pulse_actual_us;
+    uint32_t close_verify_state;
+    uint32_t close_verify_feature;
+    int32_t close_verify_delta_raw;
+    uint32_t close_attempt_counter;
+    uint32_t command_ack_sequence;
+    uint32_t event_sequence;
+} ulp_diagnostics_t;
+
+bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out);

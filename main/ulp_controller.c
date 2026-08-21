@@ -132,3 +132,39 @@ bool ulp_controller_read_state(lock_state_t *state, uint32_t *faults,
     }
     return false;
 }
+
+bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
+{
+    if (!s_initialized || !out) return false;
+    for (int tries = 0; tries < 4; tries++) {
+        uint32_t before = ulp_sequence;
+        if (before & 1u) continue;
+        ulp_diagnostics_t snapshot = {
+            .lock_state = (lock_state_t)ulp_lock_state,
+            .fsm_state = (lock_fsm_state_t)ulp_fsm_state,
+            .plate_state = (plate_state_t)ulp_plate_state,
+            .fault_flags = ulp_fault_flags,
+            .event_flags = ulp_event_flags,
+            .baseline_raw = ulp_baseline_raw,
+            .vbat_raw = ulp_vbat_raw,
+            .sense_raw = ulp_sense_raw,
+            .delta_raw = ulp_delta_raw,
+            .normalized_feature = ulp_normalized_feature,
+            .coil_current_raw = ulp_coil_current_raw,
+            .measurement_counter = ulp_measurement_counter,
+            .pulse_actual_us = ulp_pulse_actual_us,
+            .close_verify_state = ulp_close_verify_state,
+            .close_verify_feature = ulp_close_verify_feature,
+            .close_verify_delta_raw = ulp_close_verify_delta_raw,
+            .close_attempt_counter = ulp_close_attempt_counter,
+            .command_ack_sequence = ulp_command_ack_sequence,
+            .event_sequence = ulp_event_sequence,
+        };
+        uint32_t after = ulp_sequence;
+        if (before == after && !(after & 1u)) {
+            *out = snapshot;
+            return true;
+        }
+    }
+    return false;
+}

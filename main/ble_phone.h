@@ -22,6 +22,7 @@ typedef struct {
 } ble_phone_status_t;
 
 esp_err_t ble_phone_init(void);
+esp_err_t ble_phone_apply_tx_power(void);
 void ble_phone_get_status(ble_phone_status_t *out);
 void ble_phone_allow_registration(void);
 void ble_phone_set_registration_mode(bool enabled);

@@ -3,10 +3,12 @@
     <string name="app_name">BLE Lock</string>
     <string name="app_title">BLE Lock</string>
     <string name="grant_permissions">Выдать разрешения</string>
-    <string name="auto_open">Включить управление замком</string>
-    <string name="connect_rssi_threshold">Порог RSSI для подключения</string>
-    <string name="disconnect_rssi_threshold">Порог RSSI для отключения</string>
-    <string name="live_rssi_label">Текущий сигнал ESP</string>
+    <string name="local_hotspot_status">Локальная точка доступа не запущена</string>
+    <string name="open_esp_web_ui">Подключиться к Web UI</string>
+    <string name="auto_open">Автоматический режим</string>
+    <string name="manual_open">Открыть</string>
+    <string name="manual_keep_open">Не закрывать</string>
+    <string name="connect_admin">Подключить администратора</string>
     <string name="lock_signal">%1$d dBm</string>
     <string name="lock_signal_unavailable">—</string>
     <string name="battery_notice_title">Настройка работы в фоне</string>
@@ -16,6 +18,25 @@
     <string name="autostart_notice_message">Чтобы BLE Lock продолжал работать после закрытия приложения, найдите BLE Lock в списке и разрешите автозапуск.</string>
     <string name="autostart_notice_open_settings">Открыть автозапуск</string>
     <string name="admin_title">Настройки замка по BLE</string>
+    <string name="phone_service_title">Сервис телефона</string>
+    <string name="phone_service_note">Настройки замка, Wi-Fi и OTA перенесены в Web UI ESP32. Здесь остаются функции телефона.</string>
+    <string name="firmware_version">Прошивка ESP32: %1$s</string>
+    <string name="firmware_version_unknown">Прошивка ESP32: неизвестна</string>
+    <string name="app_version_timestamp">Версия приложения от %1$s</string>
+    <string name="app_version_release">Версия приложения %1$s (%2$d)</string>
+    <string name="privacy_policy_button">Политика конфиденциальности</string>
+    <string name="privacy_policy_title">Политика конфиденциальности BLE Lock</string>
+    <string name="privacy_policy_text">Приложение BLE Lock управляет совместимым замком ESP32 через Bluetooth Low Energy и локальную сеть.
+
+Приложение запрашивает доступ к Bluetooth для поиска, подключения и обмена данными с замком. На Android 13 и выше оно также запрашивает доступ к ближайшим устройствам Wi-Fi, когда пользователь запускает локальную точку доступа для настройки замка. Эти разрешения используются только для функций, явно запущенных пользователем или необходимых для автоматического режима замка.
+
+Приложение не отправляет данные пользователя на сервер разработчика, не использует рекламные и аналитические службы и не продаёт данные. Настройки приложения хранятся локально на телефоне. Настройки замка, переданные по защищённому BLE-соединению, хранятся в самом замке.
+
+При открытии Web UI приложение передаёт браузеру локальный адрес ESP32. Содержимое локальной сети и пароль Wi-Fi не передаются разработчику приложения.
+
+Удаление приложения удаляет его локальные данные Android. Данные, ранее сохранённые в ESP32, удаляются через функции самого замка.
+
+По вопросам конфиденциальности используйте контакт разработчика, указанный на странице приложения в Google Play.</string>
     <string name="section_access">ДОСТУП</string>
     <string name="section_rssi">RSSI</string>
     <string name="section_timers">ТАЙМЕРЫ</string>
@@ -23,7 +44,6 @@
     <string name="section_actions">ДЕЙСТВИЯ</string>
     <string name="section_bonds">ЗАРЕГИСТРИРОВАННЫЕ ТЕЛЕФОНЫ</string>
     <string name="section_danger">ОПАСНАЯ ЗОНА</string>
-    <string name="current_rssi_label">Текущий сигнал</string>
     <string name="esp_open_rssi_threshold">RSSI открытия (ESP), dBm (например -68)</string>
     <string name="esp_hold_rssi_threshold">RSSI удержания (ESP), dBm (например -78)</string>
     <string name="admin_long_open">Таймер длительного открытия, мин</string>
@@ -32,6 +52,13 @@
     <string name="admin_lock_gpio">GPIO управления замком</string>
     <string name="admin_open_level">Активный уровень GPIO для открытия: HIGH</string>
     <string name="admin_adv_tx_power">Мощность BLE-маяка замка</string>
+    <string name="section_wifi_ota">WI-FI И ОБНОВЛЕНИЕ ПРОШИВКИ</string>
+    <string name="ota_wifi_ssid">Имя домашней Wi-Fi сети</string>
+    <string name="ota_wifi_password">Пароль Wi-Fi</string>
+    <string name="ota_url">HTTPS URL прошивки</string>
+    <string name="ota_read">Прочитать Wi-Fi/OTA настройки</string>
+    <string name="ota_save">Сохранить Wi-Fi/OTA настройки</string>
+    <string name="ota_start">Запустить OTA через Wi-Fi</string>
     <string name="admin_read">Прочитать настройки</string>
     <string name="admin_save">Сохранить настройки</string>
     <string name="admin_bonds_title">Зарегистрированные телефоны</string>
@@ -39,8 +66,9 @@
     <string name="admin_free_keys">Осталось свободных ключей: %1$d</string>
     <string name="admin_delete_bond">Удалить телефон</string>
     <string name="admin_delete_all">Удалить все телефоны</string>
-    <string name="admin_reboot">Выход</string>
-    <string name="register_phone">Сервис</string>
+    <string name="admin_reboot">Перезагрузить ESP32</string>
+    <string name="admin_close">Закрыть настройки</string>
+    <string name="register_phone">Настройки замка</string>
     <string name="bluetooth_unavailable">BLE на этом телефоне недоступен</string>
     <string name="permissions_required">Нужны разрешения Bluetooth</string>
     <string name="bluetooth_disabled">Bluetooth выключен</string>

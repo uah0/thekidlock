@@ -20,24 +20,29 @@ import android.os.Build
 import android.os.Handler
 import android.util.Log
 import android.os.Looper
-import android.os.SystemClock
+import android.util.Base64
+import java.util.zip.CRC32
 
 @SuppressLint("MissingPermission")
 class BleRepository(
     private val context: Context,
     private val listener: Listener,
-    private val controlOnly: Boolean = false
-) {
+    private var controlOnly: Boolean = false
+) : BleClient {
     interface Listener {
         fun onBleState(state: State, detail: String)
         fun onConnectionLost() {}
         fun onLockData(info: String?, status: String?)
         fun onSignalRssi(rssi: Int?) {}
         fun onAdminConfig(value: String) {}
+        fun onAdminSchema(value: String) {}
+        fun onAdminSchemaError(detail: String) {}
         fun onAdminAvailability(available: Boolean) {}
         fun onAdminState(value: String) {}
         fun onAdminBonds(value: String) {}
         fun onAdminEvents(value: String) {}
+        fun onOtaConfig(value: String) {}
+        fun onOtaStatus(value: String) {}
     }
 
     enum class State {
@@ -53,9 +58,20 @@ class BleRepository(
     private var state = State.IDLE
     private var info: String? = null
     private var status: String? = null
+    private var pendingLockCommand = "OPEN"
 
     /** Текущее состояние подключения, доступное снаружи без изменения его. */
-    val currentState: State get() = state
+    override val currentState: State get() = state
+
+    fun setControlOnly(value: Boolean) {
+        controlOnly = value
+    }
+
+    private enum class GattOperationResult { SUCCESS, FAILED, TIMEOUT, CANCELLED }
+
+    override fun setAutomaticMode(enabled: Boolean) {
+        controlOnly = enabled
+    }
 
     /** true, если уже идёт поиск/подключение/соединение установлено — новый findAndConnect() не нужен.
      *  DEPARTED сюда не входит: это завершённое состояние («уход подтверждён»),
@@ -69,10 +85,71 @@ class BleRepository(
     /* Строка, только что отправленная в CHR_ADMIN_CONFIG, ожидающая подтверждения
      * чтением. null, когда подтверждать нечего (обычное чтение по кнопке). */
     private var pendingConfigVerification: String? = null
+    private var schemaControlPending = false
+    private var schemaChunks: Array<ByteArray?>? = null
+    private var schemaExpectedLength = 0
+    private var schemaExpectedCrc = 0L
+    private var schemaExpectedCount = 0
     private var pendingBondDevice: BluetoothDevice? = null
-    private var weakRssiStreak = 0
 
-    private var lastWeakSignalLogAt = 0L
+    private data class GattOperation(
+        val name: String,
+        val start: () -> Boolean
+    )
+
+    private val gattQueue = ArrayDeque<GattOperation>()
+    private var activeGattOperation: GattOperation? = null
+    private var activeGattTimeout: Runnable? = null
+    private var mtuHandshakeComplete = false
+
+
+    private fun enqueueGattOperation(name: String, start: () -> Boolean): Boolean {
+        if (gatt == null || lockService == null || state == State.IDLE ||
+            state == State.ERROR || state == State.DEPARTED) return false
+        gattQueue.addLast(GattOperation(name, start))
+        pumpGattQueue()
+        return true
+    }
+
+    private fun hasPendingGattOperation(name: String): Boolean =
+        activeGattOperation?.name == name || gattQueue.any { it.name == name }
+
+    private fun pumpGattQueue() {
+        if (activeGattOperation != null) return
+        val operation = gattQueue.removeFirstOrNull() ?: return
+        activeGattOperation = operation
+        if (!operation.start()) {
+            finishGattOperation(GattOperationResult.FAILED, pumpNext = false)
+            fail("Не удалось запустить GATT-операцию: ${operation.name}")
+            gattQueue.clear()
+            return
+        }
+        val timeout = Runnable {
+            if (activeGattOperation !== operation) return@Runnable
+            finishGattOperation(GattOperationResult.TIMEOUT, pumpNext = false)
+            gattQueue.clear()
+            closeGatt()
+            fail("Таймаут GATT-операции: ${operation.name}")
+        }
+        activeGattTimeout = timeout
+        handler.postDelayed(timeout, GATT_OPERATION_TIMEOUT_MS)
+    }
+
+    private fun finishGattOperation(result: GattOperationResult, pumpNext: Boolean) {
+        val operation = activeGattOperation ?: return
+        activeGattTimeout?.let(handler::removeCallbacks)
+        activeGattTimeout = null
+        activeGattOperation = null
+        Log.d(TAG, "GATT operation ${operation.name} -> $result")
+        if (pumpNext) pumpGattQueue()
+    }
+
+    private fun completeGattOperation(success: Boolean) {
+        finishGattOperation(
+            if (success) GattOperationResult.SUCCESS else GattOperationResult.FAILED,
+            pumpNext = true
+        )
+    }
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
@@ -80,24 +157,12 @@ class BleRepository(
                 handler.removeCallbacks(departureConfirmed)
                 handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
                 handler.post { listener.onSignalRssi(result.rssi) }
-                if (result.rssi >= lockSettings.connectRssiThreshold) {
-                    // Сигнал восстановился раньше, чем истекла тишина: ухода не было,
-                    // выходим из departureMode и переподключаемся сразу, а не ждём таймаут.
-                    departureMode = false
-                    stopScan()
-                    lockSettings.lockAddress = result.device.address
-                    pairOrConnect(result.device)
-                }
-                return
-            }
-            val threshold = lockSettings.connectRssiThreshold
-            if (result.rssi < threshold) {
-                handler.post { listener.onSignalRssi(result.rssi) }
-                val now = SystemClock.elapsedRealtime()
-                if (now - lastWeakSignalLogAt > WEAK_SIGNAL_LOG_INTERVAL_MS) {
-                    lastWeakSignalLogAt = now
-                    update(State.SCANNING, "Замок найден, но сигнал слабый: ${result.rssi} дБм (нужно ≥ $threshold)")
-                }
+                // Любое обнаружение маяка считается основанием для попытки
+                // подключения. Решение по RSSI принимает ESP32.
+                departureMode = false
+                stopScan()
+                lockSettings.lockAddress = result.device.address
+                pairOrConnect(result.device)
                 return
             }
             stopScan()
@@ -114,10 +179,8 @@ class BleRepository(
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             // Пассивный скан — только для живого отображения RSSI. Он присылает
             // замеры пачками (рекламные пакеты раз в 100-1000мс), и обычное
-            // дрожание RSSI внутри такой пачки может набрать WEAK_RSSI_DISCONNECT_STREAK
-            // подряд слабых замеров за доли секунды — решение об отключении
-            // намеренно принимает только evaluateConnectedRssi() из GATT-опроса
-            // (onReadRemoteRssi), у которого фиксированный шаг RSSI_POLL_INTERVAL_MS.
+            // Реклама используется только для обнаружения устройства и запуска
+            // нового цикла подключения после ухода.
             handler.post { listener.onSignalRssi(result.rssi) }
         }
 
@@ -169,6 +232,10 @@ class BleRepository(
 
     private val gattCallback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt, statusCode: Int, newState: Int) {
+            if (this@BleRepository.gatt !== gatt) {
+                Log.w(TAG, "Ignoring stale GATT connection callback")
+                return
+            }
             Log.d(TAG, "onConnectionStateChange gattHash=${System.identityHashCode(gatt)} status=$statusCode newState=$newState bondState=${gatt.device.bondState}")
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 handler.post { listener.onConnectionLost() }
@@ -192,6 +259,10 @@ class BleRepository(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, statusCode: Int) {
+            if (this@BleRepository.gatt !== gatt) {
+                Log.w(TAG, "Ignoring stale GATT services callback")
+                return
+            }
             Log.d(TAG, "onServicesDiscovered gattHash=${System.identityHashCode(gatt)} status=$statusCode bondState=${gatt.device.bondState}")
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 fail("Service discovery завершился с ошибкой: $statusCode")
@@ -202,6 +273,7 @@ class BleRepository(
                 fail("Сервис BLE Lock не найден")
                 return
             }
+            mtuHandshakeComplete = false
             /* По умолчанию ATT MTU = 23 байта (~20 байт полезной нагрузки на запись).
              * Строка admin-конфигурации (rssi, таймеры, gpio, мощность маяка) длиннее
              * этого лимита и будет молча обрезана без ошибки на некоторых стеках, если
@@ -210,13 +282,29 @@ class BleRepository(
              * спецификации BLE должен быть центральное устройство (телефон). */
             if (!gatt.requestMtu(REQUESTED_MTU)) {
                 Log.w(TAG, "requestMtu не удалось инициировать, продолжаем с MTU по умолчанию")
-                proceedAfterMtuNegotiation(gatt)
+                handler.post {
+                    if (this@BleRepository.gatt === gatt) {
+                        proceedAfterMtuNegotiation(gatt)
+                    }
+                }
             }
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, statusCode: Int) {
+            if (this@BleRepository.gatt !== gatt) {
+                Log.w(TAG, "Ignoring stale GATT MTU callback")
+                return
+            }
             Log.d(TAG, "onMtuChanged mtu=$mtu status=$statusCode")
-            proceedAfterMtuNegotiation(gatt)
+            // Android BLE callbacks are delivered from the Bluetooth binder
+            // thread. Start the next ATT operation only on the repository
+            // handler to avoid issuing readCharacteristic() from that thread.
+            val delay = if (statusCode == BluetoothGatt.GATT_SUCCESS) 0L else MTU_FALLBACK_DELAY_MS
+            handler.postDelayed({
+                if (this@BleRepository.gatt === gatt) {
+                    proceedAfterMtuNegotiation(gatt)
+                }
+            }, delay)
         }
 
         @Deprecated("Used for Android 8-12 callback compatibility")
@@ -225,6 +313,8 @@ class BleRepository(
             characteristic: BluetoothGattCharacteristic,
             statusCode: Int
         ) {
+            if (this@BleRepository.gatt !== gatt) return
+            handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             handleRead(characteristic.uuid, characteristic.value ?: byteArrayOf(), statusCode)
         }
 
@@ -234,6 +324,8 @@ class BleRepository(
             value: ByteArray,
             statusCode: Int
         ) {
+            if (this@BleRepository.gatt !== gatt) return
+            handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             handleRead(characteristic.uuid, value, statusCode)
         }
 
@@ -242,6 +334,8 @@ class BleRepository(
             characteristic: BluetoothGattCharacteristic,
             statusCode: Int
         ) {
+            if (this@BleRepository.gatt !== gatt) return
+            handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             Log.d(TAG, "onCharacteristicWrite uuid=${characteristic.uuid} status=$statusCode")
             if (characteristic.uuid == BleProtocol.ADMIN_CONFIG_UUID) {
                 if (statusCode == BluetoothGatt.GATT_SUCCESS) {
@@ -259,6 +353,15 @@ class BleRepository(
                 return
             }
             if (characteristic.uuid == BleProtocol.ADMIN_CONTROL_UUID) {
+                if (schemaControlPending) {
+                    schemaControlPending = false
+                    if (statusCode == BluetoothGatt.GATT_SUCCESS) {
+                        handler.post { readAdminSchemaChunk() }
+                    } else {
+                        schemaError("Не удалось выбрать фрагмент схемы, GATT status: $statusCode")
+                    }
+                    return
+                }
                 if (statusCode == BluetoothGatt.GATT_SUCCESS) {
                     update(State.READY, "Команда управления принята замком")
                     if (refreshBondsAfterControl) handler.post { readAdminBonds() }
@@ -268,71 +371,58 @@ class BleRepository(
                 refreshBondsAfterControl = false
                 return
             }
+            if (characteristic.uuid == BleProtocol.OTA_CONFIG_UUID) {
+                update(State.READY, if (statusCode == BluetoothGatt.GATT_SUCCESS)
+                    "Временные настройки точки доступа переданы" else
+                    "Настройки точки доступа отклонены, GATT status: $statusCode")
+                return
+            }
             if (characteristic.uuid == BleProtocol.PHONE_NAME_UUID) {
                 if (statusCode == BluetoothGatt.GATT_SUCCESS) {
                     update(State.READY, "Имя телефона сохранено")
                 } else {
                     update(State.READY, "Имя телефона не сохранено, GATT status: $statusCode")
                 }
-                handler.post { readAdminBonds() }
                 return
             }
             if (characteristic.uuid != BleProtocol.COMMAND_UUID) return
             if (statusCode == BluetoothGatt.GATT_SUCCESS) {
-                update(State.OPEN_SENT, "Команда OPEN передана замку")
+                update(State.OPEN_SENT, "Команда $pendingLockCommand передана замку")
                 handler.postDelayed({ readStatus() }, 500)
             } else {
-                fail("ESP32 отклонила OPEN, GATT status: $statusCode")
+                fail("ESP32 отклонила $pendingLockCommand, GATT status: $statusCode")
             }
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, statusCode: Int) {
+            if (this@BleRepository.gatt !== gatt) return
             val validRssi = if (statusCode == BluetoothGatt.GATT_SUCCESS) rssi else null
-            handler.post { listener.onSignalRssi(validRssi) }
-            if (validRssi != null && evaluateConnectedRssi(validRssi)) return
-            // GATT-опрос остаётся резервным источником: если фактически все 3 BLE-слота
-            // замка заняты, advertising приостанавливается (см. прошивку) и пассивный
-            // скан временно перестаёт что-либо ловить — тогда опрос подхватывает RSSI.
-            scheduleRssiPoll()
-        }
-    }
-
-    /** Проверка «слабый сигнал» — только для GATT-опроса (onReadRemoteRssi), у которого
-     *  фиксированный шаг RSSI_POLL_INTERVAL_MS. Пассивный скан сюда не попадает: он
-     *  сэмплирует слишком часто и неравномерно, чтобы «3 подряд» было надёжным сигналом
-     *  устойчивого ухудшения, а не мгновенного дребезга. Возвращает true, если сигнал
-     *  оказался настолько слабым, что соединение уже разорвано — вызывающая сторона
-     *  должна прекратить дальнейшую обработку этого замера. */
-    private fun evaluateConnectedRssi(rssi: Int): Boolean {
-        if (state != State.READY) return false
-        if (rssi < lockSettings.disconnectRssiThreshold) {
-            weakRssiStreak++
-            if (weakRssiStreak >= WEAK_RSSI_DISCONNECT_STREAK) {
-                disconnectDueToWeakSignal(rssi)
-                return true
+            handler.post {
+                completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS)
+                listener.onSignalRssi(validRssi)
+                // GATT-опрос остаётся резервным источником: если фактически все 3 BLE-слота
+                // замка заняты, advertising приостанавливается, и пассивный скан временно
+                // перестаёт что-либо ловить — тогда опрос подхватывает RSSI.
+                scheduleRssiPoll()
             }
-        } else {
-            weakRssiStreak = 0
         }
-        return false
-    }
-
-    private fun disconnectDueToWeakSignal(rssi: Int) {
-        weakRssiStreak = 0
-        closeGatt()
-        update(
-            State.IDLE,
-            "Сигнал ослаб ($rssi дБм < порога ${lockSettings.disconnectRssiThreshold} дБм), отключение"
-        )
-        handler.post { listener.onConnectionLost() }
     }
 
     private fun proceedAfterMtuNegotiation(gatt: BluetoothGatt) {
+        if (mtuHandshakeComplete) return
+        mtuHandshakeComplete = true
         if (gatt.device.bondState != BluetoothDevice.BOND_BONDED) {
             update(State.BONDING, "Запуск системного Pairing/Bonding")
             if (!gatt.device.createBond()) {
                 fail("Не удалось запустить системный Pairing/Bonding")
             }
+        } else if (controlOnly) {
+            // LOCK_INFO is READ_ENC on the ESP32 and is informational only.
+            // Do not block automatic opening on a protected metadata read;
+            // the OPEN write below remains protected and is the real
+            // encrypted-session check.
+            update(State.READY, "Замок готов к автоматическому управлению")
+            scheduleRssiPoll()
         } else {
             readInfo()
         }
@@ -348,21 +438,18 @@ class BleRepository(
         }
     }
 
-    fun findAndConnect() {
+    override fun findAndConnect() {
         closeGatt()
         departureMode = false
-        val savedAddress = lockSettings.lockAddress
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
         if (scanner == null) {
             fail("Bluetooth выключен или BLE scanner недоступен")
             return
         }
         update(State.SCANNING, "Поиск BLE Lock…")
-        val filter = if (savedAddress != null) {
-            ScanFilter.Builder().setDeviceAddress(savedAddress).build()
-        } else {
-            ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
-        }
+        // Не фильтруем по сохранённому MAC: BLE privacy может менять RPA-адрес
+        // телефона или замка. Уникальный UUID сервиса сохраняет выбор нужного замка.
+        val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
@@ -415,37 +502,56 @@ class BleRepository(
         handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
     }
 
-    fun openNow() {
+    override fun openNow() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
         val currentGatt = gatt
         if (state != State.READY || characteristic == null || currentGatt == null) {
             fail("Сначала подключитесь к зарегистрированному замку")
             return
         }
-        val started = if (Build.VERSION.SDK_INT >= 33) {
-            currentGatt.writeCharacteristic(
-                characteristic,
-                BleProtocol.OPEN_COMMAND,
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            ) == BluetoothGatt.GATT_SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.value = BleProtocol.OPEN_COMMAND
-            @Suppress("DEPRECATION")
-            currentGatt.writeCharacteristic(characteristic)
+        pendingLockCommand = "OPEN"
+        if (!write(characteristic, BleProtocol.OPEN_COMMAND, currentGatt)) {
+            fail("Не удалось запустить запись OPEN")
         }
-        if (!started) fail("Не удалось запустить запись OPEN")
     }
 
-    fun readAdminConfig() {
+    override fun forceOpenNow() {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            fail("Сначала подключитесь к зарегистрированному замку")
+            return
+        }
+        pendingLockCommand = "FORCE_OPEN"
+        if (!write(characteristic, BleProtocol.FORCE_OPEN_COMMAND, currentGatt)) {
+            fail("Не удалось запустить запись FORCE_OPEN")
+        }
+    }
+
+    override fun toggleKeepOpen() {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            fail("Сначала подключитесь к зарегистрированному замку")
+            return
+        }
+        pendingLockCommand = "KEEP_OPEN"
+        if (!write(characteristic, BleProtocol.KEEP_OPEN_COMMAND, currentGatt)) {
+            fail("Не удалось запустить запись KEEP_OPEN")
+        }
+    }
+
+    override fun readAdminConfig() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_CONFIG_UUID)
-        if (characteristic == null || gatt?.readCharacteristic(characteristic) != true) {
+        if (characteristic == null || !enqueueGattOperation("ADMIN_CONFIG") {
+                gatt?.readCharacteristic(characteristic) == true
+            }) {
             pendingConfigVerification = null
             fail("Не удалось прочитать настройки")
         }
     }
 
-    fun writeAdminConfig(value: String) {
+    override fun writeAdminConfig(value: String) {
         val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_CONFIG_UUID)
         val currentGatt = gatt
         if (state != State.READY || characteristic == null || currentGatt == null) {
@@ -460,31 +566,103 @@ class BleRepository(
     }
 
     fun readAdminState() = readAdmin(BleProtocol.ADMIN_STATE_UUID, "состояние")
-    fun pollAdminState() {
+    override fun retryAdminProbe() {
+        adminProbePending = true
+        readAdminState()
+    }
+
+    override fun readAdminSchema() {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_SCHEMA_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            handler.post { listener.onAdminSchemaError("Характеристика схемы отсутствует в прошивке") }
+            return
+        }
+        schemaChunks = null
+        schemaExpectedLength = 0
+        schemaExpectedCrc = 0L
+        schemaExpectedCount = 0
+        requestSchemaChunk(0)
+    }
+
+    private fun requestSchemaChunk(index: Int) {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_CONTROL_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            schemaError("GATT-сеанс не готов для чтения схемы")
+            return
+        }
+        schemaControlPending = true
+        if (!write(characteristic, "SCHEMA:$index".toByteArray(Charsets.US_ASCII), currentGatt)) {
+            schemaControlPending = false
+            schemaError("Не удалось запросить фрагмент схемы")
+        }
+    }
+
+    private fun readAdminSchemaChunk() {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_SCHEMA_UUID)
+        if (characteristic == null || !enqueueGattOperation("ADMIN_SCHEMA") {
+                gatt?.readCharacteristic(characteristic) == true
+            }) {
+            schemaError("Не удалось прочитать фрагмент схемы")
+        }
+    }
+
+    private fun schemaError(detail: String) {
+        schemaControlPending = false
+        schemaChunks = null
+        handler.post { listener.onAdminSchemaError(detail) }
+    }
+    override fun pollAdminState() {
         if (state != State.READY) return
         val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_STATE_UUID) ?: return
-        gatt?.readCharacteristic(characteristic)
+        if (hasPendingGattOperation("ADMIN_STATE_POLL")) return
+        adminProbePending = true
+        enqueueGattOperation("ADMIN_STATE_POLL") {
+            gatt?.readCharacteristic(characteristic) == true
+        }
     }
-    fun readAdminBonds() = readAdmin(BleProtocol.ADMIN_BONDS_UUID, "список телефонов")
-    fun writeCurrentPhoneName() = writePhoneName()
+    override fun readAdminBonds() = readAdmin(BleProtocol.ADMIN_BONDS_UUID, "список телефонов")
+    override fun writeCurrentPhoneName() = writePhoneName()
     fun readAdminEvents() = readAdmin(BleProtocol.ADMIN_EVENTS_UUID, "журнал событий")
+    override fun readOtaConfig() = readAdmin(BleProtocol.OTA_CONFIG_UUID, "Wi-Fi/OTA настройки")
+    override fun readOtaStatus(): Boolean {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.OTA_STATUS_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) return false
+        return enqueueGattOperation("OTA_STATUS") {
+            currentGatt.readCharacteristic(characteristic)
+        }
+    }
+    override fun writeOtaConfig(value: String) {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.OTA_CONFIG_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            fail("Сначала подключитесь к зарегистрированному замку")
+            return
+        }
+        if (!write(characteristic, value.toByteArray(Charsets.UTF_8), currentGatt)) {
+            fail("Не удалось передать настройки точки доступа")
+        }
+    }
+    override fun startHomeOta() = writeAdminControl("OTA_HOME")
     fun allowRegistration() = writeAdminControl("REGISTER")
-    fun deleteBond(address: String) {
+    override fun deleteBond(address: String) {
         refreshBondsAfterControl = true
         if (!writeAdminControl("DELETE:${address.trim().uppercase()}")) {
             refreshBondsAfterControl = false
         }
     }
-    fun deleteAllBonds() {
+    override fun deleteAllBonds() {
         refreshBondsAfterControl = true
         if (!writeAdminControl("DELETE_ALL")) refreshBondsAfterControl = false
     }
-    fun rebootEsp32() = writeAdminControl("REBOOT")
+    override fun rebootEsp32() = writeAdminControl("REBOOT")
 
     private fun readAdmin(uuid: java.util.UUID, title: String) {
         val characteristic = lockService?.getCharacteristic(uuid)
         if (state != State.READY || characteristic == null ||
-            gatt?.readCharacteristic(characteristic) != true) {
+            !enqueueGattOperation(title) { gatt?.readCharacteristic(characteristic) == true }) {
             fail("Не удалось прочитать $title")
         }
     }
@@ -527,21 +705,21 @@ class BleRepository(
         value: ByteArray,
         currentGatt: BluetoothGatt
     ): Boolean {
-        val started = if (Build.VERSION.SDK_INT >= 33) {
-            currentGatt.writeCharacteristic(
-                characteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            ) == BluetoothGatt.GATT_SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.value = value
-            @Suppress("DEPRECATION")
-            currentGatt.writeCharacteristic(characteristic)
+        return enqueueGattOperation("WRITE:${characteristic.uuid}") {
+            if (Build.VERSION.SDK_INT >= 33) {
+                currentGatt.writeCharacteristic(
+                    characteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                ) == BluetoothGatt.GATT_SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                characteristic.value = value
+                @Suppress("DEPRECATION")
+                currentGatt.writeCharacteristic(characteristic)
+            }
         }
-        if (!started) fail("Не удалось записать BLE-характеристику")
-        return started
     }
 
-    fun close() {
+    override fun close() {
         stopRssiPolling()
         stopSignalMonitoring()
         stopScan()
@@ -564,8 +742,10 @@ class BleRepository(
     private val rssiPoll = Runnable {
         val currentGatt = gatt
         if (currentGatt != null) {
-            if (state == State.READY) {
-                if (!currentGatt.readRemoteRssi()) scheduleRssiPoll()
+            if (state == State.READY && activeGattOperation == null) {
+                if (!enqueueGattOperation("RSSI") {
+                        currentGatt.readRemoteRssi()
+                    }) scheduleRssiPoll()
             } else {
                 scheduleRssiPoll()
             }
@@ -589,7 +769,6 @@ class BleRepository(
     }
 
     private fun connect(device: BluetoothDevice) {
-        weakRssiStreak = 0
         setAdminAvailability(false)
         update(State.CONNECTING, "Подключение к ${device.address}")
         gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -619,7 +798,11 @@ class BleRepository(
 
     private fun readInfo() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.INFO_UUID)
-        if (characteristic == null || gatt?.readCharacteristic(characteristic) != true) {
+        if (characteristic == null || !enqueueGattOperation("LOCK_INFO") {
+                val started = gatt?.readCharacteristic(characteristic) == true
+                Log.d(TAG, "start GATT LOCK_INFO read=$started")
+                started
+            }) {
             fail("Не удалось прочитать LOCK_INFO")
         } else {
             update(State.DISCOVERING, "Чтение LOCK_INFO")
@@ -628,7 +811,9 @@ class BleRepository(
 
     private fun readStatus() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.STATUS_UUID)
-        if (characteristic == null || gatt?.readCharacteristic(characteristic) != true) {
+        if (characteristic == null || !enqueueGattOperation("LOCK_STATUS") {
+                gatt?.readCharacteristic(characteristic) == true
+            }) {
             fail("Не удалось прочитать LOCK_STATUS")
         }
     }
@@ -640,6 +825,10 @@ class BleRepository(
                 adminProbePending = false
                 setAdminAvailability(false)
                 update(State.READY, "Обычный режим: административные функции недоступны")
+                return
+            }
+            if (uuid == BleProtocol.ADMIN_SCHEMA_UUID) {
+                listener.onAdminSchemaError("Прошивка отклонила чтение схемы, GATT status: $statusCode")
                 return
             }
             fail("Защищённое чтение отклонено, GATT status: $statusCode")
@@ -679,7 +868,7 @@ class BleRepository(
                     when {
                         expected == null ->
                             update(State.READY, "Настройки замка прочитаны")
-                        text == expected ->
+                        adminConfigMatches(expected, text) ->
                             update(State.READY, "Настройки сохранены и подтверждены чтением")
                         else ->
                             update(
@@ -690,6 +879,7 @@ class BleRepository(
                             )
                     }
                 }
+                BleProtocol.ADMIN_SCHEMA_UUID -> handleSchemaChunk(text)
                 BleProtocol.ADMIN_STATE_UUID -> {
                     listener.onAdminState(text)
                     if (adminProbePending) {
@@ -699,8 +889,83 @@ class BleRepository(
                 }
                 BleProtocol.ADMIN_BONDS_UUID -> listener.onAdminBonds(text)
                 BleProtocol.ADMIN_EVENTS_UUID -> listener.onAdminEvents(text)
+                BleProtocol.OTA_CONFIG_UUID -> listener.onOtaConfig(text)
+                BleProtocol.OTA_STATUS_UUID -> listener.onOtaStatus(text)
             }
         }
+    }
+
+    private fun adminConfigMatches(expected: String, actual: String): Boolean {
+        if (expected == actual) return true
+        val expectedFields = expected.split(',')
+        val actualFields = actual.split(',')
+        // Older firmware omits the optional advertising-power field from the
+        // read response. The seven persisted values are still fully verified.
+        return actualFields.size == 7 && expectedFields.size >= 7 &&
+            actualFields == expectedFields.take(7)
+    }
+
+    private fun handleSchemaChunk(frame: String) {
+        val separator = frame.indexOf('\n')
+        if (separator <= 0) {
+            schemaError("Некорректный заголовок схемы")
+            return
+        }
+        val header = frame.substring(0, separator).split(';')
+            .mapNotNull { part -> part.indexOf('=').takeIf { it > 0 }?.let { part.substring(0, it) to part.substring(it + 1) } }
+            .toMap()
+        val index = header["index"]?.toIntOrNull()
+        val count = header["count"]?.toIntOrNull()
+        val length = header["length"]?.toIntOrNull()
+        val crc = header["crc32"]?.toLongOrNull(16)
+        val encoded = frame.substring(separator + 1)
+        if (header["schema"] != "1" || index == null || count == null || length == null ||
+            crc == null || index !in 0 until count || count !in 1..32 ||
+            length !in 1..DeclarativeUiSchema.MAX_BYTES) {
+            schemaError("Некорректные параметры фрагмента схемы")
+            return
+        }
+        val chunk = runCatching { Base64.decode(encoded, Base64.DEFAULT) }.getOrElse {
+            schemaError("Некорректное кодирование фрагмента схемы")
+            return
+        }
+        if (schemaChunks == null) {
+            schemaChunks = arrayOfNulls(count)
+            schemaExpectedCount = count
+            schemaExpectedLength = length
+            schemaExpectedCrc = crc
+        }
+        if (count != schemaExpectedCount || length != schemaExpectedLength || crc != schemaExpectedCrc) {
+            schemaError("Фрагменты схемы имеют разные параметры")
+            return
+        }
+        schemaChunks?.set(index, chunk)
+        if (schemaChunks?.all { it != null } != true) {
+            requestSchemaChunk(index + 1)
+            return
+        }
+        val bytes = ByteArray(schemaExpectedLength)
+        var offset = 0
+        schemaChunks!!.forEach { part ->
+            val value = part ?: return@forEach
+            if (offset + value.size > bytes.size) {
+                schemaError("Размер схемы не совпадает с заголовком")
+                return
+            }
+            value.copyInto(bytes, offset)
+            offset += value.size
+        }
+        if (offset != bytes.size) {
+            schemaError("Схема передана не полностью")
+            return
+        }
+        val checksum = CRC32().apply { update(bytes) }.value
+        if (checksum != schemaExpectedCrc) {
+            schemaError("CRC-32 схемы не совпал")
+            return
+        }
+        schemaChunks = null
+        listener.onAdminSchema(bytes.toString(Charsets.UTF_8))
     }
 
     private fun update(newState: State, detail: String) {
@@ -728,6 +993,12 @@ class BleRepository(
 
     private fun closeGatt() {
         stopRssiPolling()
+        finishGattOperation(GattOperationResult.CANCELLED, pumpNext = false)
+        activeGattTimeout?.let(handler::removeCallbacks)
+        activeGattTimeout = null
+        gattQueue.clear()
+        activeGattOperation = null
+        mtuHandshakeComplete = false
         adminProbePending = false
         pendingConfigVerification = null
         lockService = null
@@ -742,9 +1013,9 @@ class BleRepository(
         private const val DEPARTURE_SILENCE_MS = 20_000L
         private const val PHONE_NAME_MAX_BYTES = 20
         private const val RSSI_POLL_INTERVAL_MS = 2_000L
-        private const val WEAK_SIGNAL_LOG_INTERVAL_MS = 3_000L
-        private const val WEAK_RSSI_DISCONNECT_STREAK = 3
+        private const val GATT_OPERATION_TIMEOUT_MS = 10_000L
         /* Совпадает с CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256 в прошивке ESP32. */
         private const val REQUESTED_MTU = 256
+        private const val MTU_FALLBACK_DELAY_MS = 500L
     }
 }

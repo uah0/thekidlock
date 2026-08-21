@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.ComponentName
 import android.content.Context
 import android.content.IntentFilter
+import android.content.ServiceConnection
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
@@ -16,8 +17,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.IBinder
 import android.os.PowerManager
 import android.net.Uri
+import android.net.wifi.WifiManager
 import android.provider.Settings
 import android.text.Editable
 import android.text.InputType
@@ -33,6 +36,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Toast
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.ArrayAdapter
@@ -43,13 +47,19 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 class MainActivity : Activity() {
     private lateinit var autoOpenSwitch: Switch
-    private lateinit var signalView: TextView
     private lateinit var settings: LockSettings
-    private lateinit var repository: BleRepository
+    private lateinit var repository: BleClient
+    private lateinit var bleListener: BleRepository.Listener
+    private var boundService: BleLockService.LocalBinder? = null
+    private var serviceBound = false
     private lateinit var permissionButton: Button
+    private lateinit var manualOpenButton: Button
+    private lateinit var manualKeepOpenButton: Button
+    private lateinit var hotspotStatusView: TextView
+    private lateinit var hotspotWebUrlView: TextView
+    private lateinit var hotspotOpenButton: Button
     private lateinit var connectButton: Button
     private lateinit var statusView: TextView
-    private lateinit var liveRssiView: TextView
     private lateinit var freeKeysView: TextView
     private lateinit var espOpenRssiField: EditText
     private lateinit var espHoldRssiField: EditText
@@ -60,24 +70,47 @@ class MainActivity : Activity() {
     private lateinit var adminOpenLevel: Switch
     private lateinit var adminAdvTxPower: Spinner
     private lateinit var adminAdvTxPowerValue: TextView
+    private lateinit var otaSsidField: EditText
+    private lateinit var otaPasswordField: EditText
+    private lateinit var otaUrlField: EditText
     private lateinit var adminSaveButton: Button
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var adminBondsContainer: LinearLayout
     private lateinit var adminDeleteBondButton: Button
     private lateinit var adminContainer: LinearLayout
+    private lateinit var dynamicSettingsContainer: LinearLayout
+    private lateinit var staticSettingsContainer: LinearLayout
+    private lateinit var legacyAdvPowerContainer: LinearLayout
+    private lateinit var legacyOtaContainer: LinearLayout
+    private lateinit var firmwareVersionView: TextView
+    private lateinit var privacyPolicyButton: Button
+    private lateinit var appVersionView: TextView
     private val adminButtons = mutableListOf<Button>()
+    private val dynamicInputs = mutableMapOf<String, View>()
+    private val dynamicSchemaItems = mutableMapOf<String, DeclarativeUiItem>()
     private var adminModeAvailable = false
     private var serviceMenuRequested = false
     private var manualConnectionActive = false
     private var lastBleState = BleRepository.State.IDLE
     private var activityResumed = false
     private var selectedBondAddress: String? = null
+    private var otaStartPending = false
+    private var runtimeWebPending = false
+    private var webUiRequestPending = false
+    private var hotspotProvisioningStarted = false
+    private var otaStartToastShown = false
+    private var adminProbeRetries = 0
     private var updatingAutoOpenSwitch = false
+    private var manualOpenCommandPending = false
+    private var keepOpenCommandPending = false
+    private var keepOpenStatusExpected = false
+    private var manualCommandWaitingForReady = false
     private val signalHandler = Handler(Looper.getMainLooper())
     private val adminSignalPoll = object : Runnable {
         override fun run() {
-            if (adminModeAvailable) {
+            if (adminModeAvailable && repository.currentState == BleRepository.State.READY) {
                 repository.pollAdminState()
+                repository.readOtaStatus()
                 signalHandler.postDelayed(this, ADMIN_SIGNAL_POLL_INTERVAL_MS)
             }
         }
@@ -86,15 +119,37 @@ class MainActivity : Activity() {
         if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
     }
     private var backgroundReceiverRegistered = false
+    private var localHotspotReservation: WifiManager.LocalOnlyHotspotReservation? = null
+    private var pendingHotspotWifi: String? = null
+    private var hotspotExpectedEspIp: String? = null
+    private var hotspotIpCheckPending = false
+    private val hotspotNoClientWatchdog = object : Runnable {
+        override fun run() {
+            if (localHotspotReservation == null) return
+            if (hotspotExpectedEspIp == null) {
+                closeLocalHotspot("ESP32 не сообщил IP за 60 секунд")
+                return
+            }
+            if (hotspotIpCheckPending) return
+            hotspotIpCheckPending = true
+            if (!repository.readOtaStatus()) {
+                hotspotIpCheckPending = false
+                signalHandler.postDelayed(this, HOTSPOT_NO_CLIENT_TIMEOUT_MS)
+            }
+        }
+    }
     private val backgroundConnectionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                BleLockService.ACTION_SIGNAL_RSSI -> {
-                    val valid = intent.getBooleanExtra(BleLockService.EXTRA_SIGNAL_VALID, false)
-                    updateLiveRssiText(if (valid) intent.getIntExtra(BleLockService.EXTRA_SIGNAL_RSSI, 0) else null)
-                }
                 BleLockService.ACTION_CONNECTION_STATE -> {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
+                }
+                BleLockService.ACTION_AUTOMATIC_MODE -> {
+                    updatingAutoOpenSwitch = true
+                    autoOpenSwitch.isChecked = intent.getBooleanExtra(
+                        BleLockService.EXTRA_AUTOMATIC_MODE, false
+                    )
+                    updatingAutoOpenSwitch = false
                 }
             }
         }
@@ -102,44 +157,116 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = LockSettings(this)
-        repository = BleRepository(this, object : BleRepository.Listener {
+        bleListener = object : BleRepository.Listener {
             override fun onBleState(state: BleRepository.State, detail: String) {
                 lastBleState = state
+                when (state) {
+                    BleRepository.State.OPEN_SENT -> {
+                        if (manualOpenCommandPending) {
+                            manualOpenCommandPending = false
+                            showOpenCommandAccepted()
+                        }
+                        if (keepOpenCommandPending) keepOpenStatusExpected = true
+                    }
+                    BleRepository.State.ERROR -> {
+                        manualOpenCommandPending = false
+                        keepOpenCommandPending = false
+                        keepOpenStatusExpected = false
+                        manualCommandWaitingForReady = false
+                        resetManualButtonStates()
+                    }
+                    else -> Unit
+                }
+                if (state == BleRepository.State.READY) {
+                    pendingHotspotWifi?.let { payload ->
+                        pendingHotspotWifi = null
+                        appendLog("Передаю настройки точки доступа в ESP32 по BLE")
+                        repository.writeOtaConfig(payload)
+                    }
+                    if (manualCommandWaitingForReady &&
+                        (manualOpenCommandPending || keepOpenCommandPending)) {
+                        manualCommandWaitingForReady = false
+                        appendLog("BLE подключён, передаю ручную команду замку")
+                        if (keepOpenCommandPending) repository.toggleKeepOpen()
+                        else repository.forceOpenNow()
+                    }
+                }
                 connectButton.isEnabled = state != BleRepository.State.SCANNING &&
                     state != BleRepository.State.CONNECTING && state != BleRepository.State.BONDING
                 updateAdminButtonsEnabled()
                 if (state == BleRepository.State.IDLE || state == BleRepository.State.ERROR) {
-                    adminContainer.visibility = View.GONE
+                    setAdminPanelVisible(false)
                     swipeRefresh.isRefreshing = false
                 }
                 appendLog(detail)
+                if (detail == "Временные настройки точки доступа переданы") {
+                    runtimeWebPending = true
+                    signalHandler.removeCallbacks(otaStatusPoll)
+                    signalHandler.post(otaStatusPoll)
+                }
+                if (detail.contains("Wi-Fi/OTA настройки сохранены") ||
+                    detail.contains("Wi-Fi/OTA настройки отклонены") ||
+                    detail.contains("Не удалось сохранить Wi-Fi/OTA")) {
+                    Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                }
             }
 
             override fun onConnectionLost() {
                 signalHandler.removeCallbacks(resumeService)
+                adminModeAvailable = false
+                manualOpenCommandPending = false
+                keepOpenCommandPending = false
+                keepOpenStatusExpected = false
+                manualCommandWaitingForReady = false
+                resetManualButtonStates()
+                updateAdminEntryButton()
+                signalHandler.removeCallbacks(adminSignalPoll)
+                statusView.text = "ESP32 недоступен"
                 if (!manualConnectionActive && settings.autoOpenEnabled) {
                     signalHandler.postDelayed(resumeService, SERVICE_RESUME_DELAY_MS)
                 }
             }
 
             override fun onAdminAvailability(available: Boolean) {
-                val wasShown = adminContainer.visibility == View.VISIBLE
+                if (available) adminProbeRetries = 0
+                if (!available && serviceMenuRequested && manualConnectionActive &&
+                    repository.currentState == BleRepository.State.READY &&
+                    adminProbeRetries < MAX_ADMIN_PROBE_RETRIES) {
+                    adminProbeRetries++
+                    appendLog("Повторная проверка доступа к панели (${adminProbeRetries}/$MAX_ADMIN_PROBE_RETRIES)")
+                    signalHandler.postDelayed({ repository.retryAdminProbe() }, ADMIN_PROBE_RETRY_DELAY_MS)
+                    return
+                }
                 adminModeAvailable = available
+                updateAdminEntryButton()
                 val showAdmin = available && serviceMenuRequested
-                adminContainer.visibility = if (showAdmin) View.VISIBLE else View.GONE
+                setAdminPanelVisible(showAdmin)
                 signalHandler.removeCallbacks(adminSignalPoll)
                 if (showAdmin) {
                     signalHandler.postDelayed(adminSignalPoll, ADMIN_SIGNAL_POLL_INTERVAL_MS)
-                    if (!wasShown) repository.readAdminConfig()
-                } else {
-                    showSignal(null)
+                    if (otaStartPending) signalHandler.postDelayed({ repository.readOtaStatus() }, 500)
+                }
+                if (available && webUiRequestPending && repository.currentState == BleRepository.State.READY) {
+                    signalHandler.postDelayed({
+                        if (webUiRequestPending) repository.readOtaStatus()
+                    }, 300L)
                 }
                 updateAdminButtonsEnabled()
                 appendLog(if (available) "Режим настройки доступен" else "Обычный режим: настройки недоступны")
             }
 
             override fun onLockData(info: String?, status: String?) {
-                // Скрытые значения остаются частью BLE control flow.
+                if (!info.isNullOrBlank()) {
+                    firmwareVersionView.text = getString(R.string.firmware_version, info)
+                }
+                if (::manualKeepOpenButton.isInitialized && !status.isNullOrBlank() &&
+                    (keepOpenStatusExpected || !keepOpenCommandPending)) {
+                    setManualButtonBlue(
+                        manualKeepOpenButton,
+                        status.trim().equals("OPEN_HOLD", ignoreCase = true)
+                    )
+                    if (keepOpenStatusExpected) keepOpenStatusExpected = false
+                }
             }
 
             override fun onAdminConfig(value: String) {
@@ -171,19 +298,46 @@ class MainActivity : Activity() {
                 adminAdvTxPowerValue.text = ADV_TX_POWER_LABELS.getOrElse(powerIndex) { "" }
                 serviceMenuRequested = true
                 adminModeAvailable = true
-                adminContainer.visibility = View.VISIBLE
+                setAdminPanelVisible(true)
                 appendLog("Настройки замка прочитаны")
-                repository.readAdminBonds()
                 swipeRefresh.isRefreshing = false
             }
 
+            override fun onAdminSchema(value: String) {
+                runCatching { DeclarativeUiSchema.parse(value) }
+                    .onSuccess { schema ->
+                        renderDeclarativeSettings(schema)
+                        appendLog("Декларативная схема прочитана: ${schema.sections.sumOf { it.items.size }} элементов")
+                    }
+                    .onFailure { error ->
+                        dynamicInputs.clear()
+                        dynamicSchemaItems.clear()
+                        dynamicSettingsContainer.removeAllViews()
+                        dynamicSettingsContainer.visibility = View.GONE
+                        staticSettingsContainer.visibility = View.VISIBLE
+                        legacyAdvPowerContainer.visibility = View.VISIBLE
+                        legacyOtaContainer.visibility = View.VISIBLE
+                        appendLog("Схема недоступна, используется статическая панель: ${error.message}")
+                    }
+            }
+
+            override fun onAdminSchemaError(detail: String) {
+                dynamicInputs.clear()
+                dynamicSchemaItems.clear()
+                dynamicSettingsContainer.removeAllViews()
+                dynamicSettingsContainer.visibility = View.GONE
+                staticSettingsContainer.visibility = View.VISIBLE
+                legacyAdvPowerContainer.visibility = View.VISIBLE
+                legacyOtaContainer.visibility = View.VISIBLE
+                appendLog("Схема недоступна, используется статическая панель: $detail")
+            }
+
             override fun onAdminState(value: String) {
-                val rawRssi = value.substringAfter("rssi=", "").substringBefore(';')
-                showSignal(rawRssi.toIntOrNull())
+                // Текущий RSSI не выводится в пользовательском интерфейсе.
             }
 
             override fun onSignalRssi(rssi: Int?) {
-                updateLiveRssiText(rssi)
+                // RSSI не выводится на главном экране.
             }
 
             override fun onAdminBonds(value: String) {
@@ -193,19 +347,137 @@ class MainActivity : Activity() {
                 }
             }
 
-        })
+            override fun onOtaConfig(value: String) {
+                appendLog("OTA-ответ: длина=${value.length}, разделителей=${value.count { it == '\n' }}")
+                if (value.isEmpty()) {
+                    otaSsidField.setText("")
+                    otaPasswordField.setText("")
+                    otaUrlField.setText("")
+                    (dynamicInputs["ota_wifi_ssid"] as? EditText)?.setText("")
+                    (dynamicInputs["ota_wifi_password"] as? EditText)?.setText("")
+                    (dynamicInputs["ota_firmware_url"] as? EditText)?.setText("")
+                    appendLog("Wi-Fi/OTA настройки прочитаны: поля пустые")
+                    return
+                }
+                val firstSeparator = value.indexOf('\n')
+                if (firstSeparator < 0) {
+                    otaSsidField.setText(value)
+                    otaPasswordField.setText("")
+                    otaUrlField.setText("")
+                    (dynamicInputs["ota_wifi_ssid"] as? EditText)?.setText(value)
+                    (dynamicInputs["ota_wifi_password"] as? EditText)?.setText("")
+                    (dynamicInputs["ota_firmware_url"] as? EditText)?.setText("")
+                    appendLog("Wi-Fi/OTA настройки прочитаны: URL отсутствует")
+                    return
+                }
+                val rest = value.substring(firstSeparator + 1)
+                val secondSeparator = rest.indexOf('\n')
+                val ssid = value.substring(0, firstSeparator)
+                /* Accept the former SSID/password/URL response for compatibility,
+                   but never display the middle field as a password. */
+                val url = if (secondSeparator >= 0) rest.substring(secondSeparator + 1)
+                          else rest
+                otaSsidField.setText(ssid)
+                otaPasswordField.setText("")
+                otaUrlField.setText(url)
+                (dynamicInputs["ota_wifi_ssid"] as? EditText)?.setText(ssid)
+                (dynamicInputs["ota_wifi_password"] as? EditText)?.setText("")
+                (dynamicInputs["ota_firmware_url"] as? EditText)?.setText(url)
+                appendLog("Wi-Fi/OTA настройки прочитаны")
+            }
+
+            override fun onOtaStatus(value: String) {
+                if (value.startsWith("WEB_READY;IP=")) {
+                    hotspotIpCheckPending = false
+                    signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                    val ip = value.substringAfter("WEB_READY;IP=").trim()
+                    if (ip.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) {
+                        if (localHotspotReservation != null) {
+                            val previousIp = hotspotExpectedEspIp
+                            if (previousIp != null && previousIp != ip) {
+                                closeLocalHotspot("IP ESP32 изменился с $previousIp на $ip")
+                                webUiRequestPending = false
+                                return
+                            }
+                            hotspotExpectedEspIp = ip
+                            signalHandler.postDelayed(
+                                hotspotNoClientWatchdog,
+                                HOTSPOT_NO_CLIENT_TIMEOUT_MS
+                            )
+                        }
+                        val url = "http://$ip/"
+                        hotspotWebUrlView.text = url
+                        hotspotWebUrlView.visibility = View.VISIBLE
+                        hotspotOpenButton.isEnabled = true
+                        hotspotOpenButton.visibility = View.VISIBLE
+                        hotspotWebUrlView.tag = url
+                        appendLog("Web UI ESP32 доступен: $url")
+                        if (webUiRequestPending) {
+                            webUiRequestPending = false
+                            hotspotProvisioningStarted = false
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    }
+                    runtimeWebPending = false
+                    signalHandler.removeCallbacks(otaStatusPoll)
+                    return
+                }
+                if (localHotspotReservation != null && value.startsWith("ERROR_")) {
+                    hotspotExpectedEspIp = null
+                    hotspotIpCheckPending = false
+                    signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                    signalHandler.postDelayed(hotspotNoClientWatchdog, HOTSPOT_PROVISIONING_TIMEOUT_MS)
+                }
+                if (webUiRequestPending && !hotspotProvisioningStarted) {
+                    hotspotProvisioningStarted = true
+                    appendLog("IP ESP32 не присвоен, запускаю точку доступа телефона")
+                    startWebUiProvisioning()
+                }
+                if (runtimeWebPending && value.startsWith("ERROR_")) {
+                    runtimeWebPending = false
+                    webUiRequestPending = false
+                    hotspotProvisioningStarted = false
+                    signalHandler.removeCallbacks(otaStatusPoll)
+                    appendLog("ESP32 не подключился к точке телефона: $value")
+                    return
+                }
+                when (value.trim()) {
+                    "DOWNLOADING" -> if (!otaStartToastShown) {
+                        otaStartToastShown = true
+                        Toast.makeText(this@MainActivity,
+                            "Прошивка начала обновляться", Toast.LENGTH_LONG).show()
+                        appendLog("Получены первые байты прошивки")
+                    }
+                    "SUCCESS" -> {
+                        appendLog("OTA завершена успешно")
+                        otaStartPending = false
+                        signalHandler.removeCallbacks(otaStatusPoll)
+                    }
+                    "ERROR_WIFI", "ERROR_OTA" -> {
+                        Toast.makeText(this@MainActivity,
+                            "Обновление прошивки не выполнено", Toast.LENGTH_LONG).show()
+                        appendLog("OTA завершилась ошибкой: $value")
+                        otaStartPending = false
+                        signalHandler.removeCallbacks(otaStatusPoll)
+                    }
+                }
+            }
+
+        }
         setContentView(createContent())
         showBatteryOptimizationNoticeIfNeeded()
+        bindBleService()
         refreshState()
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        if (intent != null) setIntent(intent)
     }
 
     override fun onResume() {
         super.onResume()
         activityResumed = true
-        settings.autoOpenEnabled = true
-        updatingAutoOpenSwitch = true
-        autoOpenSwitch.isChecked = true
-        updatingAutoOpenSwitch = false
         // Экран открылся: фоновое подключение должно продолжать жить как есть,
         // поэтому сервис не перезапускаем, а только убеждаемся, что он запущен.
         if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
@@ -222,8 +494,8 @@ class MainActivity : Activity() {
     private fun registerBackgroundReceiver() {
         if (backgroundReceiverRegistered) return
         val filter = IntentFilter().apply {
-            addAction(BleLockService.ACTION_SIGNAL_RSSI)
             addAction(BleLockService.ACTION_CONNECTION_STATE)
+            addAction(BleLockService.ACTION_AUTOMATIC_MODE)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(backgroundConnectionReceiver, filter, RECEIVER_NOT_EXPORTED)
@@ -233,7 +505,6 @@ class MainActivity : Activity() {
         backgroundReceiverRegistered = true
         // Сервис мог подключиться ещё до открытия экрана — подтягиваем
         // текущее состояние сразу, не дожидаясь следующей смены состояния.
-        updateLiveRssiText(BleLockService.lastRssi)
         updateLiveRssiColor(BleLockService.lastConnected)
     }
 
@@ -243,26 +514,23 @@ class MainActivity : Activity() {
         backgroundReceiverRegistered = false
     }
 
-    private fun updateLiveRssiText(rssi: Int?) {
-        liveRssiView.text = if (rssi == null) {
-            getString(R.string.lock_signal_unavailable)
-        } else {
-            getString(R.string.lock_signal, rssi)
-        }
-    }
-
     private fun updateLiveRssiColor(connected: Boolean) {
-        // Без задержки — сразу цветом отражаем текущее состояние фонового подключения.
-        liveRssiView.setTextColor(
-            getColor(if (connected) R.color.switch_track_on else R.color.secondary_text)
-        )
+        // RSSI больше не выводится на главном экране. Состояние соединения
+        // продолжает храниться в сервисе для автоматики и административной панели.
     }
 
     override fun onDestroy() {
         signalHandler.removeCallbacks(adminSignalPoll)
         signalHandler.removeCallbacks(resumeService)
-        repository.close()
+        signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+        if (serviceBound) {
+            boundService?.unregisterClient(bleListener)
+            unbindService(serviceConnection)
+            serviceBound = false
+        }
         if (settings.autoOpenEnabled) startAutoOpenService()
+        localHotspotReservation?.close()
+        localHotspotReservation = null
         super.onDestroy()
     }
 
@@ -275,6 +543,9 @@ class MainActivity : Activity() {
         if (requestCode == REQUEST_BLE_PERMISSIONS) {
             refreshState()
             if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
+        } else if (requestCode == REQUEST_HOTSPOT_PERMISSIONS) {
+            if (hotspotPermissionsGranted()) startLocalHotspot()
+            else appendLog("Нет разрешения на создание локальной точки доступа")
         }
     }
 
@@ -300,44 +571,47 @@ class MainActivity : Activity() {
         val accessCard = newCard()
         autoOpenSwitch = Switch(this)
         tintSwitch(autoOpenSwitch)
-        autoOpenSwitch.isChecked = settings.autoOpenEnabled
+        updatingAutoOpenSwitch = true
+        autoOpenSwitch.isChecked = BleLockService.lastAutomaticMode
+        updatingAutoOpenSwitch = false
         autoOpenSwitch.setOnCheckedChangeListener { _, checked ->
             if (updatingAutoOpenSwitch) return@setOnCheckedChangeListener
+            android.util.Log.d("BleLockUi", "Переключение автоматического режима: $checked")
             settings.autoOpenEnabled = checked
-            if (checked && hasBlePermissions()) startAutoOpenService()
-            else if (!checked) {
-                stopAutoOpenService()
+            if (checked) {
+                serviceMenuRequested = false
+                manualConnectionActive = false
+                adminModeAvailable = false
+                setAdminPanelVisible(false)
+                signalHandler.removeCallbacks(adminSignalPoll)
+            }
+            if (hasBlePermissions()) {
+                if (serviceBound) repository.setAutomaticMode(checked)
+                else if (checked) startAutoOpenService()
             }
             refreshState()
         }
         addRow(accessCard, switchRow(getString(R.string.auto_open), autoOpenSwitch))
 
-        addRow(accessCard, localSliderRow(
-            getString(R.string.connect_rssi_threshold),
-            min = -100,
-            max = 0,
-            step = 1,
-            initial = settings.connectRssiThreshold.toLong()
-        ) { value -> settings.connectRssiThreshold = value.toInt() })
-
-        addRow(accessCard, localSliderRow(
-            getString(R.string.disconnect_rssi_threshold),
-            min = -100,
-            max = 0,
-            step = 1,
-            initial = settings.disconnectRssiThreshold.toLong()
-        ) { value -> settings.disconnectRssiThreshold = value.toInt() })
-
-        liveRssiView = TextView(this).apply {
-            text = getString(R.string.lock_signal_unavailable)
-            textSize = 16f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(getColor(R.color.secondary_text))
+        val manualOpenRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            manualOpenButton = outlineButton(R.string.manual_open) { sendOpenCommand(false) }
+            addView(manualOpenButton,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginEnd = dp(4)
+                })
+            manualKeepOpenButton = outlineButton(R.string.manual_keep_open) { sendOpenCommand(true) }
+            addView(manualKeepOpenButton,
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    marginStart = dp(4)
+                })
         }
-        addRow(accessCard, valueRow(getString(R.string.live_rssi_label), liveRssiView))
+        addRow(accessCard, manualOpenRow)
 
-        connectButton = navigationButton(R.string.register_phone) { activateServiceMenu() }
+        connectButton = navigationButton(R.string.connect_admin) { activateServiceMenu() }
         addRow(accessCard, connectButton)
+        hotspotOpenButton = outlineButton(R.string.open_esp_web_ui) { openEspWebUi() }
+        hotspotOpenButton.isEnabled = true
         root.addView(accessCard, spacedFullWidth())
 
         statusView = TextView(this).apply {
@@ -353,31 +627,57 @@ class MainActivity : Activity() {
         }
         root.addView(adminContainer, fullWidth())
 
-        adminContainer.addView(TextView(this).apply {
-            text = getString(R.string.admin_title)
-            textSize = 20f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(getColor(R.color.primary_text))
-        }, topSpacedFullWidth(20))
-
-        // --- RSSI ---
-        adminContainer.addView(sectionHeader(R.string.section_rssi), topSpacedFullWidth(12))
-        val rssiCard = newCard()
-        signalView = TextView(this).apply {
-            text = getString(R.string.lock_signal_unavailable)
-            textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
+        firmwareVersionView = TextView(this).apply {
+            text = getString(R.string.firmware_version_unknown)
+            textSize = 14f
             setTextColor(getColor(R.color.secondary_text))
         }
-        addRow(rssiCard, valueRow(getString(R.string.current_rssi_label), signalView))
+        appVersionView = TextView(this).apply {
+            text = getString(
+                R.string.app_version_release,
+                BuildConfig.VERSION_NAME,
+                BuildConfig.VERSION_CODE
+            )
+            textSize = 14f
+            setTextColor(getColor(R.color.secondary_text))
+        }
+        hotspotStatusView = TextView(this).apply {
+            text = getString(R.string.local_hotspot_status)
+            textSize = 14f
+            setTextColor(getColor(R.color.secondary_text))
+        }
+        adminContainer.addView(hotspotStatusView, topSpacedFullWidth(10))
+        hotspotWebUrlView = TextView(this).apply {
+            textSize = 14f
+            setTextColor(getColor(R.color.accent_blue))
+            visibility = View.GONE
+        }
+        adminContainer.addView(hotspotWebUrlView, topSpacedFullWidth(6))
+        adminContainer.addView(hotspotOpenButton, topSpacedFullWidth(8))
+        adminContainer.addView(
+            outlineButton(R.string.admin_close) { closeServiceMenu() },
+            topSpacedFullWidth(10)
+        )
+
+        dynamicSettingsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        staticSettingsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        // --- RSSI ---
+        staticSettingsContainer.addView(sectionHeader(R.string.section_rssi), topSpacedFullWidth(12))
+        val rssiCard = newCard()
         espOpenRssiField = adminNumberField(true)
         espHoldRssiField = adminNumberField(true)
         addRow(rssiCard, stepperRow(getString(R.string.esp_open_rssi_threshold), espOpenRssiField, -100, 0, 1))
         addRow(rssiCard, stepperRow(getString(R.string.esp_hold_rssi_threshold), espHoldRssiField, -100, 0, 1))
-        adminContainer.addView(rssiCard, fullWidth())
+        staticSettingsContainer.addView(rssiCard, fullWidth())
 
         // --- ТАЙМЕРЫ ---
-        adminContainer.addView(sectionHeader(R.string.section_timers), topSpacedFullWidth(20))
+        staticSettingsContainer.addView(sectionHeader(R.string.section_timers), topSpacedFullWidth(20))
         val timersCard = newCard()
         adminLongOpen = adminNumberField(false)
         adminTimerA = adminNumberField(false)
@@ -388,10 +688,10 @@ class MainActivity : Activity() {
         ))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_a), adminTimerA, 0, 10_000, 100))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_b), adminTimerB, 0, 120, 1))
-        adminContainer.addView(timersCard, fullWidth())
+        staticSettingsContainer.addView(timersCard, fullWidth())
 
         // --- АППАРАТНАЯ ЧАСТЬ ---
-        adminContainer.addView(sectionHeader(R.string.section_hardware), topSpacedFullWidth(20))
+        staticSettingsContainer.addView(sectionHeader(R.string.section_hardware), topSpacedFullWidth(20))
         val hardwareCard = newCard()
         adminLockGpio = adminNumberField(false)
         addRow(hardwareCard, stepperRow(getString(R.string.admin_lock_gpio), adminLockGpio, 0, 39, 1))
@@ -416,36 +716,47 @@ class MainActivity : Activity() {
         adminAdvTxPowerValue = TextView(this).apply {
             text = ADV_TX_POWER_LABELS[ADV_TX_POWER_VALUES.indexOf(DEFAULT_ADV_TX_POWER_DBM)]
         }
-        addRow(hardwareCard, disclosureRow(getString(R.string.admin_adv_tx_power), adminAdvTxPowerValue, adminAdvTxPower))
-        adminContainer.addView(hardwareCard, fullWidth())
+        staticSettingsContainer.addView(hardwareCard, fullWidth())
+        legacyAdvPowerContainer = newCard()
+        addRow(legacyAdvPowerContainer, disclosureRow(
+            getString(R.string.admin_adv_tx_power), adminAdvTxPowerValue, adminAdvTxPower
+        ))
 
-        // --- ДЕЙСТВИЯ ---
-        adminContainer.addView(sectionHeader(R.string.section_actions), topSpacedFullWidth(20))
-        adminSaveButton = filledButton(R.string.admin_save) { saveAdminConfig() }
+        // --- WI-FI OTA ---
+        
+        val otaCard = newCard()
+        otaSsidField = otaTextField(false)
+        otaPasswordField = otaTextField(true)
+        otaUrlField = otaTextField(false)
+        addRow(otaCard, textFieldRow(getString(R.string.ota_wifi_ssid), otaSsidField))
+        addRow(otaCard, textFieldRow(getString(R.string.ota_wifi_password), otaPasswordField))
+        addRow(otaCard, textFieldRow(getString(R.string.ota_url), otaUrlField))
+        addRow(otaCard, filledButton(R.string.ota_read) { repository.readOtaConfig() })
+        addRow(otaCard, filledButton(R.string.ota_save) { saveOtaConfig() })
+        addRow(otaCard, filledButton(R.string.ota_start) { startOtaUpdate() })
+        legacyOtaContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(otaCard, fullWidth())
+        }
+
+        // The ESP32 settings and actions are intentionally not attached to the
+        // phone service panel; they are available in the ESP32 Web UI.
+        adminSaveButton = filledButton(R.string.admin_save) {
+            if (syncDynamicSettings()) saveAdminConfig()
+        }
         adminSaveButton.isEnabled = false
-        adminContainer.addView(adminSaveButton, spacedFullWidth())
 
-        // --- ЗАРЕГИСТРИРОВАННЫЕ ТЕЛЕФОНЫ ---
-        adminContainer.addView(sectionHeader(R.string.section_bonds), topSpacedFullWidth(20))
         adminBondsContainer = newCard()
-        adminContainer.addView(adminBondsContainer, fullWidth())
         freeKeysView = TextView(this).apply {
             textSize = 13f
             setTextColor(getColor(R.color.secondary_text))
         }
-        adminContainer.addView(freeKeysView, topSpacedFullWidth(8).apply {
-            leftMargin = dp(4)
-        })
         val bondActionsCard = newCard()
         adminDeleteBondButton = destructiveButton(R.string.admin_delete_bond) {
             selectedBondAddress?.let { repository.deleteBond(it) }
         }
         adminDeleteBondButton.isEnabled = false
         addRow(bondActionsCard, adminDeleteBondButton)
-        adminContainer.addView(bondActionsCard, topSpacedFullWidth(10))
-
-        // --- ОПАСНАЯ ЗОНА ---
-        adminContainer.addView(sectionHeader(R.string.section_danger), topSpacedFullWidth(20))
         val dangerCard = newCard()
         addRow(dangerCard, addAdminButton(R.string.admin_delete_all) {
             appendLog("После удаления всех bonds удалите BLE Lock в настройках Bluetooth телефона")
@@ -455,7 +766,11 @@ class MainActivity : Activity() {
             appendLog("Команда перезагрузки ESP32")
             repository.rebootEsp32()
         })
-        adminContainer.addView(dangerCard, fullWidth())
+
+        // The settings panel starts directly with the local network line.
+        root.addView(appVersionView, topSpacedFullWidth(12).apply { leftMargin = dp(4) })
+        privacyPolicyButton = outlineButton(R.string.privacy_policy_button) { showPrivacyPolicy() }
+        root.addView(privacyPolicyButton, topSpacedFullWidth(8))
 
         adminContainer.addView(Space(this), fullWidth().apply { height = dp(32) })
 
@@ -468,7 +783,7 @@ class MainActivity : Activity() {
             setColorSchemeResources(R.color.accent_blue)
             setOnRefreshListener {
                 if (adminModeAvailable) {
-                    repository.readAdminConfig()
+                    repository.pollAdminState()
                     signalHandler.postDelayed({ isRefreshing = false }, SWIPE_REFRESH_TIMEOUT_MS)
                 } else {
                     isRefreshing = false
@@ -753,8 +1068,16 @@ class MainActivity : Activity() {
         val permissionsGranted = hasBlePermissions()
         permissionButton.visibility = if (permissionsGranted) View.GONE else View.VISIBLE
         connectButton.visibility = if (permissionsGranted) View.VISIBLE else View.GONE
+        updateAdminEntryButton()
         autoOpenSwitch.isChecked = settings.autoOpenEnabled
         updateAdminButtonsEnabled()
+    }
+
+    private fun updateAdminEntryButton() {
+        if (!::connectButton.isInitialized) return
+        connectButton.text = getString(
+            if (adminModeAvailable) R.string.register_phone else R.string.connect_admin
+        )
     }
 
     private fun updateAdminButtonsEnabled() {
@@ -789,18 +1112,21 @@ class MainActivity : Activity() {
         startService(intent)
     }
 
+    private fun bindBleService() {
+        if (serviceBound) return
+        val intent = Intent(this, BleLockService::class.java)
+        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+    }
+
     private fun startServiceConnection() {
-        // Manual pairing/admin access must use the Activity connection only;
-        // a running auto-open service would create a second SMP flow.
+        // The foreground service remains the only BLE owner. Admin mode is
+        // requested through its Binder instead of creating an Activity GATT.
         manualConnectionActive = true
+        adminProbeRetries = 0
         signalHandler.removeCallbacks(resumeService)
-        stopAutoOpenService()
         if (hasBlePermissions()) {
             appendLog("Подключение к замку…")
-            signalHandler.postDelayed(
-                { repository.findAndConnect() },
-                MANUAL_CONNECT_DELAY_MS
-            )
+            signalHandler.postDelayed({ boundService?.requestAdminConnection() }, MANUAL_CONNECT_DELAY_MS)
         } else {
             requestMissingPermissions()
         }
@@ -808,13 +1134,16 @@ class MainActivity : Activity() {
 
     private fun activateServiceMenu() {
         serviceMenuRequested = true
-        if (adminModeAvailable) {
-            adminContainer.visibility = View.VISIBLE
+        if (adminModeAvailable && repository.currentState == BleRepository.State.READY) {
+            setAdminPanelVisible(true)
             signalHandler.removeCallbacks(adminSignalPoll)
             signalHandler.postDelayed(adminSignalPoll, ADMIN_SIGNAL_POLL_INTERVAL_MS)
             updateAdminButtonsEnabled()
             repository.readAdminConfig()
         } else {
+            adminModeAvailable = false
+            setAdminPanelVisible(false)
+            signalHandler.removeCallbacks(adminSignalPoll)
             startServiceConnection()
         }
     }
@@ -880,18 +1209,294 @@ class MainActivity : Activity() {
         statusView.text = message
     }
 
-    private fun showSignal(rssi: Int?) {
-        signalView.text = if (rssi == null) {
-            getString(R.string.lock_signal_unavailable)
-        } else {
-            getString(R.string.lock_signal, rssi)
-        }
-    }
-
     private fun adminNumberField(signed: Boolean = false) = EditText(this).apply {
         isSingleLine = true
         inputType = InputType.TYPE_CLASS_NUMBER or
             if (signed) InputType.TYPE_NUMBER_FLAG_SIGNED else 0
+    }
+    private val otaStatusPoll = object : Runnable {
+        override fun run() {
+            if (otaStartPending || runtimeWebPending) {
+                if (!repository.readOtaStatus()) {
+                    if (otaStartPending) otaStartPending = false
+                    if (runtimeWebPending) runtimeWebPending = false
+                    signalHandler.removeCallbacks(this)
+                    return
+                }
+                signalHandler.postDelayed(this, 1000L)
+            }
+        }
+    }
+
+    private fun showPrivacyPolicy() {
+        val policyText = TextView(this).apply {
+            text = getString(R.string.privacy_policy_text)
+            textSize = 15f
+            setTextColor(getColor(R.color.primary_text))
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            setTextIsSelectable(true)
+        }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            addView(policyText, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.privacy_policy_title)
+            .setView(scroll)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
+
+    private fun sendOpenCommand(keepOpen: Boolean) {
+        manualOpenCommandPending = !keepOpen
+        keepOpenCommandPending = keepOpen
+        keepOpenStatusExpected = false
+        resetManualButtonStates()
+        if (serviceBound && repository.currentState == BleRepository.State.READY) {
+            manualCommandWaitingForReady = false
+            if (keepOpen) repository.toggleKeepOpen() else repository.forceOpenNow()
+            return
+        }
+        manualCommandWaitingForReady = true
+        appendLog("Запускаю BLE-подключение для ручной команды")
+        startServiceConnection()
+    }
+
+    private fun showOpenCommandAccepted() {
+        setManualButtonBlue(manualOpenButton, true)
+        signalHandler.postDelayed({ setManualButtonBlue(manualOpenButton, false) }, 700L)
+    }
+
+    private fun resetManualButtonStates() {
+        if (::manualOpenButton.isInitialized) setManualButtonBlue(manualOpenButton, false)
+        if (::manualKeepOpenButton.isInitialized) setManualButtonBlue(manualKeepOpenButton, false)
+    }
+
+    private fun setManualButtonBlue(button: Button, blue: Boolean) {
+        button.background = getDrawable(
+            if (blue) R.drawable.bg_button_filled else R.drawable.bg_button_outline
+        )
+        button.setTextColor(if (blue) Color.WHITE else getColor(R.color.accent_blue))
+    }
+
+    private fun setAdminPanelVisible(visible: Boolean) {
+        adminContainer.visibility = if (visible) View.VISIBLE else View.GONE
+        if (::privacyPolicyButton.isInitialized) {
+            privacyPolicyButton.visibility = if (visible) View.GONE else View.VISIBLE
+        }
+    }
+
+    private fun closeServiceMenu() {
+        serviceMenuRequested = false
+        manualConnectionActive = false
+        adminModeAvailable = false
+        updateAdminEntryButton()
+        adminProbeRetries = 0
+        signalHandler.removeCallbacks(adminSignalPoll)
+        signalHandler.removeCallbacks(resumeService)
+        setAdminPanelVisible(false)
+        if (serviceBound) {
+            if (settings.autoOpenEnabled) {
+                boundService?.resumeAutomaticMode()
+            } else {
+                boundService?.setAutomaticMode(false)
+            }
+        }
+        appendLog("Сервисные настройки закрыты")
+        refreshState()
+    }
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
+            val binder = service as? BleLockService.LocalBinder ?: return
+            boundService = binder
+            repository = binder
+            serviceBound = true
+            binder.registerClient(bleListener)
+            refreshState()
+        }
+
+        override fun onServiceDisconnected(name: ComponentName?) {
+            serviceBound = false
+            boundService = null
+            adminModeAvailable = false
+            updateAdminEntryButton()
+            setAdminPanelVisible(false)
+        }
+    }
+
+    private fun otaTextField(password: Boolean) = EditText(this).apply {
+        isSingleLine = true
+        inputType = InputType.TYPE_CLASS_TEXT or
+            if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else 0
+        minHeight = dp(48)
+        setPadding(dp(12), 0, dp(12), 0)
+        setTextColor(getColor(R.color.primary_text))
+        setHintTextColor(getColor(R.color.secondary_text))
+        background = getDrawable(android.R.drawable.edit_text)
+        isFocusable = true
+        isFocusableInTouchMode = true
+    }
+
+    private fun textFieldRow(label: String, field: EditText): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(4), dp(16), dp(4))
+            field.hint = label
+            addView(field, fullWidth())
+        }
+
+    private fun startOtaUpdate() {
+        appendLog("Запуск OTA через домашнюю Wi-Fi сеть")
+        otaStartPending = true
+        otaStartToastShown = false
+        signalHandler.removeCallbacks(otaStatusPoll)
+        signalHandler.postDelayed(otaStatusPoll, 1000L)
+        repository.startHomeOta()
+    }
+
+    private fun saveOtaConfig() {
+        val ssid = otaSsidField.text.toString().trim()
+        val password = otaPasswordField.text.toString()
+        val url = otaUrlField.text.toString().trim()
+        if (ssid.isEmpty() || !url.startsWith("https://")) {
+            appendLog("Укажите SSID и HTTPS URL прошивки")
+            return
+        }
+        repository.writeOtaConfig("$ssid\n$password\n$url")
+    }
+
+    private fun renderDeclarativeSettings(schema: DeclarativeUiSchema) {
+        dynamicInputs.clear()
+        dynamicSchemaItems.clear()
+        dynamicSettingsContainer.removeAllViews()
+        dynamicSettingsContainer.visibility = View.VISIBLE
+        staticSettingsContainer.visibility = View.GONE
+        legacyAdvPowerContainer.visibility = View.VISIBLE
+        legacyOtaContainer.visibility = View.GONE
+
+        dynamicSettingsContainer.addView(TextView(this).apply {
+            text = "${schema.title} (декларативная панель)"
+            textSize = 18f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.primary_text))
+        }, topSpacedFullWidth(16))
+
+        schema.sections.forEach { section ->
+            dynamicSettingsContainer.addView(
+                TextView(this).apply {
+                    text = section.title
+                    textSize = 16f
+                    setTypeface(typeface, Typeface.BOLD)
+                    setTextColor(getColor(R.color.primary_text))
+                }, topSpacedFullWidth(12)
+            )
+            val card = newCard()
+            section.items.forEach { item ->
+                dynamicSchemaItems[item.id] = item
+                val row = when (item.uiType) {
+                    "slider" -> {
+                        val field = otaTextField(item.readOnly).apply {
+                            inputType = InputType.TYPE_CLASS_NUMBER or
+                                InputType.TYPE_NUMBER_FLAG_SIGNED or
+                                InputType.TYPE_NUMBER_FLAG_DECIMAL
+                            setText(item.value.asLongOrNull()?.toString().orEmpty())
+                            isEnabled = !item.readOnly
+                        }
+                        dynamicInputs[item.id] = field
+                        textFieldRow(item.title, field)
+                    }
+                    "switch" -> {
+                        val control = Switch(this).apply {
+                            isChecked = item.value as? Boolean ?: false
+                            isEnabled = !item.readOnly
+                        }
+                        dynamicInputs[item.id] = control
+                        switchRow(item.title, control)
+                    }
+                    "text" -> {
+                        val field = otaTextField(item.id == "ota_wifi_password").apply {
+                            setText(item.value?.toString().orEmpty())
+                            isEnabled = !item.readOnly
+                        }
+                        dynamicInputs[item.id] = field
+                        textFieldRow(item.title, field)
+                    }
+                    "info" -> valueRow(
+                        item.title,
+                        TextView(this).apply {
+                            text = item.value?.toString().orEmpty() +
+                                if (item.unit.isBlank()) "" else " ${item.unit}"
+                            textSize = 16f
+                            setTextColor(getColor(R.color.secondary_text))
+                        }
+                    )
+                    "button" -> when (item.id) {
+                        "ota_read" -> filledButton(R.string.ota_read) { repository.readOtaConfig() }
+                        "ota_save" -> filledButton(R.string.ota_save) {
+                            if (syncDynamicSettings(validateOta = true)) saveOtaConfig()
+                        }
+                        "ota_start" -> filledButton(R.string.ota_start) { startOtaUpdate() }
+                        else -> null
+                    }
+                    else -> null
+                }
+                if (row != null) addRow(card, row)
+            }
+            dynamicSettingsContainer.addView(card, fullWidth())
+        }
+        appendLog("Динамический renderer построен из схемы")
+    }
+
+    private fun syncDynamicSettings(validateOta: Boolean = false): Boolean {
+        if (dynamicInputs.isEmpty()) return true
+        fun read(id: String): Long? = (dynamicInputs[id] as? EditText)?.text?.toString()?.toLongOrNull()
+        val values = mutableMapOf<String, Long>()
+        var valid = true
+        dynamicSchemaItems.values
+            .filter { it.uiType == "slider" }
+            .forEach { item ->
+                val value = read(item.id)
+                val min = item.min
+                val max = item.max
+                val step = item.step
+                if (value == null || min == null || max == null || step == null ||
+                    value !in min..max || (value - min) % step != 0L) {
+                    valid = false
+                }
+            }
+        val ssid = (dynamicInputs["ota_wifi_ssid"] as? EditText)?.text?.toString()?.trim()
+        val password = (dynamicInputs["ota_wifi_password"] as? EditText)?.text?.toString()
+        val url = (dynamicInputs["ota_firmware_url"] as? EditText)?.text?.toString()?.trim()
+        if (validateOta && ssid != null &&
+            (ssid.isEmpty() || !url.orEmpty().startsWith("https://"))) {
+            valid = false
+        }
+        if (!valid) {
+            Toast.makeText(this, "Проверьте диапазоны и OTA-поля", Toast.LENGTH_LONG).show()
+            return false
+        }
+        val mapping = listOf(
+            "phone_rssi_threshold" to { value: Long -> espOpenRssiField.setText(value.toString()) },
+            "phone_rssi_hold_threshold" to { value: Long -> espHoldRssiField.setText(value.toString()) },
+            "timer_a_ms" to { value: Long -> adminTimerA.setText(value.toString()) },
+            "timer_b_s" to { value: Long -> adminTimerB.setText(value.toString()) }
+        )
+        mapping.forEach { (id, apply) ->
+            read(id)?.let { values[id] = it; apply(it) }
+        }
+        read("long_open_ms")?.let {
+            values["long_open_ms"] = it
+            adminLongOpen.setText(((it + LONG_OPEN_MINUTE_MS - 1L) / LONG_OPEN_MINUTE_MS).toString())
+        }
+        (dynamicInputs["lock_open_level"] as? Switch)?.let { adminOpenLevel.isChecked = it.isChecked }
+        (dynamicInputs["ota_wifi_ssid"] as? EditText)?.let { otaSsidField.setText(it.text.toString()) }
+        (dynamicInputs["ota_wifi_password"] as? EditText)?.let { otaPasswordField.setText(it.text.toString()) }
+        (dynamicInputs["ota_firmware_url"] as? EditText)?.let { otaUrlField.setText(it.text.toString()) }
+        if (values.size < mapping.size + 1) {
+            Toast.makeText(this, "Проверьте числовые значения декларативной панели", Toast.LENGTH_LONG).show()
+            return false
+        }
+        return true
     }
 
     private fun saveAdminConfig() {
@@ -967,6 +1572,163 @@ class MainActivity : Activity() {
         return button
     }
 
+    private fun openEspWebUi() {
+        webUiRequestPending = true
+        hotspotProvisioningStarted = false
+        if (!serviceBound || !adminModeAvailable || repository.currentState != BleRepository.State.READY) {
+            appendLog("Для проверки IP сначала устанавливаю административное BLE-соединение")
+            activateServiceMenu()
+            return
+        }
+        appendLog("Проверяю IP-адрес ESP32 по BLE")
+        if (!repository.readOtaStatus()) {
+            appendLog("BLE занят, повторяю проверку IP")
+            signalHandler.postDelayed({
+                if (webUiRequestPending && !hotspotProvisioningStarted) {
+                    repository.readOtaStatus()
+                }
+            }, 500L)
+        }
+    }
+
+    private fun startWebUiProvisioning() {
+        if (localHotspotReservation != null) {
+            sendHotspotCredentials(localHotspotReservation!!)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            webUiRequestPending = false
+            hotspotProvisioningStarted = false
+            appendLog("Эта версия Android не умеет создавать локальную точку доступа")
+            return
+        }
+        if (!hotspotPermissionsGranted()) {
+            val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+            } else {
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            requestPermissions(permissions, REQUEST_HOTSPOT_PERMISSIONS)
+            return
+        }
+        startLocalHotspot()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startLocalHotspot() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+        hotspotStatusView.setText(R.string.local_hotspot_status)
+        try {
+            wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
+            override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
+                localHotspotReservation = reservation
+                hotspotExpectedEspIp = null
+                hotspotIpCheckPending = false
+                signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                signalHandler.postDelayed(hotspotNoClientWatchdog, HOTSPOT_PROVISIONING_TIMEOUT_MS)
+                hotspotWebUrlView.text = ""
+                hotspotWebUrlView.tag = null
+                hotspotWebUrlView.visibility = View.GONE
+                hotspotOpenButton.isEnabled = true
+                hotspotOpenButton.visibility = View.VISIBLE
+                val config = reservation.wifiConfiguration
+                val ssid = config?.SSID?.trim('"') ?: "не сообщено Android"
+                val password = config?.preSharedKey?.trim('"') ?: "не сообщён Android"
+                hotspotStatusView.text = "Сеть: $ssid\nПароль: $password"
+                appendLog("Локальная точка доступа создана: SSID=$ssid")
+                sendHotspotCredentials(reservation)
+            }
+
+            override fun onStopped() {
+                localHotspotReservation = null
+                hotspotExpectedEspIp = null
+                hotspotIpCheckPending = false
+                signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                if (webUiRequestPending) {
+                    webUiRequestPending = false
+                    hotspotProvisioningStarted = false
+                }
+                hotspotStatusView.setText(R.string.local_hotspot_status)
+                hotspotWebUrlView.text = ""
+                hotspotWebUrlView.tag = null
+                hotspotWebUrlView.visibility = View.GONE
+                hotspotOpenButton.isEnabled = true
+                hotspotOpenButton.visibility = View.VISIBLE
+                appendLog("Локальная точка доступа остановлена системой")
+            }
+
+            override fun onFailed(reason: Int) {
+                localHotspotReservation = null
+                hotspotExpectedEspIp = null
+                hotspotIpCheckPending = false
+                signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                webUiRequestPending = false
+                hotspotProvisioningStarted = false
+                hotspotStatusView.text = "Не удалось создать сеть, код Android: $reason"
+                hotspotWebUrlView.text = ""
+                hotspotWebUrlView.tag = null
+                hotspotWebUrlView.visibility = View.GONE
+                hotspotOpenButton.isEnabled = true
+                hotspotOpenButton.visibility = View.VISIBLE
+                appendLog("Android не создал локальную точку доступа, код $reason")
+            }
+            }, Handler(Looper.getMainLooper()))
+        } catch (error: SecurityException) {
+            hotspotStatusView.text = "Нет системного разрешения Wi-Fi: ${error.message}"
+            hotspotOpenButton.isEnabled = true
+            hotspotOpenButton.visibility = View.VISIBLE
+            appendLog("Android запретил создание точки доступа: нет CHANGE_WIFI_STATE")
+        }
+    }
+
+    private fun closeLocalHotspot(reason: String) {
+        localHotspotReservation?.close()
+        localHotspotReservation = null
+        hotspotExpectedEspIp = null
+        hotspotIpCheckPending = false
+        webUiRequestPending = false
+        hotspotProvisioningStarted = false
+        runtimeWebPending = false
+        signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+        signalHandler.removeCallbacks(otaStatusPoll)
+        hotspotStatusView.setText(R.string.local_hotspot_status)
+        hotspotWebUrlView.text = ""
+        hotspotWebUrlView.tag = null
+        hotspotWebUrlView.visibility = View.GONE
+        appendLog("Локальная точка доступа отключена: $reason")
+    }
+
+    private fun sendHotspotCredentials(reservation: WifiManager.LocalOnlyHotspotReservation) {
+        val config = reservation.wifiConfiguration
+        val ssid = config?.SSID?.trim('"') ?: "не сообщено Android"
+        val password = config?.preSharedKey?.trim('"') ?: "не сообщён Android"
+        if (ssid == "не сообщено Android" || password == "не сообщён Android") {
+            webUiRequestPending = false
+            hotspotProvisioningStarted = false
+            appendLog("Android не сообщил параметры точки доступа")
+            return
+        }
+        pendingHotspotWifi = "$ssid\n$password"
+        if (repository.currentState == BleRepository.State.READY) {
+            pendingHotspotWifi = null
+            appendLog("Передаю настройки точки доступа в ESP32 по BLE")
+            repository.writeOtaConfig("$ssid\n$password")
+        } else {
+            appendLog("Ожидаю BLE-соединение для передачи настроек точки доступа")
+        }
+    }
+
+    private fun hotspotPermissionsGranted(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+        return checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+    }
+
 
     private fun requiredPermissions(): List<String> {
         val permissions = mutableListOf<String>()
@@ -999,8 +1761,13 @@ class MainActivity : Activity() {
         private const val LONG_OPEN_MINUTE_MS = 60_000L
         private const val MAX_LONG_OPEN_MINUTES = 60L
         private const val REQUEST_BLE_PERMISSIONS = 100
+        private const val REQUEST_HOTSPOT_PERMISSIONS = 101
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L
         private const val SERVICE_RESUME_DELAY_MS = 700L
+        private const val HOTSPOT_NO_CLIENT_TIMEOUT_MS = 15_000L
+        private const val HOTSPOT_PROVISIONING_TIMEOUT_MS = 60_000L
+        private const val ADMIN_PROBE_RETRY_DELAY_MS = 500L
+        private const val MAX_ADMIN_PROBE_RETRIES = 3
         private const val MANUAL_CONNECT_DELAY_MS = 1_500L
         private const val SWIPE_REFRESH_TIMEOUT_MS = 4_000L
         private const val MAX_BONDED_KEYS = 20
@@ -1011,4 +1778,9 @@ class MainActivity : Activity() {
             "0 dBm", "+3 dBm", "+6 dBm", "+9 dBm"
         )
     }
+}
+
+private fun Any?.asLongOrNull(): Long? = when (this) {
+    is Number -> toLong()
+    else -> null
 }

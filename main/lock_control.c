@@ -13,6 +13,7 @@
 static SemaphoreHandle_t s_mutex;
 static bool s_initialized;
 static bool s_is_open;
+static volatile bool s_hold_open;
 static bool s_reopen_blocked;
 static QueueHandle_t s_events;
 static int s_gpio = APP_LOCK_GPIO;
@@ -21,6 +22,7 @@ typedef enum {
     LOCK_EVENT_OPEN,
     LOCK_EVENT_ARM_OPEN,
     LOCK_EVENT_TEST_OPEN,
+    LOCK_EVENT_TOGGLE_HOLD_OPEN,
     LOCK_EVENT_CLOSE,
     LOCK_EVENT_RSSI_HIGH,
     LOCK_EVENT_RSSI_LOW,
@@ -52,6 +54,7 @@ static void lock_task(void *arg)
     int64_t last_sufficient_ms = 0;
     int64_t long_open_deadline_ms = 0;
     bool reopen_blocked = false;
+    bool hold_open = false;
     bool open_armed = false;
     uint8_t low_rssi_count = 0;
     bool release_pending = false;
@@ -98,9 +101,35 @@ static void lock_task(void *arg)
                         }
                     }
                     break;
+                case LOCK_EVENT_TOGGLE_HOLD_OPEN:
+                    hold_open = !hold_open;
+                    s_hold_open = hold_open;
+                    open_armed = true;
+                    release_pending = false;
+                    release_condition_active = false;
+                    low_rssi_count = 0;
+                    reopen_blocked = false;
+                    publish_reopen_blocked(false);
+                    if (hold_open) {
+                        if (!lock_control_is_open() && apply_state(true) != ESP_OK) {
+                            hold_open = false;
+                            s_hold_open = false;
+                            event_log_add("Замок: не удалось включить режим Не закрывать");
+                            break;
+                        }
+                        last_sufficient_ms = now_ms;
+                        long_open_deadline_ms = now_ms + cfg.long_open_ms;
+                        led_set_state(LED_STATE_UNLOCKED);
+                        event_log_add("Замок: режим Не закрывать включён");
+                    } else {
+                        last_sufficient_ms = now_ms;
+                        long_open_deadline_ms = now_ms + cfg.long_open_ms;
+                        event_log_add("Замок: режим Не закрывать выключен");
+                    }
+                    break;
                 case LOCK_EVENT_CLOSE:
                     open_armed = false;
-                    if (lock_control_is_open() && apply_state(false) == ESP_OK) {
+                    if (!hold_open && lock_control_is_open() && apply_state(false) == ESP_OK) {
                         led_set_state(LED_STATE_LOCKED);
                         event_log_add("Замок LOCKED по единому интерфейсу");
                     }
@@ -176,7 +205,7 @@ static void lock_task(void *arg)
             }
         }
 
-        if (lock_control_is_open()) {
+        if (lock_control_is_open() && !hold_open) {
             bool close_a = cfg.timer_a_ms > 0 &&
                            now_ms - last_sufficient_ms > (int64_t)cfg.timer_a_ms;
             bool close_long = now_ms >= long_open_deadline_ms;
@@ -225,6 +254,8 @@ esp_err_t lock_control_init(void)
     ulp_controller_request(ULP_CMD_CLOSE);
 
     s_is_open = false;
+    s_hold_open = false;
+    /* Режим удержания действует только до перезагрузки и не записывается в NVS. */
     s_initialized = true;
 
     /* The lock always boots physically LOCKED (safe/closed level applied
@@ -268,6 +299,18 @@ esp_err_t lock_request_test_open(void)
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
+esp_err_t lock_request_manual_open(void)
+{
+    lock_event_t event = LOCK_EVENT_TEST_OPEN;
+    return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t lock_request_toggle_hold_open(void)
+{
+    lock_event_t event = LOCK_EVENT_TOGGLE_HOLD_OPEN;
+    return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
 esp_err_t lock_control_config_changed(void)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
@@ -295,6 +338,11 @@ bool lock_control_is_open(void)
     bool open = s_is_open;
     xSemaphoreGive(s_mutex);
     return open;
+}
+
+bool lock_control_is_hold_open(void)
+{
+    return s_initialized && s_hold_open;
 }
 
 bool lock_control_is_blocked(void)

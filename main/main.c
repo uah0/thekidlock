@@ -7,6 +7,7 @@
 #include "lock_control.h"
 #include "ulp_controller.h"
 #include "event_log.h"
+#include "wifi_ota.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -99,6 +100,7 @@ void app_main(void)
     event_log_add("ESP32-S3 start, firmware %s", APP_VERSION);
 
     ESP_ERROR_CHECK(app_config_init());
+    ESP_ERROR_CHECK(wifi_ota_init());
     ESP_ERROR_CHECK(led_init());
     led_set_state(LED_STATE_BOOT);
     ESP_ERROR_CHECK(ulp_controller_init());
@@ -108,5 +110,9 @@ void app_main(void)
     ESP_ERROR_CHECK(ap_mode_init(mode_button_callback));
     ESP_ERROR_CHECK(xTaskCreate(diagnostic_console_task, "com_diag", 6144, NULL,
                                 4, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
-    event_log_add("Нормальный режим: BLE включён, Wi-Fi и Web UI отключены");
+    esp_err_t web_err = wifi_ota_start_web();
+    if (web_err != ESP_OK && web_err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "Web UI start not scheduled: %s", esp_err_to_name(web_err));
+    }
+    event_log_add("Нормальный режим: BLE включён, Wi-Fi/Web UI запускаются при наличии настроек");
 }

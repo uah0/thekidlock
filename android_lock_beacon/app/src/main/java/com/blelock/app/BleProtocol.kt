@@ -15,7 +15,12 @@ object BleProtocol {
     val ADMIN_BONDS_UUID: UUID = UUID.fromString("6f4f0008-9a7b-4c21-8d32-5e6f708192a3")
     val ADMIN_CONTROL_UUID: UUID = UUID.fromString("6f4f0009-9a7b-4c21-8d32-5e6f708192a3")
     val ADMIN_EVENTS_UUID: UUID = UUID.fromString("6f4f000a-9a7b-4c21-8d32-5e6f708192a3")
+    val ADMIN_SCHEMA_UUID: UUID = UUID.fromString("6f4f000e-9a7b-4c21-8d32-5e6f708192a3")
     val PHONE_NAME_UUID: UUID = UUID.fromString("6f4f000b-9a7b-4c21-8d32-5e6f708192a3")
+    val OTA_CONFIG_UUID: UUID = UUID.fromString("6f4f000c-9a7b-4c21-8d32-5e6f708192a3")
+    val OTA_STATUS_UUID: UUID = UUID.fromString("6f4f000d-9a7b-4c21-8d32-5e6f708192a3")
     val SERVICE_PARCEL_UUID = ParcelUuid(SERVICE_UUID)
     val OPEN_COMMAND: ByteArray = "OPEN".toByteArray(Charsets.US_ASCII)
+    val FORCE_OPEN_COMMAND: ByteArray = "FORCE_OPEN".toByteArray(Charsets.US_ASCII)
+    val KEEP_OPEN_COMMAND: ByteArray = "KEEP_OPEN".toByteArray(Charsets.US_ASCII)
 }

@@ -8,7 +8,9 @@ idf_component_register(
         "lock_control.c"
         "ulp_controller.c"
         "ble_phone.c"
-    INCLUDE_DIRS "." "ulp"
+        "wifi_ota.c"
+        "web_ui.c"
+    INCLUDE_DIRS "." "ulp" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES
         bt
         nvs_flash
@@ -16,11 +18,21 @@ idf_component_register(
         esp_adc
         ulp
         soc
+        esp_wifi
+        esp_netif
+        esp_event
+        esp_http_client
+        esp_https_ota
+        esp_http_server
     PRIV_REQUIRES
         esp_driver_gpio
         led_strip
         driver
+        mbedtls
+        app_update
 )
+
+add_dependencies(${COMPONENT_LIB} app_build_number)
 
 set(ulp_app_name ulp_${COMPONENT_NAME})
 set(ulp_riscv_sources "ulp/main.c")

@@ -1,8 +1,15 @@
 ﻿# Gradle caches
 .gradle/
 **/.gradle/
+.gradle-local/
+**/.gradle-local/
 .gradle-project/
 **/.gradle-project/
+.gradle-codex/
+.android/
+.android-codex/
+.eim-codex/
+_codex_setup_backup_*/
 
 # Build results
 build/
@@ -24,3 +31,6 @@ Thumbs.db
 .DS_Store
 
 **/.gradle-project/
+android_lock_beacon/keystore.properties
+android_lock_beacon/*.jks
+android_lock_beacon/*.keystore
