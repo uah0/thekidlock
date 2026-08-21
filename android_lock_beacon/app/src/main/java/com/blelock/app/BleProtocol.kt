@@ -23,4 +23,6 @@ object BleProtocol {
     val OPEN_COMMAND: ByteArray = "OPEN".toByteArray(Charsets.US_ASCII)
     val FORCE_OPEN_COMMAND: ByteArray = "FORCE_OPEN".toByteArray(Charsets.US_ASCII)
     val KEEP_OPEN_COMMAND: ByteArray = "KEEP_OPEN".toByteArray(Charsets.US_ASCII)
+    val MODE_AUTO_COMMAND: ByteArray = "MODE_AUTO".toByteArray(Charsets.US_ASCII)
+    val MODE_ALWAYS_COMMAND: ByteArray = "MODE_ALWAYS".toByteArray(Charsets.US_ASCII)
 }

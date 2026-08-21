@@ -23,6 +23,8 @@ typedef enum {
     LOCK_EVENT_ARM_OPEN,
     LOCK_EVENT_TEST_OPEN,
     LOCK_EVENT_TOGGLE_HOLD_OPEN,
+    LOCK_EVENT_SET_HOLD_OPEN,
+    LOCK_EVENT_SET_AUTO,
     LOCK_EVENT_CLOSE,
     LOCK_EVENT_RSSI_HIGH,
     LOCK_EVENT_RSSI_LOW,
@@ -102,7 +104,10 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_TOGGLE_HOLD_OPEN:
-                    hold_open = !hold_open;
+                case LOCK_EVENT_SET_HOLD_OPEN:
+                case LOCK_EVENT_SET_AUTO:
+                    hold_open = event == LOCK_EVENT_TOGGLE_HOLD_OPEN ? !hold_open :
+                                event == LOCK_EVENT_SET_HOLD_OPEN;
                     s_hold_open = hold_open;
                     open_armed = true;
                     release_pending = false;
@@ -308,6 +313,12 @@ esp_err_t lock_request_manual_open(void)
 esp_err_t lock_request_toggle_hold_open(void)
 {
     lock_event_t event = LOCK_EVENT_TOGGLE_HOLD_OPEN;
+    return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t lock_request_set_hold_open(bool enabled)
+{
+    lock_event_t event = enabled ? LOCK_EVENT_SET_HOLD_OPEN : LOCK_EVENT_SET_AUTO;
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 

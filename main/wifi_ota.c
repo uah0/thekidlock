@@ -192,7 +192,7 @@ esp_err_t wifi_ota_set_config(const char *payload, size_t length)
         strcpy(s_ssid, copy);
         strcpy(s_password, password_to_save);
         strcpy(s_url, url);
-        ESP_LOGI(TAG, "configuration saved: SSID='%s', URL='%s'", s_ssid, s_url);
+        ESP_LOGI(TAG, "Wi-Fi/OTA configuration saved");
     } else {
         ESP_LOGE(TAG, "configuration NVS write failed: %s", esp_err_to_name(err));
     }
@@ -218,8 +218,7 @@ esp_err_t wifi_ota_set_runtime_config(const char *payload, size_t length)
     stop_current_web_connection();
     strcpy(s_ssid, copy);
     strcpy(s_password, password);
-    ESP_LOGI(TAG, "runtime Wi-Fi configuration received over BLE: SSID='%s' (not saved)",
-             s_ssid);
+    ESP_LOGI(TAG, "runtime Wi-Fi configuration received over BLE (not saved)");
     return wifi_ota_start_runtime_web();
 }
 

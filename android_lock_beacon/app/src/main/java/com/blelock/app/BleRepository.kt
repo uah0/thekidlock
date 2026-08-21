@@ -541,6 +541,20 @@ class BleRepository(
         }
     }
 
+    override fun setWorkingMode(alwaysOpen: Boolean) {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
+        val currentGatt = gatt
+        if (state != State.READY || characteristic == null || currentGatt == null) {
+            fail("Сначала подключитесь к зарегистрированному замку")
+            return
+        }
+        pendingLockCommand = if (alwaysOpen) "MODE_ALWAYS" else "MODE_AUTO"
+        val command = if (alwaysOpen) BleProtocol.MODE_ALWAYS_COMMAND else BleProtocol.MODE_AUTO_COMMAND
+        if (!write(characteristic, command, currentGatt)) {
+            fail("Не удалось запустить запись $pendingLockCommand")
+        }
+    }
+
     override fun readAdminConfig() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_CONFIG_UUID)
         if (characteristic == null || !enqueueGattOperation("ADMIN_CONFIG") {

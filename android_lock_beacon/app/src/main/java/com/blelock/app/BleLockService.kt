@@ -74,6 +74,7 @@ class BleLockService : Service(), BleRepository.Listener {
         override fun openNow() = repository.openNow()
         override fun forceOpenNow() = repository.forceOpenNow()
         override fun toggleKeepOpen() = repository.toggleKeepOpen()
+        override fun setWorkingMode(alwaysOpen: Boolean) = repository.setWorkingMode(alwaysOpen)
         override fun close() = Unit
 
         fun requestAdminConnection() = requestAdminConnectionInternal()

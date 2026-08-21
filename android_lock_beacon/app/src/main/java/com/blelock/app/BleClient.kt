@@ -22,5 +22,6 @@ interface BleClient {
     fun openNow()
     fun forceOpenNow()
     fun toggleKeepOpen()
+    fun setWorkingMode(alwaysOpen: Boolean)
     fun close()
 }

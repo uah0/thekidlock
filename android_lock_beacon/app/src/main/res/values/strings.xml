@@ -5,6 +5,16 @@
     <string name="grant_permissions">Выдать разрешения</string>
     <string name="local_hotspot_status">Локальная точка доступа не запущена</string>
     <string name="open_esp_web_ui">Подключиться к Web UI</string>
+    <string name="mode_auto">Автоматический режим</string>
+    <string name="mode_always_open">Постоянно открытая дверь</string>
+    <string name="web_ui_starting_hotspot">Создание локальной сети</string>
+    <string name="web_ui_sending_wifi">Передача параметров сети</string>
+    <string name="web_ui_esp_connecting">Подключение ESP32</string>
+    <string name="web_ui_waiting_address">Ожидание Web UI</string>
+    <string name="web_ui_waiting_esp">Ожидание ESP…</string>
+    <string name="web_ui_opening_browser">Открытие браузера</string>
+    <string name="web_ui_opened">Web UI открыт</string>
+    <string name="web_ui_error">Повторить подключение к Web UI</string>
     <string name="auto_open">Автоматический режим</string>
     <string name="manual_open">Открыть</string>
     <string name="manual_keep_open">Не закрывать</string>

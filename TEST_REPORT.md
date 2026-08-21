@@ -1,5 +1,33 @@
 # Отчёт о проверках
 
+## Issue #4: режимы Android и автоматический Web UI — 22.08.2026
+
+- Android debug-сборка после добавления кнопок, BLE-команд, state machine и
+  countdown: успешно.
+- Итоговая совместная проверка: Android debug — успешно; ESP32 — успешно,
+  firmware build 14, размер `0x135490`, свободно 36% минимального app-раздела.
+- Статически проверены переходы
+  `IDLE -> STARTING_HOTSPOT -> SENDING_WIFI_CREDENTIALS -> ESP_CONNECTING ->`
+  `WAITING_WEBUI_ADDRESS -> OPENING_BROWSER -> COMPLETE` и ветка `ERROR`.
+- Countdown использует monotonic time (`SystemClock.elapsedRealtime()`), при
+  нуле не останавливает BLE/Wi-Fi процесс и сохраняется только перед успешным
+  запуском браузера с URL текущей BLE-сессии.
+- Проверено статически: третья кнопка скрыта до admin-ответа ESP32, runtime
+  Wi-Fi credentials передаются через encrypted/bonded admin characteristic и
+  не выводятся в UI/лог.
+- Физическая проверка hotspot, браузера, admin/non-admin и reconnect требуется
+  на целевом Android-устройстве и прошитом ESP32-S3.
+
+## Issue #4, этап ESP32: идемпотентные рабочие режимы — 22.08.2026
+
+- Исходная сборка ESP32 до изменений: успешно, firmware build 12.
+- Исходная Android debug-сборка до изменений: успешно.
+- После добавления `MODE_AUTO`/`MODE_ALWAYS` сборка ESP32 успешна,
+  firmware build 13; свободно 36% минимального app-раздела.
+- Проверено статически: обе команды требуют encrypted/bonded BLE и используют
+  существующую очередь `lock_control`.
+- Аппаратная проверка повторной доставки команд и reconnect ещё не выполнена.
+
 ## Статус Wi-Fi/ Web UI только в оперативной памяти — 19.08.2026
 
 - Базовая сборка до изменения: успешно, firmware build 70.

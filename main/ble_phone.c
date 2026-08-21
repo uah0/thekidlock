@@ -498,7 +498,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR && characteristic == CHR_LOCK_COMMAND) {
         uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
-        char command[16] = {0};
+        char command[20] = {0};
         if (len >= sizeof(command) || ble_hs_mbuf_to_flat(ctxt->om, command,
                                                           sizeof(command) - 1, NULL) != 0) {
             return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -515,6 +515,22 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
                 return BLE_ATT_ERR_UNLIKELY;
             }
             event_log_add("BLE FORCE_OPEN принят: открытие без RSSI-порога");
+            return 0;
+        }
+        if ((len == 9 && memcmp(command, "MODE_AUTO", 9) == 0) ||
+            (len == 11 && memcmp(command, "MODE_ALWAYS", 11) == 0)) {
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(conn_handle, &desc) != 0 ||
+                !desc.sec_state.encrypted || !desc.sec_state.bonded) {
+                event_log_add("BLE MODE отклонён: соединение не encrypted/bonded");
+                return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+            }
+            bool always_open = len == 11;
+            if (lock_request_set_hold_open(always_open) != ESP_OK) {
+                event_log_add("BLE MODE: очередь автомата недоступна");
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            event_log_add("BLE MODE принят: %s", always_open ? "ALWAYS_OPEN" : "AUTO");
             return 0;
         }
         if (len == 9 && memcmp(command, "KEEP_OPEN", 9) == 0) {

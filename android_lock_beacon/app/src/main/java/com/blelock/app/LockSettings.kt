@@ -49,10 +49,17 @@ class LockSettings(context: Context) {
             preferences.edit().putString(KEY_LOCK_ADDRESS, value).commit()
         }
 
+    var webUiCountdownSeconds: Int
+        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 10).coerceIn(1, 60)
+        set(value) {
+            preferences.edit().putInt(KEY_WEB_UI_COUNTDOWN_SECONDS, value.coerceIn(1, 60)).commit()
+        }
+
     companion object {
         private const val KEY_AUTO_OPEN = "auto_open_enabled"
         private const val KEY_BATTERY_NOTICE_SHOWN = "battery_optimization_notice_shown"
         private const val KEY_AUTOSTART_NOTICE_SHOWN = "autostart_notice_shown"
         private const val KEY_LOCK_ADDRESS = "lock_address"
+        private const val KEY_WEB_UI_COUNTDOWN_SECONDS = "web_ui_countdown_seconds"
     }
 }
