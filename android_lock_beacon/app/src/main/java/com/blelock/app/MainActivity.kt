@@ -112,6 +112,8 @@ class MainActivity : Activity() {
     private var keepOpenStatusExpected = false
     private var manualCommandWaitingForReady = false
     private var pendingWorkingMode: Boolean? = null
+    private var resumeAutoAfterModeSync = false
+    private var hotspotCredentialWriteInFlight = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
     private var webUiCountdownStartSeconds = 10
@@ -196,6 +198,7 @@ class MainActivity : Activity() {
                         keepOpenCommandPending = false
                         keepOpenStatusExpected = false
                         manualCommandWaitingForReady = false
+                        hotspotCredentialWriteInFlight = false
                         resetManualButtonStates()
                     }
                     else -> Unit
@@ -205,11 +208,7 @@ class MainActivity : Activity() {
                         pendingWorkingMode = null
                         repository.setWorkingMode(alwaysOpen)
                     }
-                    pendingHotspotWifi?.let { payload ->
-                        pendingHotspotWifi = null
-                        appendLog("Передаю настройки точки доступа в ESP32 по BLE")
-                        repository.writeOtaConfig(payload)
-                    }
+                    trySendPendingHotspotCredentials()
                     if (manualCommandWaitingForReady &&
                         (manualOpenCommandPending || keepOpenCommandPending)) {
                         manualCommandWaitingForReady = false
@@ -227,6 +226,8 @@ class MainActivity : Activity() {
                 }
                 appendLog(detail)
                 if (detail == "Временные настройки точки доступа переданы") {
+                    pendingHotspotWifi = null
+                    hotspotCredentialWriteInFlight = false
                     setWebUiConnectionState(WebUiConnectionState.ESP_CONNECTING)
                     runtimeWebPending = true
                     signalHandler.removeCallbacks(otaStatusPoll)
@@ -236,6 +237,10 @@ class MainActivity : Activity() {
                     detail.contains("Wi-Fi/OTA настройки отклонены") ||
                     detail.contains("Не удалось сохранить Wi-Fi/OTA")) {
                     Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                }
+                if (detail.contains("Настройки точки доступа отклонены")) {
+                    hotspotCredentialWriteInFlight = false
+                    setWebUiConnectionState(WebUiConnectionState.ERROR)
                 }
             }
 
@@ -296,7 +301,8 @@ class MainActivity : Activity() {
                     )
                     setManualButtonBlue(manualOpenButton, !alwaysOpen)
                     settings.autoOpenEnabled = !alwaysOpen
-                    if (!alwaysOpen && !serviceMenuRequested) {
+                    if (!alwaysOpen && resumeAutoAfterModeSync && !webUiRequestPending) {
+                        resumeAutoAfterModeSync = false
                         boundService?.resumeAutomaticMode()
                     }
                     if (keepOpenStatusExpected) keepOpenStatusExpected = false
@@ -1315,6 +1321,7 @@ class MainActivity : Activity() {
             return
         }
         pendingWorkingMode = alwaysOpen
+        resumeAutoAfterModeSync = !alwaysOpen
         settings.autoOpenEnabled = !alwaysOpen
         setManualButtonBlue(manualOpenButton, !alwaysOpen)
         setManualButtonBlue(manualKeepOpenButton, alwaysOpen)
@@ -1642,6 +1649,7 @@ class MainActivity : Activity() {
     }
 
     private fun openEspWebUi() {
+        resumeAutoAfterModeSync = false
         webUiStartedAtMs = SystemClock.elapsedRealtime()
         webUiCountdownStartSeconds = settings.webUiCountdownSeconds
         setWebUiConnectionState(WebUiConnectionState.WAITING_WEBUI_ADDRESS)
@@ -1793,13 +1801,20 @@ class MainActivity : Activity() {
             return
         }
         pendingHotspotWifi = "$ssid\n$password"
-        if (repository.currentState == BleRepository.State.READY) {
-            pendingHotspotWifi = null
-            appendLog("Передаю настройки точки доступа в ESP32 по BLE")
-            repository.writeOtaConfig("$ssid\n$password")
-        } else {
+        if (!trySendPendingHotspotCredentials()) {
             appendLog("Ожидаю BLE-соединение для передачи настроек точки доступа")
         }
+    }
+
+    private fun trySendPendingHotspotCredentials(): Boolean {
+        val payload = pendingHotspotWifi ?: return false
+        if (hotspotCredentialWriteInFlight || repository.currentState != BleRepository.State.READY) {
+            return false
+        }
+        hotspotCredentialWriteInFlight = true
+        appendLog("Передаю настройки точки доступа в ESP32 по BLE")
+        repository.writeOtaConfig(payload)
+        return true
     }
 
     private fun hotspotPermissionsGranted(): Boolean {
