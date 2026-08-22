@@ -36,9 +36,19 @@ static esp_netif_t *s_sta_netif;
 static char s_ssid[WIFI_OTA_SSID_MAX + 1];
 static char s_password[WIFI_OTA_PASSWORD_MAX + 1];
 static char s_url[WIFI_OTA_URL_MAX + 1];
+static char s_saved_ssid[WIFI_OTA_SSID_MAX + 1];
+static char s_saved_password[WIFI_OTA_PASSWORD_MAX + 1];
+static char s_saved_url[WIFI_OTA_URL_MAX + 1];
 static char s_status[WIFI_OTA_STATUS_MAX];
 
 static void stop_current_web_connection(void);
+
+static void activate_saved_config(void)
+{
+    strcpy(s_ssid, s_saved_ssid);
+    strcpy(s_password, s_saved_password);
+    strcpy(s_url, s_saved_url);
+}
 
 static void set_status(const char *status)
 {
@@ -110,9 +120,9 @@ esp_err_t wifi_ota_init(void)
     nvs_handle_t handle;
     esp_err_t err = nvs_open(WIFI_OTA_NVS_NS, NVS_READONLY, &handle);
     if (err == ESP_OK) {
-        load_string(handle, "ssid", s_ssid, sizeof(s_ssid));
-        load_string(handle, "password", s_password, sizeof(s_password));
-        load_string(handle, "url", s_url, sizeof(s_url));
+        load_string(handle, "ssid", s_saved_ssid, sizeof(s_saved_ssid));
+        load_string(handle, "password", s_saved_password, sizeof(s_saved_password));
+        load_string(handle, "url", s_saved_url, sizeof(s_saved_url));
         uint8_t auto_connect = 1;
         if (nvs_get_u8(handle, "auto_connect", &auto_connect) == ESP_OK) {
             s_auto_connect = auto_connect != 0;
@@ -121,6 +131,7 @@ esp_err_t wifi_ota_init(void)
     } else if (err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
+    activate_saved_config();
     /* Сетевой статус является только текущим состоянием, а не настройкой.
      * Удаляем старый ключ, оставшийся от предыдущих версий прошивки, чтобы
      * прежний WEB_READY;IP не мог быть принят за действующее подключение. */
@@ -175,7 +186,7 @@ esp_err_t wifi_ota_set_config(const char *payload, size_t length)
                  WIFI_OTA_URL_MAX);
         return ESP_ERR_INVALID_ARG;
     }
-    const char *password_to_save = password[0] ? password : s_password;
+    const char *password_to_save = password[0] ? password : s_saved_password;
     if (password_to_save[0] == '\0') {
         ESP_LOGE(TAG, "configuration rejected: password is empty and no saved password exists");
         return ESP_ERR_INVALID_ARG;
@@ -189,9 +200,10 @@ esp_err_t wifi_ota_set_config(const char *payload, size_t length)
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
     if (err == ESP_OK) {
-        strcpy(s_ssid, copy);
-        strcpy(s_password, password_to_save);
-        strcpy(s_url, url);
+        strcpy(s_saved_ssid, copy);
+        strcpy(s_saved_password, password_to_save);
+        strcpy(s_saved_url, url);
+        activate_saved_config();
         ESP_LOGI(TAG, "Wi-Fi/OTA configuration saved");
     } else {
         ESP_LOGE(TAG, "configuration NVS write failed: %s", esp_err_to_name(err));
@@ -226,7 +238,7 @@ esp_err_t wifi_ota_get_config(char *out, size_t out_size)
 {
     if (!out || out_size == 0) return ESP_ERR_INVALID_ARG;
     /* Never expose the Wi-Fi password over BLE. */
-    int written = snprintf(out, out_size, "%s\n%s", s_ssid, s_url);
+    int written = snprintf(out, out_size, "%s\n%s", s_saved_ssid, s_saved_url);
     return written < 0 || (size_t)written >= out_size ? ESP_ERR_NO_MEM : ESP_OK;
 }
 
@@ -235,18 +247,18 @@ esp_err_t wifi_ota_get_web_config(char *out, size_t out_size)
     if (!out || out_size == 0) return ESP_ERR_INVALID_ARG;
     /* Do not expose the saved password in the browser. An empty password
      * submitted by the Web UI means keep the current password. */
-    int written = snprintf(out, out_size, "%s\n\n%s", s_ssid, s_url);
+    int written = snprintf(out, out_size, "%s\n\n%s", s_saved_ssid, s_saved_url);
     return written < 0 || (size_t)written >= out_size ? ESP_ERR_NO_MEM : ESP_OK;
 }
 
 bool wifi_ota_password_configured(void)
 {
-    return s_password[0] != '\0';
+    return s_saved_password[0] != '\0';
 }
 
 bool wifi_ota_config_matches(const char *ssid, const char *url)
 {
-    return ssid && url && strcmp(s_ssid, ssid) == 0 && strcmp(s_url, url) == 0;
+    return ssid && url && strcmp(s_saved_ssid, ssid) == 0 && strcmp(s_saved_url, url) == 0;
 }
 
 esp_err_t wifi_ota_get_status(char *out, size_t out_size)
@@ -377,6 +389,7 @@ static esp_err_t start_web_task(bool respect_auto_connect)
 
 esp_err_t wifi_ota_start_web(void)
 {
+    activate_saved_config();
     return start_web_task(true);
 }
 
@@ -429,8 +442,8 @@ done:
 
 esp_err_t wifi_ota_start(void)
 {
-    if (!s_initialized || s_ssid[0] == '\0' || s_password[0] == '\0' ||
-        s_url[0] == '\0') {
+    if (!s_initialized || s_saved_ssid[0] == '\0' || s_saved_password[0] == '\0' ||
+        s_saved_url[0] == '\0') {
         ESP_LOGE(TAG, "OTA start rejected: configuration incomplete");
         return ESP_ERR_INVALID_STATE;
     }
@@ -438,6 +451,8 @@ esp_err_t wifi_ota_start(void)
         ESP_LOGW(TAG, "OTA start ignored: task already running");
         return ESP_ERR_INVALID_STATE;
     }
+    stop_current_web_connection();
+    activate_saved_config();
     set_status("STARTING");
     s_task_running = true;
     BaseType_t task_result = xTaskCreate(ota_task, "wifi_ota", 8192, NULL, 5, NULL);
