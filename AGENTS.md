@@ -138,6 +138,12 @@ pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\build-android.ps1
 
 Для установки debug APK допускается ADB по Wi-Fi.
 
+Перед каждой установкой APK через ADB обязательно прочитать и сохранить системные
+значения Android `accelerometer_rotation` и `user_rotation`. После установки APK
+восстановить оба исходных значения и проверить их повторным чтением. Установка или
+запуск приложения не должны включать автоповорот либо изменять выбранную пользователем
+ориентацию экрана.
+
 Не менять signing configuration, `applicationId`, `versionCode` или release-настройки без явной необходимости задачи.
 
 ---
