@@ -2,6 +2,11 @@
 
 ## Issue #4: Web UI не сохраняет домашнюю Wi-Fi сеть — 22.08.2026
 
+- Физический HTTP-тест выявил второй дефект: `URLSearchParams` кодировал
+  `https://` как `https%3A%2F%2F`, но ESP32 проверяла строку без URL-decoding и
+  возвращала HTTP 400 `ESP_ERR_INVALID_ARG`.
+- Форма Wi-Fi переведена с длинной query string в POST body, параметры
+  декодируются на ESP32 с проверкой длины и формата.
 - Runtime LocalOnlyHotspot и сохранённая домашняя сеть использовали общие
   переменные `s_ssid`/`s_password`/`s_url`.
 - После передачи hotspot credentials Web UI показывал временный SSID как

@@ -2,6 +2,8 @@
 
 ## Issue #4: разделение NVS и runtime Wi-Fi — 22.08.2026
 
+- Исправлена HTTP 400 при сохранении HTTPS URL: ESP32 декодирует form-urlencoded
+  значения, а Web UI отправляет их в POST body вместо URI query string.
 - Сохранённая домашняя Wi-Fi/OTA-конфигурация больше не перезаписывается в RAM
   временными credentials Android LocalOnlyHotspot.
 - Web UI читает сохранённые SSID/URL и при пустом поле пароля сохраняет прежний

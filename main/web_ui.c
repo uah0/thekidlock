@@ -78,7 +78,7 @@ static const char INDEX_HTML[] =
 "async function loadConfig(){let c=await j('/api/config');bc.value=c.ble_connect_rssi_threshold;bd.value=c.ble_disconnect_rssi_threshold;bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;prh.value=c.phone_rssi_hold_threshold;lo.value=c.long_open_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s;ol.value=c.lock_open_level?1:0;lg.value=c.lock_gpio}"
 "async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wurl.value=c.url;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}"
 "async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения'}}"
-"async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value,url:wurl.value});await j('/api/wifi?'+q,{method:'POST'});wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}"
+"async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value,url:wurl.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}"
 "async function restartEsp(){if(!confirm('Перезагрузить ESP32?'))return;try{await j('/api/system/restart',{method:'POST'});wifiSaved.textContent='ESP32 перезагружается…'}catch(e){wifiSaved.textContent=e}}"
 "async function saveConfig(){let q=new URLSearchParams({ble_connect_rssi_threshold:bc.value,ble_disconnect_rssi_threshold:bd.value,ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,phone_rssi_hold_threshold:prh.value,long_open_ms:lo.value,timer_a_ms:ta.value,timer_b_s:tb.value,lock_gpio:lg.value,lock_open_level:ol.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено'}catch(e){saved.textContent=e}}"
 "async function blePowerSave(){let q=new URLSearchParams({power_dbm:bp.value});await j('/api/ble/power?'+q,{method:'POST'})}"
@@ -281,17 +281,69 @@ static esp_err_t wifi_get(httpd_req_t *req)
     return send_json(req, json);
 }
 
+static int hex_value(char value)
+{
+    if (value >= '0' && value <= '9') return value - '0';
+    if (value >= 'a' && value <= 'f') return value - 'a' + 10;
+    if (value >= 'A' && value <= 'F') return value - 'A' + 10;
+    return -1;
+}
+
+static bool form_url_decode(char *value)
+{
+    char *read = value;
+    char *write = value;
+    while (*read) {
+        if (*read == '+') {
+            *write++ = ' ';
+            read++;
+        } else if (*read == '%') {
+            int high = hex_value(read[1]);
+            int low = read[1] ? hex_value(read[2]) : -1;
+            if (high < 0 || low < 0) return false;
+            *write++ = (char)((high << 4) | low);
+            read += 3;
+        } else {
+            *write++ = *read++;
+        }
+    }
+    *write = '\0';
+    return true;
+}
+
+static esp_err_t wifi_form_read(httpd_req_t *req, char *form, size_t form_size)
+{
+    if (httpd_req_get_url_query_str(req, form, form_size) == ESP_OK) return ESP_OK;
+    if (req->content_len <= 0 || (size_t)req->content_len >= form_size) return ESP_ERR_INVALID_SIZE;
+    size_t received = 0;
+    while (received < (size_t)req->content_len) {
+        int count = httpd_req_recv(req, form + received, req->content_len - received);
+        if (count <= 0) return ESP_FAIL;
+        received += (size_t)count;
+    }
+    form[received] = '\0';
+    return ESP_OK;
+}
+
 static esp_err_t wifi_post(httpd_req_t *req)
 {
-    char query[420], ssid[WIFI_OTA_SSID_MAX + 1], password[WIFI_OTA_PASSWORD_MAX + 1],
+    char query[1024], ssid[WIFI_OTA_SSID_MAX * 3 + 1],
+         password[WIFI_OTA_PASSWORD_MAX * 3 + 1],
+         encoded_url[WIFI_OTA_URL_MAX * 3 + 1],
          url[WIFI_OTA_URL_MAX + 1];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+    if (wifi_form_read(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "ssid", ssid, sizeof(ssid)) != ESP_OK ||
-         httpd_query_key_value(query, "url", url, sizeof(url)) != ESP_OK) {
+        httpd_query_key_value(query, "url", encoded_url, sizeof(encoded_url)) != ESP_OK) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing Wi-Fi parameters");
     }
     password[0] = '\0';
     httpd_query_key_value(query, "password", password, sizeof(password));
+    if (!form_url_decode(ssid) || !form_url_decode(password) ||
+        !form_url_decode(encoded_url) || strlen(ssid) > WIFI_OTA_SSID_MAX ||
+        strlen(password) > WIFI_OTA_PASSWORD_MAX || strlen(encoded_url) > WIFI_OTA_URL_MAX) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid Wi-Fi parameters");
+    }
+    strcpy(url, encoded_url);
     if (password[0] == '\0' && wifi_ota_config_matches(ssid, url)) {
         ESP_LOGI(TAG, "Web UI Wi-Fi/OTA save skipped: configuration unchanged");
         return send_json(req, "{\"ok\":true,\"unchanged\":true}");
