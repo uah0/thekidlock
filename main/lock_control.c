@@ -57,7 +57,6 @@ static void lock_task(void *arg)
     int64_t long_open_deadline_ms = 0;
     bool reopen_blocked = false;
     bool hold_open = false;
-    bool open_armed = false;
     uint8_t low_rssi_count = 0;
     bool release_pending = false;
     bool release_condition_active = false;
@@ -74,10 +73,11 @@ static void lock_task(void *arg)
         if (received) {
             switch (event) {
                 case LOCK_EVENT_OPEN:
-                    open_armed = true;
-                    if (!reopen_blocked && !lock_control_is_open()) {
-                        if (apply_state(true) == ESP_OK) {
-                            last_sufficient_ms = now_ms;
+                    if (!reopen_blocked) {
+                        // OPEN is also the lease renewal from Android automatic
+                        // mode. RSSI alone must never keep the door unlocked.
+                        last_sufficient_ms = now_ms;
+                        if (!lock_control_is_open() && apply_state(true) == ESP_OK) {
                             long_open_deadline_ms = now_ms + cfg.long_open_ms;
                             led_set_state(LED_STATE_UNLOCKED);
                             event_log_add("Замок UNLOCKED по единому интерфейсу");
@@ -85,15 +85,14 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_ARM_OPEN:
-                    open_armed = true;
                     event_log_add("Замок: открытие вооружено, ожидание RSSI");
                     break;
                 case LOCK_EVENT_TEST_OPEN:
                     // Admin-initiated test open is a deliberate manual override: it must
                     // always physically actuate the lock, even while automatic BLE/RSSI
                     // reopening is being held back by the anti-flap "reopen_blocked" guard.
-                    // It intentionally does not touch open_armed, so it doesn't start
-                    // arming automatic RSSI-triggered reopen behaviour.
+                    // It intentionally does not enable automatic RSSI-triggered
+                    // reopen behaviour.
                     if (!lock_control_is_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
@@ -109,7 +108,6 @@ static void lock_task(void *arg)
                     hold_open = event == LOCK_EVENT_TOGGLE_HOLD_OPEN ? !hold_open :
                                 event == LOCK_EVENT_SET_HOLD_OPEN;
                     s_hold_open = hold_open;
-                    open_armed = true;
                     release_pending = false;
                     release_condition_active = false;
                     low_rssi_count = 0;
@@ -133,7 +131,6 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_CLOSE:
-                    open_armed = false;
                     if (!hold_open && lock_control_is_open() && apply_state(false) == ESP_OK) {
                         led_set_state(LED_STATE_LOCKED);
                         event_log_add("Замок LOCKED по единому интерфейсу");
@@ -141,16 +138,9 @@ static void lock_task(void *arg)
                     break;
                 case LOCK_EVENT_RSSI_HIGH:
                     connection_present = true;
-                    if (lock_control_is_open()) {
-                        last_sufficient_ms = now_ms;
-                    } else if (open_armed && !reopen_blocked) {
-                        if (apply_state(true) == ESP_OK) {
-                            last_sufficient_ms = now_ms;
-                            long_open_deadline_ms = now_ms + cfg.long_open_ms;
-                            led_set_state(LED_STATE_UNLOCKED);
-                            event_log_add("Замок UNLOCKED при повторном приближении телефона");
-                        }
-                    }
+                    // RSSI is an input to command validation, not an opening or
+                    // lease-renewal event by itself. The next periodic OPEN
+                    // command will actuate the lock if this signal remains high.
                     // Strict consecutive streak: any single strong sample resets the
                     // low-RSSI counter to zero. Note the trade-off: RSSI hovering right
                     // at the threshold can keep the lock permanently reopen_blocked,
@@ -188,7 +178,6 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_DISCONNECTED:
-                    open_armed = false;
                     connection_present = false;
                     release_condition_active = true;
                     if (reopen_blocked) {

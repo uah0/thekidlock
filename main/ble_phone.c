@@ -36,6 +36,8 @@ static const char *BLE_PHONE_TAG = "ble_phone";
 #define REGISTRATION_WINDOW_US (60LL * 1000000LL)
 #define MAX_BONDED_PHONES 20
 #define BLE_RSSI_DISCONNECT_GRACE_MS 6000
+#define BLE_LINK_PROBE_FAILURE_GRACE_MS 2000
+#define BLE_CONNECTION_SUPERVISION_TIMEOUT 300
 #define BOND_NAMES_NVS_NS "ble_names"
 #define OWNER_NVS_NS "ble_owner"
 #define OWNER_NVS_KEY "identity"
@@ -374,6 +376,7 @@ void ble_phone_allow_registration(void)
     s_registration_deadline_us = esp_timer_get_time() + REGISTRATION_WINDOW_US;
     portEXIT_CRITICAL(&s_registration_lock);
     event_log_add("BLE registration разрешена на 60 секунд");
+    led_set_configuration(true);
 
     // Only one BLE connection is allowed. Release an existing phone so that a
     // new handset can actually reach the Pairing/Bonding flow during the window.
@@ -488,8 +491,12 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && characteristic == CHR_LOCK_INFO) {
         static const char prefix[] = "BLE Lock ";
+        static const char build_separator[] = " | ";
         int rc = append_value(ctxt->om, prefix, sizeof(prefix) - 1);
-        return rc == 0 ? append_value(ctxt->om, APP_VERSION, strlen(APP_VERSION)) : rc;
+        if (rc == 0) rc = append_value(ctxt->om, APP_VERSION, strlen(APP_VERSION));
+        if (rc == 0) rc = append_value(ctxt->om, build_separator, sizeof(build_separator) - 1);
+        return rc == 0 ? append_value(ctxt->om, APP_BUILD_TIMESTAMP,
+                                      strlen(APP_BUILD_TIMESTAMP)) : rc;
     }
 
     if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR && characteristic == CHR_LOCK_STATUS) {
@@ -564,7 +571,10 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
             portEXIT_CRITICAL(&s_connection_lock);
             app_config_t cfg;
             app_config_get(&cfg);
-            bool sufficient = rssi_valid && rssi >= cfg.phone_rssi_threshold;
+            int8_t threshold = lock_control_is_open()
+                ? cfg.phone_rssi_hold_threshold
+                : cfg.phone_rssi_threshold;
+            bool sufficient = rssi_valid && rssi >= threshold;
             esp_err_t err = sufficient ? lock_request_open() : lock_request_arm_open();
             if (err != ESP_OK) {
                 event_log_add("BLE OPEN: очередь автомата недоступна");
@@ -572,10 +582,10 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
             }
             if (sufficient) {
                 event_log_add("BLE OPEN принят: RSSI %d >= %d dBm",
-                              rssi, cfg.phone_rssi_threshold);
+                              rssi, threshold);
             } else if (rssi_valid) {
                 event_log_add("BLE OPEN вооружён: RSSI %d < %d dBm",
-                              rssi, cfg.phone_rssi_threshold);
+                              rssi, threshold);
             } else {
                 event_log_add("BLE OPEN вооружён: ожидание первого RSSI");
             }
@@ -964,6 +974,22 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                 s_encrypted = false;
                 s_bonded = false;
                 portEXIT_CRITICAL(&s_connection_lock);
+                // A phone can turn its Bluetooth radio off without sending a
+                // link-layer disconnect. Keep the controller supervision
+                // timeout short so the only ESP32 connection slot and
+                // advertising are restored promptly instead of after 15–30 s.
+                struct ble_gap_upd_params connection_params = {
+                    .itvl_min = 12,                 // 15 ms
+                    .itvl_max = 24,                 // 30 ms
+                    .latency = 0,
+                    .supervision_timeout = BLE_CONNECTION_SUPERVISION_TIMEOUT,
+                    .min_ce_len = 0,
+                    .max_ce_len = 0,
+                };
+                int update_rc = ble_gap_update_params(event->connect.conn_handle,
+                                                       &connection_params);
+                event_log_add("BLE: параметры соединения, supervision=3 с rc=%d",
+                              update_rc);
                 bool registration_allowed;
                 ble_phone_get_registration(&registration_allowed, NULL);
                 int bond_count = 0;
@@ -1071,6 +1097,8 @@ static void rssi_task(void *arg)
     (void)arg;
     uint16_t tracked_conn_handle = BLE_HS_CONN_HANDLE_NONE;
     int64_t weak_ble_rssi_since_ms = 0;
+    int64_t link_probe_failure_since_ms = 0;
+    int64_t link_terminate_retry_ms = 0;
     int64_t advertising_policy_check_ms = 0;
     for (;;) {
         uint16_t conn_handle;
@@ -1082,7 +1110,15 @@ static void rssi_task(void *arg)
             advertising_policy_check_ms = now_ms;
             bool registration_allowed;
             ble_phone_get_registration(&registration_allowed, NULL);
-            if (conn_handle == BLE_HS_CONN_HANDLE_NONE && ble_gap_adv_active()) {
+            // A Web UI registration window uses the same blue indication as
+            // configuration mode, but only for its actual 60-second lifetime.
+            // The hardware configuration mode remains blue after the window
+            // expires until it is explicitly switched off.
+            led_set_configuration(registration_allowed || ap_mode_is_configuration());
+            if (conn_handle == BLE_HS_CONN_HANDLE_NONE && !ble_gap_adv_active()) {
+                event_log_add("BLE watchdog: соединения нет, реклама остановлена — перезапуск");
+                ble_phone_start_advertising();
+            } else if (conn_handle == BLE_HS_CONN_HANDLE_NONE && ble_gap_adv_active()) {
                 ble_addr_t peers[MAX_BONDED_PHONES];
                 int bond_count = ble_phone_get_bonded_peers(peers, MAX_BONDED_PHONES);
                 bool should_restrict = !registration_allowed && bond_count > 0 &&
@@ -1097,12 +1133,49 @@ static void rssi_task(void *arg)
         if (conn_handle != tracked_conn_handle) {
             tracked_conn_handle = conn_handle;
             weak_ble_rssi_since_ms = 0;
+            link_probe_failure_since_ms = 0;
+            link_terminate_retry_ms = 0;
         }
         if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
             struct ble_gap_conn_desc desc;
             int8_t rssi;
-            if (ble_gap_conn_find(conn_handle, &desc) == 0 &&
-                ble_gap_conn_rssi(conn_handle, &rssi) == 0) {
+            int find_rc = ble_gap_conn_find(conn_handle, &desc);
+            int rssi_rc = find_rc == 0 ? ble_gap_conn_rssi(conn_handle, &rssi) : find_rc;
+            if (find_rc != 0) {
+                bool cleared = false;
+                portENTER_CRITICAL(&s_connection_lock);
+                if (s_conn_handle == conn_handle) {
+                    s_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+                    s_rssi_valid = false;
+                    s_encrypted = false;
+                    s_bonded = false;
+                    s_peer_was_bonded = false;
+                    cleared = true;
+                }
+                portEXIT_CRITICAL(&s_connection_lock);
+                if (cleared) {
+                    event_log_add("BLE watchdog: устаревший handle=%u удалён (find=%d)",
+                                  conn_handle, find_rc);
+                    lock_control_report_disconnected();
+                    ble_phone_start_advertising();
+                }
+            } else if (rssi_rc != 0) {
+                if (link_probe_failure_since_ms == 0) {
+                    link_probe_failure_since_ms = now_ms;
+                } else if (now_ms - link_probe_failure_since_ms >=
+                               BLE_LINK_PROBE_FAILURE_GRACE_MS &&
+                           now_ms - link_terminate_retry_ms >=
+                               BLE_LINK_PROBE_FAILURE_GRACE_MS) {
+                    int terminate_rc = ble_gap_terminate(conn_handle,
+                                                         BLE_ERR_REM_USER_CONN_TERM);
+                    link_terminate_retry_ms = now_ms;
+                    event_log_add("BLE watchdog: RSSI недоступен %lld мс, разрыв handle=%u rc=%d",
+                                  now_ms - link_probe_failure_since_ms,
+                                  conn_handle, terminate_rc);
+                }
+            } else {
+                link_probe_failure_since_ms = 0;
+                link_terminate_retry_ms = 0;
                 portENTER_CRITICAL(&s_connection_lock);
                 if (s_conn_handle == conn_handle) {
                     s_last_rssi = rssi;
@@ -1154,6 +1227,8 @@ static void rssi_task(void *arg)
             }
         } else {
             weak_ble_rssi_since_ms = 0;
+            link_probe_failure_since_ms = 0;
+            link_terminate_retry_ms = 0;
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }

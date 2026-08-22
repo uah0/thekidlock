@@ -14,9 +14,10 @@ if(NOT current_number MATCHES "^[0-9]+$")
 endif()
 
 math(EXPR next_number "${current_number} + 1")
+string(TIMESTAMP build_timestamp "%Y-%m-%d %H:%M:%S")
 file(WRITE "${NUMBER_FILE}" "${next_number}\n")
 get_filename_component(header_directory "${HEADER_FILE}" DIRECTORY)
 file(MAKE_DIRECTORY "${header_directory}")
 file(WRITE "${HEADER_FILE}"
-    "#pragma once\n#define APP_BUILD_NUMBER_STRING \"${next_number}\"\n")
+    "#pragma once\n#define APP_BUILD_NUMBER_STRING \"${next_number}\"\n#define APP_BUILD_TIMESTAMP \"${build_timestamp}\"\n")
 message(STATUS "ESP32 firmware build number: ${next_number}")
