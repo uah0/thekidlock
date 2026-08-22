@@ -27,6 +27,8 @@
 #include "freertos/task.h"
 #include "services/gap/ble_svc_gap.h"
 #include "services/gatt/ble_svc_gatt.h"
+
+static const char *BLE_PHONE_TAG = "ble_phone";
 #include "nimble/nimble_port.h"
 #include "nimble/nimble_port_freertos.h"
 
@@ -604,9 +606,11 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
     }
 
     if (characteristic == CHR_OTA_CONFIG) {
+        static const char persistent_prefix[] = "PERSIST\n";
         if (!connection_is_admin(conn_handle, false)) return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
         if (ctxt->op == BLE_GATT_ACCESS_OP_READ_CHR) {
-            char value[WIFI_OTA_SSID_MAX + WIFI_OTA_PASSWORD_MAX + WIFI_OTA_URL_MAX + 4];
+            char value[sizeof(persistent_prefix) - 1 + WIFI_OTA_SSID_MAX +
+                       WIFI_OTA_PASSWORD_MAX + WIFI_OTA_URL_MAX + 4];
             esp_err_t err = wifi_ota_get_config(value, sizeof(value));
             return err == ESP_OK ? append_value(ctxt->om, value, strlen(value))
                                  : BLE_ATT_ERR_UNLIKELY;
@@ -619,6 +623,18 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
                 return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
             }
             value[len] = '\0';
+            if (len > sizeof(persistent_prefix) - 1 &&
+                memcmp(value, persistent_prefix, sizeof(persistent_prefix) - 1) == 0) {
+                const size_t payload_offset = sizeof(persistent_prefix) - 1;
+                esp_err_t err = wifi_ota_set_config(value + payload_offset, len - payload_offset);
+                if (err == ESP_OK) {
+                    event_log_add("Wi-Fi/OTA config сохранена через BLE");
+                    ESP_LOGI(BLE_PHONE_TAG, "Persistent Wi-Fi/OTA configuration saved through BLE");
+                    return 0;
+                }
+                ESP_LOGE(BLE_PHONE_TAG, "Persistent Wi-Fi/OTA BLE save failed: %s", esp_err_to_name(err));
+                return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
+            }
             return wifi_ota_set_runtime_config(value, len) == ESP_OK ? 0 : BLE_ATT_ERR_VALUE_NOT_ALLOWED;
         }
     }

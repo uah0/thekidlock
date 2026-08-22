@@ -51,6 +51,7 @@ class BleRepository(
     }
 
     private val handler = Handler(Looper.getMainLooper())
+    private var persistentOtaConfigWritePending = false
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private val lockSettings = LockSettings(context)
     private var gatt: BluetoothGatt? = null
@@ -372,9 +373,15 @@ class BleRepository(
                 return
             }
             if (characteristic.uuid == BleProtocol.OTA_CONFIG_UUID) {
-                update(State.READY, if (statusCode == BluetoothGatt.GATT_SUCCESS)
-                    "Временные настройки точки доступа переданы" else
-                    "Настройки точки доступа отклонены, GATT status: $statusCode")
+                val persistent = persistentOtaConfigWritePending
+                persistentOtaConfigWritePending = false
+                update(State.READY, if (statusCode == BluetoothGatt.GATT_SUCCESS) {
+                    if (persistent) "Wi-Fi/OTA настройки сохранены в замке"
+                    else "Временные настройки точки доступа переданы"
+                } else {
+                    if (persistent) "Wi-Fi/OTA настройки не сохранены, GATT status: $statusCode"
+                    else "Настройки точки доступа отклонены, GATT status: $statusCode"
+                })
                 return
             }
             if (characteristic.uuid == BleProtocol.PHONE_NAME_UUID) {
@@ -655,8 +662,12 @@ class BleRepository(
             fail("Сначала подключитесь к зарегистрированному замку")
             return
         }
+        persistentOtaConfigWritePending = value.startsWith(BleProtocol.OTA_PERSIST_PREFIX)
         if (!write(characteristic, value.toByteArray(Charsets.UTF_8), currentGatt)) {
-            fail("Не удалось передать настройки точки доступа")
+            val persistent = persistentOtaConfigWritePending
+            persistentOtaConfigWritePending = false
+            fail(if (persistent) "Не удалось сохранить Wi-Fi/OTA настройки"
+                 else "Не удалось передать настройки точки доступа")
         }
     }
     override fun startHomeOta() = writeAdminControl("OTA_HOME")

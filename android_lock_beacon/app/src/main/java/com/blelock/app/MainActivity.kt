@@ -1438,7 +1438,7 @@ class MainActivity : Activity() {
             appendLog("Укажите SSID и HTTPS URL прошивки")
             return
         }
-        repository.writeOtaConfig("$ssid\n$password\n$url")
+        repository.writeOtaConfig("${BleProtocol.OTA_PERSIST_PREFIX}$ssid\n$password\n$url")
     }
 
     private fun renderDeclarativeSettings(schema: DeclarativeUiSchema) {

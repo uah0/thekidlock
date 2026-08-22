@@ -19,6 +19,7 @@ object BleProtocol {
     val PHONE_NAME_UUID: UUID = UUID.fromString("6f4f000b-9a7b-4c21-8d32-5e6f708192a3")
     val OTA_CONFIG_UUID: UUID = UUID.fromString("6f4f000c-9a7b-4c21-8d32-5e6f708192a3")
     val OTA_STATUS_UUID: UUID = UUID.fromString("6f4f000d-9a7b-4c21-8d32-5e6f708192a3")
+    const val OTA_PERSIST_PREFIX = "PERSIST\n"
     val SERVICE_PARCEL_UUID = ParcelUuid(SERVICE_UUID)
     val OPEN_COMMAND: ByteArray = "OPEN".toByteArray(Charsets.US_ASCII)
     val FORCE_OPEN_COMMAND: ByteArray = "FORCE_OPEN".toByteArray(Charsets.US_ASCII)
