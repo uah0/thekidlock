@@ -113,6 +113,7 @@ class MainActivity : Activity() {
     private var manualCommandWaitingForReady = false
     private var pendingWorkingMode: Boolean? = null
     private var resumeAutoAfterModeSync = false
+    private var lastWorkingModeAlwaysOpen = false
     private var hotspotCredentialWriteInFlight = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
@@ -170,11 +171,15 @@ class MainActivity : Activity() {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
                 }
                 BleLockService.ACTION_AUTOMATIC_MODE -> {
-                    updatingAutoOpenSwitch = true
-                    autoOpenSwitch.isChecked = intent.getBooleanExtra(
+                    val active = intent.getBooleanExtra(
                         BleLockService.EXTRA_AUTOMATIC_MODE, false
                     )
+                    updatingAutoOpenSwitch = true
+                    autoOpenSwitch.isChecked = active
                     updatingAutoOpenSwitch = false
+                    if (::manualOpenButton.isInitialized) {
+                        setManualButtonBlue(manualOpenButton, active && !lastWorkingModeAlwaysOpen)
+                    }
                 }
             }
         }
@@ -295,12 +300,13 @@ class MainActivity : Activity() {
                 if (::manualKeepOpenButton.isInitialized && !status.isNullOrBlank() &&
                     (keepOpenStatusExpected || !keepOpenCommandPending)) {
                     val alwaysOpen = status.trim().equals("OPEN_HOLD", ignoreCase = true)
+                    lastWorkingModeAlwaysOpen = alwaysOpen
                     setManualButtonBlue(
                         manualKeepOpenButton,
                         alwaysOpen
                     )
-                    setManualButtonBlue(manualOpenButton, !alwaysOpen)
-                    settings.autoOpenEnabled = !alwaysOpen
+                    if (alwaysOpen) settings.autoOpenEnabled = false
+                    setManualButtonBlue(manualOpenButton, !alwaysOpen && settings.autoOpenEnabled)
                     if (!alwaysOpen && resumeAutoAfterModeSync && !webUiRequestPending) {
                         resumeAutoAfterModeSync = false
                         boundService?.resumeAutomaticMode()
@@ -660,7 +666,6 @@ class MainActivity : Activity() {
         addRow(accessCard, hotspotOpenButton)
         connectButton = navigationButton(R.string.connect_admin) { activateServiceMenu() }
         connectButton.visibility = View.GONE
-        addRow(accessCard, connectButton)
         root.addView(accessCard, spacedFullWidth())
 
         statusView = TextView(this).apply {
@@ -1118,7 +1123,9 @@ class MainActivity : Activity() {
         connectButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
         hotspotOpenButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
         updateAdminEntryButton()
+        updatingAutoOpenSwitch = true
         autoOpenSwitch.isChecked = settings.autoOpenEnabled
+        updatingAutoOpenSwitch = false
         updateAdminButtonsEnabled()
     }
 
@@ -1320,9 +1327,30 @@ class MainActivity : Activity() {
             requestMissingPermissions()
             return
         }
+        if (!alwaysOpen && settings.autoOpenEnabled && !lastWorkingModeAlwaysOpen) {
+            pendingWorkingMode = null
+            resumeAutoAfterModeSync = false
+            settings.autoOpenEnabled = false
+            setManualButtonBlue(manualOpenButton, false)
+            setManualButtonBlue(manualKeepOpenButton, false)
+            if (serviceBound) repository.setAutomaticMode(false)
+            refreshState()
+            return
+        }
+        if (!alwaysOpen && !settings.autoOpenEnabled && !lastWorkingModeAlwaysOpen) {
+            pendingWorkingMode = null
+            resumeAutoAfterModeSync = false
+            settings.autoOpenEnabled = true
+            setManualButtonBlue(manualOpenButton, true)
+            setManualButtonBlue(manualKeepOpenButton, false)
+            startAutoOpenService()
+            refreshState()
+            return
+        }
         pendingWorkingMode = alwaysOpen
         resumeAutoAfterModeSync = !alwaysOpen
         settings.autoOpenEnabled = !alwaysOpen
+        lastWorkingModeAlwaysOpen = alwaysOpen
         setManualButtonBlue(manualOpenButton, !alwaysOpen)
         setManualButtonBlue(manualKeepOpenButton, alwaysOpen)
         if (serviceBound && repository.currentState == BleRepository.State.READY) {
