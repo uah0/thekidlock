@@ -5,7 +5,6 @@ import java.util.UUID
 
 object BleProtocol {
     const val DEVICE_NAME = "BLE Lock"
-
     val SERVICE_UUID: UUID = UUID.fromString("6f4f0001-9a7b-4c21-8d32-5e6f708192a3")
     val INFO_UUID: UUID = UUID.fromString("6f4f0002-9a7b-4c21-8d32-5e6f708192a3")
     val COMMAND_UUID: UUID = UUID.fromString("6f4f0003-9a7b-4c21-8d32-5e6f708192a3")

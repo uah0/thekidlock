@@ -55,6 +55,7 @@ class BleRepository(
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private val lockSettings = LockSettings(context)
     private var gatt: BluetoothGatt? = null
+    private var connectWatchdog: Runnable? = null
     private var lockService: BluetoothGattService? = null
     private var state = State.IDLE
     private var info: String? = null
@@ -66,6 +67,11 @@ class BleRepository(
 
     fun setControlOnly(value: Boolean) {
         controlOnly = value
+    }
+
+    fun promoteToFullControl() {
+        controlOnly = false
+        if (state == State.READY) readInfo()
     }
 
     private enum class GattOperationResult { SUCCESS, FAILED, TIMEOUT, CANCELLED }
@@ -81,6 +87,9 @@ class BleRepository(
         state != State.IDLE && state != State.ERROR && state != State.DEPARTED
     private var departureMode = false
     private var adminProbePending = false
+    private var mtuNegotiationRetries = 0
+    private var mtuRetryWatchdog: Runnable? = null
+    private var postReadyMtuPending = false
     private var signalMonitoring = false
     private var refreshBondsAfterControl = false
     /* Строка, только что отправленная в CHR_ADMIN_CONFIG, ожидающая подтверждения
@@ -133,7 +142,12 @@ class BleRepository(
             fail("Таймаут GATT-операции: ${operation.name}")
         }
         activeGattTimeout = timeout
-        handler.postDelayed(timeout, GATT_OPERATION_TIMEOUT_MS)
+        val timeoutMs = if (operation.name == "LOCK_INFO" && state == State.DISCOVERING) {
+            INITIAL_SECURE_READ_TIMEOUT_MS
+        } else {
+            GATT_OPERATION_TIMEOUT_MS
+        }
+        handler.postDelayed(timeout, timeoutMs)
     }
 
     private fun finishGattOperation(result: GattOperationResult, pumpNext: Boolean) {
@@ -237,6 +251,8 @@ class BleRepository(
                 Log.w(TAG, "Ignoring stale GATT connection callback")
                 return
             }
+            connectWatchdog?.let(handler::removeCallbacks)
+            connectWatchdog = null
             Log.d(TAG, "onConnectionStateChange gattHash=${System.identityHashCode(gatt)} status=$statusCode newState=$newState bondState=${gatt.device.bondState}")
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
                 handler.post { listener.onConnectionLost() }
@@ -275,20 +291,22 @@ class BleRepository(
                 return
             }
             mtuHandshakeComplete = false
+            mtuNegotiationRetries = 0
             /* По умолчанию ATT MTU = 23 байта (~20 байт полезной нагрузки на запись).
              * Строка admin-конфигурации (rssi, таймеры, gpio, мощность маяка) длиннее
              * этого лимита и будет молча обрезана без ошибки на некоторых стеках, если
              * не договориться о большем MTU. Прошивка поддерживает до 256 байт
              * (CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256). Инициатором обмена MTU по
              * спецификации BLE должен быть центральное устройство (телефон). */
-            if (!gatt.requestMtu(REQUESTED_MTU)) {
-                Log.w(TAG, "requestMtu не удалось инициировать, продолжаем с MTU по умолчанию")
-                handler.post {
-                    if (this@BleRepository.gatt === gatt) {
-                        proceedAfterMtuNegotiation(gatt)
-                    }
+            // Protected lock frames fit the default MTU. Establish encryption
+            // and READY first on every Android version; requesting MTU before
+            // security is restored returns status=6 on Android 16 and can hang
+            // after a radio restart on Android 11.
+            handler.postDelayed({
+                if (this@BleRepository.gatt === gatt) {
+                    proceedAfterMtuNegotiation(gatt)
                 }
-            }
+            }, SECURITY_SETTLE_DELAY_MS)
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, statusCode: Int) {
@@ -296,11 +314,62 @@ class BleRepository(
                 Log.w(TAG, "Ignoring stale GATT MTU callback")
                 return
             }
+            mtuRetryWatchdog?.let(handler::removeCallbacks)
+            mtuRetryWatchdog = null
             Log.d(TAG, "onMtuChanged mtu=$mtu status=$statusCode")
+            if (postReadyMtuPending) {
+                postReadyMtuPending = false
+                // READY and the encrypted session are already established.
+                // MTU is only an optimisation for larger admin values, so a
+                // failure here must not restart the usable lock connection.
+                adminProbePending = true
+                handler.post { readAdminState() }
+                return
+            }
+            if (statusCode != BluetoothGatt.GATT_SUCCESS &&
+                mtuNegotiationRetries < MAX_MTU_NEGOTIATION_RETRIES) {
+                mtuNegotiationRetries++
+                handler.postDelayed({
+                    if (this@BleRepository.gatt === gatt) {
+                        val started = gatt.requestMtu(REQUESTED_MTU)
+                        Log.i(TAG, "MTU retry $mtuNegotiationRetries/" +
+                            "$MAX_MTU_NEGOTIATION_RETRIES started=$started")
+                        if (started) {
+                            val retryNumber = mtuNegotiationRetries
+                            val watchdog = Runnable {
+                                if (this@BleRepository.gatt === gatt &&
+                                    !mtuHandshakeComplete &&
+                                    mtuNegotiationRetries == retryNumber) {
+                                    Log.w(TAG, "MTU retry callback timeout; reconnecting GATT")
+                                    fail("Повтор MTU не завершён, быстрое переподключение")
+                                    closeGatt()
+                                }
+                            }
+                            mtuRetryWatchdog = watchdog
+                            handler.postDelayed(watchdog, MTU_RETRY_CALLBACK_TIMEOUT_MS)
+                        } else {
+                            fail("Не удалось повторить MTU, быстрое переподключение")
+                            closeGatt()
+                        }
+                    }
+                }, MTU_RETRY_DELAY_MS)
+                return
+            }
+            if (statusCode == BluetoothGatt.GATT_SUCCESS) mtuNegotiationRetries = 0
             // Android BLE callbacks are delivered from the Bluetooth binder
             // thread. Start the next ATT operation only on the repository
             // handler to avoid issuing readCharacteristic() from that thread.
-            val delay = if (statusCode == BluetoothGatt.GATT_SUCCESS) 0L else MTU_FALLBACK_DELAY_MS
+            // A successful MTU callback can arrive before the controller has
+            // finished restoring encryption for an existing bond (especially
+            // immediately after the peripheral rebooted). Starting an
+            // encrypted read in that window produces 129/133 and tears down an
+            // otherwise healthy link. Give the security state a bounded settle
+            // window before the first protected ATT operation.
+            val delay = if (statusCode == BluetoothGatt.GATT_SUCCESS) {
+                SECURITY_SETTLE_DELAY_MS
+            } else {
+                MTU_FALLBACK_DELAY_MS
+            }
             handler.postDelayed({
                 if (this@BleRepository.gatt === gatt) {
                     proceedAfterMtuNegotiation(gatt)
@@ -525,7 +594,8 @@ class BleRepository(
     override fun forceOpenNow() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
         val currentGatt = gatt
-        if (state != State.READY || characteristic == null || currentGatt == null) {
+        if ((state != State.READY && state != State.OPEN_SENT) ||
+            characteristic == null || currentGatt == null) {
             fail("Сначала подключитесь к зарегистрированному замку")
             return
         }
@@ -794,13 +864,23 @@ class BleRepository(
     }
 
     private fun connect(device: BluetoothDevice) {
+        if (gatt != null) return
         setAdminAvailability(false)
         update(State.CONNECTING, "Подключение к ${device.address}")
-        gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val newGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
             device.connectGatt(context, false, gattCallback)
         }
+        gatt = newGatt
+        val watchdog = Runnable {
+            if (gatt !== newGatt || state != State.CONNECTING) return@Runnable
+            Log.w(TAG, "connectGatt callback timeout; recreating GATT")
+            closeGatt()
+            fail("Таймаут подключения BLE")
+        }
+        connectWatchdog = watchdog
+        handler.postDelayed(watchdog, GATT_CONNECT_TIMEOUT_MS)
     }
 
     private fun pairOrConnect(device: BluetoothDevice) {
@@ -883,8 +963,13 @@ class BleRepository(
                     listener.onLockData(info, status)
                     update(State.READY, "Замок готов к защищённой команде")
                     scheduleRssiPoll()
-                    adminProbePending = true
-                    handler.post { readAdminState() }
+                    val currentGatt = gatt
+                    postReadyMtuPending = currentGatt != null &&
+                        currentGatt.requestMtu(REQUESTED_MTU)
+                    if (!postReadyMtuPending) {
+                        adminProbePending = true
+                        handler.post { readAdminState() }
+                    }
                 }
                 BleProtocol.ADMIN_CONFIG_UUID -> {
                     listener.onAdminConfig(text)
@@ -1017,6 +1102,8 @@ class BleRepository(
     private fun fail(message: String) = update(State.ERROR, message)
 
     private fun closeGatt() {
+        connectWatchdog?.let(handler::removeCallbacks)
+        connectWatchdog = null
         stopRssiPolling()
         finishGattOperation(GattOperationResult.CANCELLED, pumpNext = false)
         activeGattTimeout?.let(handler::removeCallbacks)
@@ -1024,6 +1111,10 @@ class BleRepository(
         gattQueue.clear()
         activeGattOperation = null
         mtuHandshakeComplete = false
+        mtuNegotiationRetries = 0
+        postReadyMtuPending = false
+        mtuRetryWatchdog?.let(handler::removeCallbacks)
+        mtuRetryWatchdog = null
         adminProbePending = false
         pendingConfigVerification = null
         lockService = null
@@ -1039,8 +1130,14 @@ class BleRepository(
         private const val PHONE_NAME_MAX_BYTES = 20
         private const val RSSI_POLL_INTERVAL_MS = 2_000L
         private const val GATT_OPERATION_TIMEOUT_MS = 10_000L
+        private const val INITIAL_SECURE_READ_TIMEOUT_MS = 3_000L
+        private const val GATT_CONNECT_TIMEOUT_MS = 8_000L
         /* Совпадает с CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256 в прошивке ESP32. */
         private const val REQUESTED_MTU = 256
         private const val MTU_FALLBACK_DELAY_MS = 500L
+        private const val MAX_MTU_NEGOTIATION_RETRIES = 2
+        private const val MTU_RETRY_DELAY_MS = 400L
+        private const val MTU_RETRY_CALLBACK_TIMEOUT_MS = 1_500L
+        private const val SECURITY_SETTLE_DELAY_MS = 700L
     }
 }

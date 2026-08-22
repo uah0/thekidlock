@@ -29,7 +29,7 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         val buildTimestamp = LocalDateTime.now()
-            .format(DateTimeFormatter.ofPattern("yy-MM-dd HH:mm"))
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         buildConfigField("String", "BUILD_TIMESTAMP", "\"$buildTimestamp\"")
     }
 

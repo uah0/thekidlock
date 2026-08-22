@@ -50,6 +50,13 @@ class BleLockService : Service(), BleRepository.Listener {
 
         fun unregisterClient(client: BleRepository.Listener) {
             clients.remove(client)
+            if (clients.isEmpty() && !settings.autoOpenEnabled && mode == Mode.ADMIN) {
+                // ADMIN is also the connection-holding mode used while the main
+                // screen is visible. Once the last UI client goes away and
+                // automatic opening is disabled, there is no reason to retain
+                // the GATT session or the started service.
+                setAutomaticModeInternal(false)
+            }
         }
 
         override val currentState: BleRepository.State
@@ -153,6 +160,16 @@ class BleLockService : Service(), BleRepository.Listener {
         }
         return START_STICKY
     }
+    private val openLeaseRenewal = object : Runnable {
+        override fun run() {
+            if (stopping || mode != Mode.AUTO_OPEN || !repositoryActive) return
+            if (repository.currentState == BleRepository.State.READY ||
+                repository.currentState == BleRepository.State.OPEN_SENT) {
+                repository.openNow()
+            }
+            handler.postDelayed(this, OPEN_LEASE_RENEW_INTERVAL_MS)
+        }
+    }
     private val otaRecovery = Runnable {
         if (stopping || mode != Mode.OTA || !bluetoothAvailable) return@Runnable
         mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
@@ -202,9 +219,19 @@ class BleLockService : Service(), BleRepository.Listener {
         when (state) {
             BleRepository.State.READY -> {
                 resetReconnectBackoff()
-                if (mode == Mode.AUTO_OPEN && !openSentForPresence) repository.openNow()
+                if (mode == Mode.AUTO_OPEN) {
+                    if (!openSentForPresence) repository.openNow()
+                    handler.removeCallbacks(openLeaseRenewal)
+                    handler.postDelayed(openLeaseRenewal, OPEN_LEASE_RENEW_INTERVAL_MS)
+                }
             }
-            BleRepository.State.OPEN_SENT -> openSentForPresence = true
+            BleRepository.State.OPEN_SENT -> {
+                openSentForPresence = true
+                if (mode == Mode.AUTO_OPEN) {
+                    handler.removeCallbacks(openLeaseRenewal)
+                    handler.postDelayed(openLeaseRenewal, OPEN_LEASE_RENEW_INTERVAL_MS)
+                }
+            }
             BleRepository.State.IDLE, BleRepository.State.ERROR -> {
                 if (stopping) return
                 if (mode == Mode.OTA) {
@@ -320,6 +347,15 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun scheduleReconnect() {
+        if (mode == Mode.ADMIN && clients.isNotEmpty()) {
+            // The visible application must recover its control connection
+            // promptly. Background automatic mode keeps exponential backoff to
+            // avoid wasting the battery while the lock is genuinely absent.
+            reconnectAttempt = 0
+            Log.i(TAG, "BLE UI reconnect scheduled in ${UI_RECONNECT_DELAY_MS}ms")
+            scheduleSearch(UI_RECONNECT_DELAY_MS)
+            return
+        }
         val exponent = reconnectAttempt.coerceAtMost(RECONNECT_BACKOFF_STEPS)
         val delay = (RECONNECT_DELAY_MS shl exponent).coerceAtMost(RECONNECT_MAX_DELAY_MS)
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(RECONNECT_BACKOFF_STEPS + 1)
@@ -339,17 +375,23 @@ class BleLockService : Service(), BleRepository.Listener {
         mode = Mode.ADMIN
         broadcastAutomaticMode(false)
         openSentForPresence = false
+        handler.removeCallbacks(searchRunnable)
+        handler.removeCallbacks(departureRecovery)
         if (!repositoryActive) {
             repository = BleRepository(this, this, controlOnly = false)
             repositoryActive = true
             startAsForeground(getString(R.string.service_starting))
         } else {
-            repository.setControlOnly(false)
+            repository.promoteToFullControl()
         }
-        // Automatic mode may have an open GATT session without completing
-        // the administrative security handshake. Always start a fresh
-        // discovery for the explicit Service action.
-        repository.findAndConnect()
+        // Opening the UI must never tear down a usable automatic-mode GATT
+        // session. A forced rediscovery here used to race ACTION_START and
+        // create two consecutive connectGatt attempts; after an app force-stop
+        // that race could push recovery into the 30-second backoff. The active
+        // encrypted session can be promoted to full-control mode in place, and
+        // an in-flight connection will observe the updated controlOnly flag
+        // when its handshake completes.
+        if (!repository.isConnectingOrConnected()) repository.findAndConnect()
     }
 
     private fun startHomeOtaInternal(): Boolean {
@@ -382,20 +424,39 @@ class BleLockService : Service(), BleRepository.Listener {
     private fun setAutomaticModeInternal(enabled: Boolean) {
         if (stopping) return
         if (!enabled) {
-            mode = Mode.IDLE
+            handler.removeCallbacks(openLeaseRenewal)
             openSentForPresence = false
             handler.removeCallbacks(searchRunnable)
             handler.removeCallbacks(departureRecovery)
+            broadcastAutomaticMode(false)
+
+            if (clients.isNotEmpty() && hasPermissions() && bluetoothAvailable) {
+                // Turning automatic opening off only disables OPEN automation.
+                // Keep the BLE control connection alive while the app is open.
+                mode = Mode.ADMIN
+                if (!repositoryActive) {
+                    repository = BleRepository(this, this, controlOnly = false)
+                    repositoryActive = true
+                } else {
+                    repository.setControlOnly(false)
+                }
+                startAsForeground(getString(R.string.service_starting))
+                if (!repository.isConnectingOrConnected()) scheduleSearch(0)
+                return
+            }
+
+            mode = Mode.IDLE
             if (repositoryActive) {
                 repository.close()
                 repositoryActive = false
             }
-            broadcastAutomaticMode(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
             return
         }
 
         mode = Mode.AUTO_OPEN
+        handler.removeCallbacks(openLeaseRenewal)
         if (!hasPermissions()) {
             mode = Mode.IDLE
             broadcastAutomaticMode(false)
@@ -616,6 +677,7 @@ class BleLockService : Service(), BleRepository.Listener {
         private const val CHANNEL_ID = "ble_lock_service"
         private const val NOTIFICATION_ID = 1001
         private const val RECONNECT_DELAY_MS = 3_000L
+        private const val UI_RECONNECT_DELAY_MS = 1_000L
         private const val RECONNECT_MAX_DELAY_MS = 30_000L
         private const val RECONNECT_BACKOFF_STEPS = 4
         /* Отдельная (короткая) пауза перед стартом пассивного скана в waitForDeparture():
@@ -623,7 +685,11 @@ class BleLockService : Service(), BleRepository.Listener {
          * так что нет причин ждать столько же, сколько перед scheduleSearch(). Небольшая
          * задержка всё же оставлена, чтобы дать стеку осесть сразу после closeGatt(). */
         private const val DEPARTURE_SCAN_DELAY_MS = 300L
-        private const val BLUETOOTH_RESTART_DELAY_MS = 500L
+        // Android 6–11 reports STATE_ON before its BLE/GATT security state is
+        // ready. ESP also needs up to three seconds to expire the old radio
+        // link. Starting immediately creates a doomed first GATT session.
+        private const val BLUETOOTH_RESTART_DELAY_MS = 8_000L
+        private const val OPEN_LEASE_RENEW_INTERVAL_MS = 2_000L
         private const val DEPARTURE_RECOVERY_MS = 30_000L
         private const val OTA_RECOVERY_DELAY_MS = 15_000L
         private const val SERVICE_RECOVERY_DELAY_MS = 5_000L
