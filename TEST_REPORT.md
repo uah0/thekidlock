@@ -1,5 +1,21 @@
 # Отчёт о проверках
 
+## Аудит сохранения Wi-Fi/OTA — 22.08.2026
+
+- Исходная Android debug-сборка `build-android.ps1`: успешно.
+- Исходная ESP32-сборка `build-esp32.ps1`: успешно, firmware build 21, размер
+  `0x135490`, свободно 36% минимального app-раздела.
+- На физическом телефоне Web UI открыт процессом Chrome по
+  `http://10.116.222.54/`; ESP32 отвечает, ICMP 3/3, потерь 0%.
+- Отсутствие нажатия Web-кнопки в BLE-логе ожидаемо для HTTP-запроса Chrome.
+- Подтверждена цепочка Web UI: `saveWifi() -> POST /api/wifi -> wifi_post() ->
+  wifi_ota_set_config()`.
+- Выявлена неверная цепочка Android/BLE:
+  `saveOtaConfig(SSID,password,URL) -> OTA_CONFIG ->
+  wifi_ota_set_runtime_config(SSID,password)`.
+- Рабочий код не изменялся; физическая проверка NVS требует serial-лога ESP32
+  либо чтения конфигурации после перезапуска.
+
 ## Issue #4: устранение гонки hotspot/BLE — 22.08.2026
 
 - Runtime-лог физического телефона подтвердил гонку: hotspot создан, затем
