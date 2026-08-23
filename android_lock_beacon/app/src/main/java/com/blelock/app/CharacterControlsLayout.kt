@@ -75,7 +75,7 @@ class CharacterControlsLayout @JvmOverloads constructor(
     }
 
     private fun updateTransformAndTargets(width: Int, height: Int) {
-        if (width <= 0 || height <= 0) return
+        if (width <= 1 || height <= 1) return
 
         val drawable = imageView.drawable
         val sourceWidth = (drawable?.intrinsicWidth ?: SOURCE_WIDTH).coerceAtLeast(1)
@@ -123,14 +123,16 @@ class CharacterControlsLayout @JvmOverloads constructor(
             bottom = cy + minTouch / 2f
         }
 
-        left = left.coerceIn(0f, width.toFloat())
-        top = top.coerceIn(0f, height.toFloat())
+        val maxLeft = (width - 1).toFloat()
+        val maxTop = (height - 1).toFloat()
+        left = left.coerceIn(0f, maxLeft)
+        top = top.coerceIn(0f, maxTop)
         right = right.coerceIn(left + 1f, width.toFloat())
         bottom = bottom.coerceIn(top + 1f, height.toFloat())
 
         button.layoutParams = LayoutParams(
-            (right - left).roundToInt(),
-            (bottom - top).roundToInt()
+            (right - left).roundToInt().coerceAtLeast(1),
+            (bottom - top).roundToInt().coerceAtLeast(1)
         ).apply {
             leftMargin = left.roundToInt()
             topMargin = top.roundToInt()
@@ -161,7 +163,10 @@ class CharacterControlsLayout @JvmOverloads constructor(
     private fun setActive(button: Button, active: Boolean) {
         button.isActivated = active
         button.setTextColor(if (active) 0xFF64B5F6.toInt() else Color.WHITE)
-        button.setTypeface(button.typeface, if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        button.setTypeface(
+            button.typeface,
+            if (active) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL
+        )
         button.setShadowLayer(if (active) 7f else 5f, 0f, 2f, Color.BLACK)
         button.invalidate()
     }
