@@ -92,6 +92,7 @@ static bool s_advertising_restricted;
 #define ADMIN_SCHEMA_CHUNK_B64_MAX ((ADMIN_SCHEMA_CHUNK_BYTES + 2) / 3 * 4 + 1)
 static uint16_t s_admin_schema_chunk_index;
 static bool s_peer_was_bonded;
+static bool s_peer_registration_candidate;
 static bool s_reboot_pending;
 
 static esp_err_t ble_phone_start_advertising(void);
@@ -160,23 +161,10 @@ static esp_err_t ble_phone_refresh_accept_list(bool restricted, int *bond_count)
 static void reboot_task(void *arg)
 {
     (void)arg;
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-}
-
-static void disconnect_after_bond_task(void *arg)
-{
-    uint16_t conn_handle = (uint16_t)(uintptr_t)arg;
+    // Leave enough time for bond-store/NVS writes and final BLE security
+    // responses to settle before resetting the controller.
     vTaskDelay(pdMS_TO_TICKS(1000));
-
-    portENTER_CRITICAL(&s_connection_lock);
-    bool still_connected = s_conn_handle == conn_handle;
-    portEXIT_CRITICAL(&s_connection_lock);
-    if (still_connected) {
-        event_log_add("BLE registration: новый bond сохранён, освободить соединение");
-        ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-    }
-    vTaskDelete(NULL);
+    esp_restart();
 }
 
 void ble_phone_get_status(ble_phone_status_t *out)
@@ -375,7 +363,7 @@ void ble_phone_allow_registration(void)
     portENTER_CRITICAL(&s_registration_lock);
     s_registration_deadline_us = esp_timer_get_time() + REGISTRATION_WINDOW_US;
     portEXIT_CRITICAL(&s_registration_lock);
-    event_log_add("BLE registration разрешена на 60 секунд");
+    event_log_add("BLE registration: окно открыто на 60 секунд");
     led_set_configuration(true);
 
     // Only one BLE connection is allowed. Release an existing phone so that a
@@ -385,7 +373,7 @@ void ble_phone_allow_registration(void)
     conn_handle = s_conn_handle;
     portEXIT_CRITICAL(&s_connection_lock);
     if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
-        event_log_add("BLE registration: текущее соединение отключается");
+        event_log_add("BLE registration: существующее соединение разорвано для регистрации");
         ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
     } else {
         ble_phone_start_advertising();
@@ -996,7 +984,13 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                 bool bonded_peer = peer_has_bond(event->connect.conn_handle, &bond_count);
                 portENTER_CRITICAL(&s_connection_lock);
                 s_peer_was_bonded = bonded_peer;
+                s_peer_registration_candidate = registration_allowed && !bonded_peer;
                 portEXIT_CRITICAL(&s_connection_lock);
+                if (bonded_peer && registration_allowed) {
+                    event_log_add("BLE registration: старый bonded peer отклонён");
+                    ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                    return 0;
+                }
                 if (!bonded_peer && !registration_allowed) {
                     event_log_add("BLE security: новый телефон отклонён, регистрация закрыта");
                     ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
@@ -1006,6 +1000,9 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                     event_log_add("BLE security: лимит 20 bonds, удалите телефон через Web UI");
                     ble_gap_terminate(event->connect.conn_handle, BLE_ERR_REM_USER_CONN_TERM);
                     return 0;
+                }
+                if (!bonded_peer) {
+                    event_log_add("BLE registration: новый peer начал pairing");
                 }
                 // Не инициируем security проактивно здесь: на Android это создаёт
                 // гонку с его собственным реактивным pairing, который стек телефона
@@ -1033,6 +1030,7 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
             s_encrypted = false;
             s_bonded = false;
             s_peer_was_bonded = false;
+            s_peer_registration_candidate = false;
             portEXIT_CRITICAL(&s_connection_lock);
             lock_control_report_disconnected();
             ble_phone_start_advertising();
@@ -1044,15 +1042,29 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                 event_log_add("BLE security: encrypted=%u bonded=%u key=%u",
                               desc.sec_state.encrypted, desc.sec_state.bonded,
                               desc.sec_state.key_size);
-                bool disconnect_new_bond;
+                bool registration_candidate;
                 portENTER_CRITICAL(&s_connection_lock);
                 s_encrypted = desc.sec_state.encrypted;
                 s_bonded = desc.sec_state.bonded;
-                disconnect_new_bond = desc.sec_state.encrypted && desc.sec_state.bonded &&
-                                      !s_peer_was_bonded && ap_mode_is_configuration();
-                if (disconnect_new_bond) s_peer_was_bonded = true;
+                registration_candidate = s_peer_registration_candidate &&
+                                         !s_peer_was_bonded;
                 portEXIT_CRITICAL(&s_connection_lock);
-                if (disconnect_new_bond) {
+
+                bool registration_allowed;
+                ble_phone_get_registration(&registration_allowed, NULL);
+                bool new_bond_saved = registration_candidate && registration_allowed &&
+                                      desc.sec_state.encrypted && desc.sec_state.bonded &&
+                                      peer_has_bond(event->enc_change.conn_handle, NULL);
+                if (new_bond_saved) {
+                    portENTER_CRITICAL(&s_registration_lock);
+                    s_registration_deadline_us = 0;
+                    portEXIT_CRITICAL(&s_registration_lock);
+                    portENTER_CRITICAL(&s_connection_lock);
+                    s_peer_was_bonded = true;
+                    s_peer_registration_candidate = false;
+                    portEXIT_CRITICAL(&s_connection_lock);
+                    event_log_add("BLE registration: новый bond успешно создан и сохранён");
+                    event_log_add("BLE registration: окно закрыто после успешного bond");
                     ble_addr_t owner;
                     esp_err_t owner_err = owner_load(&owner);
                     if (owner_err == ESP_ERR_NVS_NOT_FOUND) {
@@ -1065,15 +1077,41 @@ static int advertising_event(struct ble_gap_event *event, void *arg)
                             event_log_add("BLE owner: ошибка сохранения владельца");
                         }
                     }
-                }
-                if (disconnect_new_bond &&
-                    xTaskCreate(disconnect_after_bond_task, "ble_bond_done", 3072,
-                                (void *)(uintptr_t)event->enc_change.conn_handle,
-                                5, NULL) != pdPASS) {
-                    event_log_add("BLE registration: не удалось запустить автоотключение");
+                    if (!s_reboot_pending) {
+                        s_reboot_pending = true;
+                        event_log_add("BLE registration: запланирован reboot после регистрации");
+                        if (xTaskCreate(reboot_task, "ble_bond_reboot", 3072,
+                                        NULL, 5, NULL) != pdPASS) {
+                            s_reboot_pending = false;
+                            event_log_add("BLE registration: не удалось запланировать reboot");
+                        }
+                    }
+                } else if (registration_candidate && !registration_allowed) {
+                    event_log_add("BLE registration: pairing не завершён до закрытия окна");
+                    ble_gap_terminate(event->enc_change.conn_handle,
+                                      BLE_ERR_REM_USER_CONN_TERM);
+                } else if (registration_candidate &&
+                           (!desc.sec_state.encrypted || !desc.sec_state.bonded)) {
+                    event_log_add("BLE registration: pairing/bonding завершился ошибкой");
+                    ble_gap_terminate(event->enc_change.conn_handle,
+                                      BLE_ERR_REM_USER_CONN_TERM);
+                } else if (registration_candidate) {
+                    event_log_add("BLE registration: bonding не сохранён, reboot отменён");
+                    ble_gap_terminate(event->enc_change.conn_handle,
+                                      BLE_ERR_REM_USER_CONN_TERM);
                 }
             } else {
+                bool registration_candidate;
+                portENTER_CRITICAL(&s_connection_lock);
+                registration_candidate = s_peer_registration_candidate;
+                portEXIT_CRITICAL(&s_connection_lock);
                 event_log_add("BLE security failed: %d", event->enc_change.status);
+                if (registration_candidate) {
+                    event_log_add("BLE registration: pairing/bonding завершился ошибкой: %d",
+                                  event->enc_change.status);
+                    ble_gap_terminate(event->enc_change.conn_handle,
+                                      BLE_ERR_REM_USER_CONN_TERM);
+                }
             }
             return 0;
         }
@@ -1137,6 +1175,25 @@ static void rssi_task(void *arg)
             link_terminate_retry_ms = 0;
         }
         if (conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            bool registration_candidate;
+            portENTER_CRITICAL(&s_connection_lock);
+            registration_candidate = s_peer_registration_candidate;
+            portEXIT_CRITICAL(&s_connection_lock);
+            if (registration_candidate) {
+                bool registration_allowed;
+                ble_phone_get_registration(&registration_allowed, NULL);
+                if (!registration_allowed) {
+                    portENTER_CRITICAL(&s_connection_lock);
+                    if (s_conn_handle == conn_handle) {
+                        s_peer_registration_candidate = false;
+                    }
+                    portEXIT_CRITICAL(&s_connection_lock);
+                    event_log_add("BLE registration: окно истекло до завершения pairing");
+                    ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                    vTaskDelay(pdMS_TO_TICKS(100));
+                    continue;
+                }
+            }
             struct ble_gap_conn_desc desc;
             int8_t rssi;
             int find_rc = ble_gap_conn_find(conn_handle, &desc);
@@ -1150,6 +1207,7 @@ static void rssi_task(void *arg)
                     s_encrypted = false;
                     s_bonded = false;
                     s_peer_was_bonded = false;
+                    s_peer_registration_candidate = false;
                     cleared = true;
                 }
                 portEXIT_CRITICAL(&s_connection_lock);
