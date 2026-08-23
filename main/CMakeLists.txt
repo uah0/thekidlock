@@ -30,6 +30,8 @@ idf_component_register(
         driver
         mbedtls
         app_update
+    EMBED_TXTFILES
+        "web/index.html"
 )
 
 add_dependencies(${COMPONENT_LIB} app_build_number)

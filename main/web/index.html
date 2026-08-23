@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLE Lock</title>
+<style>
+:root{
+  --bg:#0a0c0f;
+  --surface:#12151b;
+  --surface-2:#181d24;
+  --surface-3:#1e242c;
+  --border:#242a33;
+  --border-soft:#1a1f26;
+  --text:#e8ecf1;
+  --text-dim:#8b93a3;
+  --text-faint:#565f6c;
+  --accent:#4da8ff;
+  --accent-dim:rgba(77,168,255,.14);
+  --good:#2dd4a8;
+  --good-dim:rgba(45,212,168,.14);
+  --warn:#f5a623;
+  --warn-dim:rgba(245,166,35,.14);
+  --bad:#f0555f;
+  --bad-dim:rgba(240,85,95,.14);
+  --radius:12px;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;font-family:var(--sans);background-color:var(--bg);color:var(--text);
+  background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.035) 1px, transparent 0);
+  background-size:22px 22px;
+  min-height:100vh;
+}
+.wrap{max-width:980px;margin:0 auto;padding:20px 16px 64px}
+a{color:var(--accent)}
+button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
+::selection{background:var(--accent-dim)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* top bar */
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.01em}
+.brand .meta{font-family:var(--mono);font-size:12px;color:var(--text-faint)}
+.tag{
+  font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.09em;
+  color:var(--accent);background:var(--accent-dim);border:1px solid rgba(77,168,255,.25);
+  border-radius:5px;padding:2px 6px;display:inline-block;text-transform:uppercase;
+}
+
+/* panels */
+.panel{
+  background:linear-gradient(180deg,var(--surface),var(--surface) 60%,var(--surface-2));
+  border:1px solid var(--border);border-radius:var(--radius);
+  padding:18px 18px 20px;margin:0 0 14px;
+}
+.panel-head{display:flex;align-items:center;gap:9px;margin-bottom:14px}
+.panel-head h2{font-size:14px;margin:0;font-weight:650;letter-spacing:.01em}
+.panel-sub{color:var(--text-dim);font-size:12.5px;margin:10px 0 0;line-height:1.5}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media (max-width:760px){.grid-2{grid-template-columns:1fr}}
+
+/* hero */
+.hero{
+  border:1px solid var(--border);border-radius:var(--radius);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(77,168,255,.10), transparent 55%),
+    linear-gradient(180deg,var(--surface),var(--surface-2));
+  padding:20px 20px 22px;margin-bottom:16px;
+}
+.hero-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+.led-rail{display:flex;gap:16px;flex-wrap:wrap}
+.led-item{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-dim);font-family:var(--mono)}
+.led{width:8px;height:8px;border-radius:50%;background:#2a2f38;display:inline-block;box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+.led.on{background:var(--accent);box-shadow:0 0 9px 1px rgba(77,168,255,.65)}
+.led-item.err .led.on{background:var(--bad);box-shadow:0 0 9px 1px rgba(240,85,95,.6)}
+
+.hero-main{display:flex;align-items:center;gap:28px;flex-wrap:wrap}
+.lock-state{display:flex;align-items:center;gap:12px;min-width:170px}
+.state-dot{width:13px;height:13px;border-radius:50%;background:var(--text-faint);flex:none}
+.lock-state.good .state-dot{background:var(--good);box-shadow:0 0 14px 2px rgba(45,212,168,.55)}
+.lock-state.warn .state-dot{background:var(--warn);box-shadow:0 0 14px 2px rgba(245,166,35,.55);animation:pulse 1.6s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.lock-state.warn .state-dot{animation:none}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+.state-text{font-family:var(--mono);font-size:22px;font-weight:700;letter-spacing:.03em}
+.lock-state.good .state-text{color:var(--good)}
+.lock-state.warn .state-text{color:var(--warn)}
+.state-err{font-family:var(--mono);font-size:11.5px;color:var(--bad);margin-top:2px}
+
+.hero-metrics{display:flex;gap:26px;flex-wrap:wrap}
+.metric{display:flex;flex-direction:column;gap:5px}
+.metric-label{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.08em}
+.metric-value{font-family:var(--mono);font-size:13.5px;color:var(--text)}
+.rssi{display:flex;align-items:flex-end;gap:8px}
+.rssi-bars{display:flex;align-items:flex-end;gap:2.5px;height:16px}
+.rssi-bars .bar{width:4px;background:#2a2f38;border-radius:1px}
+.rssi-bars .bar:nth-child(1){height:35%}
+.rssi-bars .bar:nth-child(2){height:58%}
+.rssi-bars .bar:nth-child(3){height:78%}
+.rssi-bars .bar:nth-child(4){height:100%}
+.rssi-bars .bar.on{background:var(--accent)}
+.rssi-bars.weak .bar.on{background:var(--warn)}
+
+.hero-actions{margin-left:auto}
+
+/* buttons */
+button{
+  background:var(--surface-3);border:1px solid var(--border);color:var(--text);
+  border-radius:8px;padding:9px 14px;cursor:pointer;font-weight:560;
+  transition:background-color .15s,border-color .15s,transform .08s;
+}
+button:hover{background:#232a34;border-color:#2e3542}
+button:active{transform:scale(.98)}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#04121f;font-weight:700}
+.btn-primary:hover{background:#66b7ff;border-color:#66b7ff}
+.btn-danger{background:transparent;border-color:rgba(240,85,95,.35);color:#ff8790}
+.btn-danger:hover{background:var(--bad-dim);border-color:var(--bad)}
+.btn-ghost{background:transparent}
+button.command-ok{background:var(--good);border-color:var(--good);color:#04231b}
+button:disabled{opacity:.45;cursor:default}
+
+/* inputs */
+input[type=number],input[type=text],input[type=password],select{
+  background:var(--surface-2);border:1px solid var(--border);color:var(--text);
+  border-radius:7px;padding:9px 10px;width:100%;
+}
+input:focus,select:focus{border-color:var(--accent)}
+.field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.field label{font-size:12.5px;color:var(--text-dim)}
+.field-input{display:flex;align-items:center;gap:8px}
+.field-input .unit{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+.field-row{display:flex;gap:14px;align-items:flex-start}
+.actions-row{display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap}
+.saved-msg{font-size:12.5px;color:var(--good);font-family:var(--mono)}
+
+/* toggle switch */
+.switch-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-dim);margin-top:6px}
+.switch{position:relative;display:inline-block;width:36px;height:20px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch .track{position:absolute;inset:0;background:var(--surface-3);border:1px solid var(--border);border-radius:999px;transition:background-color .15s}
+.switch .thumb{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--text-faint);transition:transform .15s,background-color .15s}
+.switch input:checked + .track{background:var(--accent-dim);border-color:var(--accent)}
+.switch input:checked + .track .thumb{transform:translateX(16px);background:var(--accent)}
+.switch input:focus-visible + .track{outline:2px solid var(--accent);outline-offset:2px}
+
+/* register / telemetry table */
+.chips-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.chip{
+  flex:1 1 140px;background:var(--surface-2);border:1px solid var(--border-soft);border-radius:9px;
+  padding:10px 12px;
+}
+.chip .k{font-size:10.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.07em;margin-bottom:4px}
+.chip .v{font-family:var(--mono);font-size:14px}
+.reg{width:100%;border-collapse:collapse;font-size:13px}
+.reg td{padding:7px 4px;border-bottom:1px solid var(--border-soft)}
+.reg tr:last-child td{border-bottom:none}
+.reg td:first-child{color:var(--text-dim)}
+.reg td:last-child{font-family:var(--mono);text-align:right;color:var(--text)}
+.badge-hex{
+  font-family:var(--mono);font-size:12px;padding:1px 7px;border-radius:5px;
+  background:var(--surface-3);border:1px solid var(--border)
+}
+.badge-hex.flag{background:var(--warn-dim);border-color:rgba(245,166,35,.3);color:var(--warn)}
+.seq-line{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);margin-top:12px}
+
+/* ble / bonds */
+.pairing-state{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13.5px;margin-bottom:12px}
+.pairing-state .dot{width:8px;height:8px;border-radius:50%}
+.pairing-state.on .dot{background:var(--good);box-shadow:0 0 8px 1px rgba(45,212,168,.55)}
+.pairing-state.off .dot{background:var(--text-faint)}
+.pairing-state.on{color:var(--good)}
+.pairing-state.off{color:var(--text-dim)}
+table.bonds{width:100%;border-collapse:collapse;margin-top:8px}
+table.bonds th{text-align:left;font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;padding:6px 4px;border-bottom:1px solid var(--border)}
+table.bonds td{padding:9px 4px;border-bottom:1px solid var(--border-soft);font-size:13px}
+table.bonds td:first-child{font-family:var(--mono)}
+.muted-row td{color:var(--text-faint);font-style:normal}
+.type-chip{font-family:var(--mono);font-size:11px;color:var(--text-dim);background:var(--surface-3);border:1px solid var(--border);border-radius:5px;padding:1px 6px}
+
+/* ota */
+.dropzone{
+  border:1px dashed var(--border);border-radius:10px;padding:20px;text-align:center;
+  background:var(--surface-2);display:flex;flex-direction:column;align-items:center;gap:10px;
+}
+.file-label{
+  display:inline-flex;align-items:center;gap:8px;background:var(--surface-3);border:1px solid var(--border);
+  border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px;
+}
+.file-label:hover{border-color:var(--accent)}
+#fwName{font-family:var(--mono);font-size:12px;color:var(--text-dim)}
+#ota{font-family:var(--mono);font-size:12.5px;color:var(--text-dim);white-space:pre-wrap;margin-top:10px;min-height:1em}
+
+/* toast */
+#notice{
+  position:fixed;top:16px;right:16px;left:16px;max-width:380px;margin-left:auto;
+  display:none;padding:12px 14px;border-radius:10px;background:var(--surface-2);
+  border:1px solid var(--border);color:var(--text);font-size:13.5px;z-index:50;
+  box-shadow:0 8px 24px rgba(0,0,0,.4);
+}
+#notice.ok{display:block;border-color:rgba(77,168,255,.35)}
+#notice.bad{display:block;border-color:rgba(240,85,95,.4);color:#ffb3b8}
+
+.footnote{color:var(--text-faint);font-size:11.5px;line-height:1.5;margin:0}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div id="notice"></div>
+
+<div class="topbar">
+  <div class="brand">
+    <h1>BLE Lock</h1>
+    <span class="meta"><span id="verTxt">v—</span> · <span id="buildTxt">build —</span></span>
+  </div>
+</div>
+
+<section class="hero">
+  <div class="hero-top">
+    <span class="tag">SYS</span>
+    <div class="led-rail" aria-label="Индикаторы состояния">
+      <div class="led-item"><span class="led" id="ledConn"></span>Телефон</div>
+      <div class="led-item"><span class="led" id="ledEnc"></span>Encrypted</div>
+      <div class="led-item"><span class="led" id="ledBond"></span>Bonded</div>
+    </div>
+  </div>
+  <div class="hero-main">
+    <div>
+      <div class="lock-state" id="lockState">
+        <span class="state-dot" id="stateDot"></span>
+        <span class="state-text" id="stateText">—</span>
+      </div>
+      <div class="state-err" id="statusErr" style="display:none"></div>
+    </div>
+    <div class="hero-metrics">
+      <div class="metric">
+        <span class="metric-label">RSSI</span>
+        <div class="rssi">
+          <div class="rssi-bars" id="rssiBars">
+            <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+          </div>
+          <span class="metric-value" id="curRssi">—</span>
+        </div>
+      </div>
+      <div class="metric">
+        <span class="metric-label">Аптайм</span>
+        <span class="metric-value" id="uptimeTxt">—</span>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <button class="btn-primary" onclick="testOpen()">Тест открытия</button>
+    </div>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><span class="tag">ULP</span><h2>Соленоид и положение пластины</h2></div>
+  <div class="chips-row">
+    <div class="chip"><div class="k">Состояние замка</div><div class="v" id="ulock">—</div></div>
+    <div class="chip"><div class="k">Этап автомата</div><div class="v" id="ufsm">—</div></div>
+    <div class="chip"><div class="k">Положение пластины</div><div class="v" id="uplate">—</div></div>
+  </div>
+  <table class="reg">
+    <tr><td>Исходный уровень АЦП</td><td id="ubase">—</td></tr>
+    <tr><td>Питание, отсчёты АЦП</td><td id="uvbat">—</td></tr>
+    <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
+    <tr><td>Разность измерений</td><td id="udelta">—</td></tr>
+    <tr><td>Нормированный признак положения</td><td id="ufeature">—</td></tr>
+    <tr><td>Ошибки</td><td><span class="badge-hex" id="ufaults">—</span></td></tr>
+    <tr><td>События</td><td><span class="badge-hex" id="uevents">—</span></td></tr>
+    <tr><td>Измерительных циклов</td><td id="umeasurements">—</td></tr>
+    <tr><td>Попытки закрытия / отклонения</td><td id="uclose">—</td></tr>
+  </table>
+  <div class="seq-line" id="ulpStatus">Загрузка…</div>
+  <p class="panel-sub">Данные обновляются раз в 500 мс. Ошибки и события приведены в виде битовой маски.</p>
+</section>
+
+<div class="grid-2">
+  <section class="panel">
+    <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
+
+    <div class="field">
+      <label for="bc">RSSI для допуска BLE-подключения</label>
+      <div class="field-input"><input id="bc" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+    </div>
+    <div class="field">
+      <label for="bd">RSSI для разрыва BLE-подключения</label>
+      <div class="field-input"><input id="bd" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+    </div>
+    <div class="field">
+      <label for="bp">Мощность BLE-передатчика</label>
+      <div class="field-input">
+        <select id="bp">
+          <option value="-12">-12</option><option value="-9">-9</option><option value="-6">-6</option>
+          <option value="-3">-3</option><option value="0">0</option><option value="3">3</option>
+          <option value="6">6</option><option value="9">9</option>
+        </select><span class="unit">dBm</span>
+      </div>
+    </div>
+    <div class="field">
+      <label for="pr">RSSI ESP32 для допуска открытия</label>
+      <div class="field-input"><input id="pr" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+    </div>
+    <div class="field">
+      <label for="prh">RSSI ESP32 для потери присутствия замка</label>
+      <div class="field-input"><input id="prh" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:1">
+        <label for="ta">Таймер А</label>
+        <div class="field-input"><input id="ta" type="number" min="0"><span class="unit">мс</span></div>
+      </div>
+      <div class="field" style="flex:1">
+        <label for="tb">Таймер Б выхода из жёлтого</label>
+        <div class="field-input"><input id="tb" type="number" min="0" max="3600"><span class="unit">с</span></div>
+      </div>
+    </div>
+    <div class="field">
+      <label for="lo">Долго открыт</label>
+      <div class="field-input"><input id="lo" type="number" min="1000"><span class="unit">мс</span></div>
+    </div>
+    <div class="field-row">
+      <div class="field" style="flex:1">
+        <label for="ol">Уровень GPIO замка при открытии</label>
+        <select id="ol"><option value="0">LOW</option><option value="1">HIGH</option></select>
+      </div>
+      <div class="field" style="flex:1">
+        <label for="lg">GPIO замка</label>
+        <select id="lg"></select>
+      </div>
+    </div>
+
+    <div class="actions-row">
+      <button class="btn-primary" onclick="saveConfig()">Сохранить</button>
+      <span class="saved-msg" id="saved"></span>
+    </div>
+  </section>
+
+  <div>
+    <section class="panel">
+      <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi и OTA</h2></div>
+      <div class="field">
+        <label for="wssid">SSID Wi-Fi</label>
+        <input id="wssid" maxlength="32">
+      </div>
+      <div class="field">
+        <label for="wpass">Пароль Wi-Fi</label>
+        <input id="wpass" type="password" maxlength="64" placeholder="оставьте пустым, чтобы сохранить прежний">
+      </div>
+      <div class="field">
+        <label for="wurl">HTTPS-адрес прошивки</label>
+        <input id="wurl" maxlength="192" placeholder="https://...">
+      </div>
+      <div class="switch-row">
+        <label class="switch">
+          <input id="wauto" type="checkbox" onchange="saveAutoConnect()">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+        <span>Автоматически подключаться к Wi-Fi после запуска</span>
+        <span class="saved-msg" id="autoSaved"></span>
+      </div>
+      <div class="actions-row">
+        <button onclick="loadWifi()">Прочитать</button>
+        <button class="btn-primary" onclick="saveWifi()">Сохранить</button>
+        <button id="restartButton" class="btn-danger" onclick="restartEsp()">Перезагрузить ESP32</button>
+        <span class="saved-msg" id="wifiSaved"></span>
+      </div>
+      <p class="footnote">RSSI-контроль выполняется ESP32 после установления защищённого BLE-соединения. При устойчиво слабом сигнале ESP32 разрывает соединение после защитной задержки.</p>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head"><span class="tag">FW</span><h2>Обновление прошивки</h2></div>
+      <div class="dropzone">
+        <label class="file-label" for="fw">Выбрать файл .bin</label>
+        <input id="fw" type="file" accept=".bin" style="display:none" onchange="fwName.textContent=fw.files[0]?fw.files[0].name:''">
+        <span id="fwName"></span>
+        <button class="btn-primary" onclick="uploadFw()">Загрузить</button>
+      </div>
+      <div id="ota"></div>
+    </section>
+  </div>
+</div>
+
+<section class="panel">
+  <div class="panel-head"><span class="tag">BLE</span><h2>Регистрация телефонов</h2></div>
+  <div class="pairing-state off" id="pairing">Загрузка…</div>
+  <div class="actions-row">
+    <button class="btn-primary" onclick="allowPairing()">Разрешить регистрацию телефона</button>
+  </div>
+  <p class="panel-sub">Pairing нового телефона разрешается на 60 секунд. Все зарегистрированные телефоны на это время временно не смогут переподключиться — слот освобождается для нового устройства, затем всё работает как обычно.</p>
+
+  <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
+  <div class="actions-row" style="margin-bottom:2px">
+    <button onclick="loadBonds()">Обновить</button>
+    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все bonds</button>
+  </div>
+  <table class="bonds">
+    <thead><tr><th>Identity address</th><th>Тип</th><th></th></tr></thead>
+    <tbody id="bonds"></tbody>
+  </table>
+</section>
+
+</div>
+
+<script>
+async function j(u,o){let r=await fetch(u,o);if(!r.ok)throw Error(await r.text());return r.json()}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
+function formatUptime(total){total=Math.max(0,Math.floor(total));let d=Math.floor(total/86400),h=Math.floor(total%86400/3600),m=Math.floor(total%3600/60),s=total%60;return `${d} д ${String(h).padStart(2,'0')} ч ${String(m).padStart(2,'0')} мин ${String(s).padStart(2,'0')} сек`}
+let noticeTimer=0,pendingConfirm='',pendingConfirmUntil=0;function showNotice(message,error=false){clearTimeout(noticeTimer);notice.textContent=message;notice.className=error?'bad':'ok';noticeTimer=setTimeout(()=>{notice.className='';},5000)}
+async function inlineConfirm(key,message,action){let now=Date.now();if(pendingConfirm!==key||now>pendingConfirmUntil){pendingConfirm=key;pendingConfirmUntil=now+5000;showNotice(message);return}pendingConfirm='';pendingConfirmUntil=0;await action()}
+
+function setRssiBars(rssi){
+  let bars=rssiBars.querySelectorAll('.bar'),level=0;
+  if(rssi!==null && rssi!==undefined){
+    if(rssi>=-60)level=4;else if(rssi>=-75)level=3;else if(rssi>=-90)level=2;else level=1;
+  }
+  bars.forEach((b,i)=>b.classList.toggle('on',i<level));
+  rssiBars.classList.toggle('weak',level>0&&level<3);
+}
+
+async function loadStatus(){
+  try{
+    let s=await j('/api/status');
+    verTxt.textContent='v'+s.version;
+    buildTxt.textContent='build '+s.build;
+    stateText.textContent=s.open?'OPEN':'LOCKED';
+    lockState.className='lock-state '+(s.open?'warn':'good');
+    ledConn.classList.toggle('on',!!s.connected);
+    ledEnc.classList.toggle('on',!!s.encrypted);
+    ledBond.classList.toggle('on',!!s.bonded);
+    curRssi.textContent=s.rssi===null?'—':s.rssi+' dBm';
+    setRssiBars(s.rssi);
+    uptimeTxt.textContent=formatUptime(s.uptime_s);
+    statusErr.style.display='none';
+  }catch(e){
+    stateText.textContent='—';
+    lockState.className='lock-state';
+    statusErr.textContent=String(e);
+    statusErr.style.display='block';
+  }
+}
+async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
+function populateGpioOptions(){let opts='';for(let i=0;i<=48;i++)opts+=`<option value='${i}'>GPIO${i}</option>`;lg.innerHTML=opts}
+async function loadConfig(){let c=await j('/api/config');bc.value=c.ble_connect_rssi_threshold;bd.value=c.ble_disconnect_rssi_threshold;bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;prh.value=c.phone_rssi_hold_threshold;lo.value=c.long_open_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s;ol.value=c.lock_open_level?1:0;lg.value=c.lock_gpio}
+async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wurl.value=c.url;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
+async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения'}}
+async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value,url:wurl.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
+async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}
+async function saveConfig(){let q=new URLSearchParams({ble_connect_rssi_threshold:bc.value,ble_disconnect_rssi_threshold:bd.value,ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,phone_rssi_hold_threshold:prh.value,long_open_ms:lo.value,timer_a_ms:ta.value,timer_b_s:tb.value,lock_gpio:lg.value,lock_open_level:ol.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',2500)}catch(e){saved.textContent=e}}
+async function blePowerSave(){let q=new URLSearchParams({power_dbm:bp.value});await j('/api/ble/power?'+q,{method:'POST'})}
+async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
+async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.className='pairing-state '+(p.allowed?'on':'off');pairing.textContent=p.allowed?`Регистрация разрешена: ${p.remaining_s} с`:'Регистрация запрещена'}catch(e){pairing.className='pairing-state off';pairing.textContent=e}}
+async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
+async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.address)}</td><td><span class="type-chip">${esc(b.type)}</span></td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
+async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
+async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все bonds» ещё раз',async()=>{try{await j('/api/ble/bonds',{method:'DELETE'});await loadBonds();showNotice('Все bonds удалены')}catch(e){showNotice(String(e),true)}})}
+async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите файл .bin',true);return}ota.textContent='Загрузка…';try{let r=await fetch('/api/ota',{method:'POST',body:f});ota.textContent=await r.text()}catch(e){ota.textContent=e}}
+let fastRefreshBusy=false,slowRefreshBusy=false;
+async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
+async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
+async function initPage(){populateGpioOptions();await loadConfig();await loadWifi();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000)}
+initPage()
+</script>
+</body>
+</html>

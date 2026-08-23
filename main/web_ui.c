@@ -24,81 +24,8 @@ static const char *TAG = "web_ui";
 static httpd_handle_t s_server;
 static bool s_restart_pending;
 
-static const char INDEX_HTML[] =
-"<!doctype html><html lang='ru'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>BLE Lock</title>"
-"<style>body{font-family:Arial;margin:20px;max-width:900px;background:#f3f5f7;color:#20242a}section{background:#fff;padding:16px;margin:12px 0;border-radius:10px}button,input,select{padding:8px;margin:3px}button{transition:background-color .18s,color .18s,border-color .18s}button.command-ok{background:#20a452;color:#fff;border-color:#16813f}table{width:100%;border-collapse:collapse}td,th{padding:7px;border-bottom:1px solid #ddd;text-align:left}.ok{color:#087b36}.bad{color:#a12622}.muted{color:#777}#notice{display:none;padding:12px;border-radius:8px;background:#e8f2ff;color:#14589c}#notice.bad{display:block;background:#ffe9e7;color:#a12622}#notice.ok{display:block}pre{white-space:pre-wrap}</style></head><body>"
-"<h1>BLE Lock</h1>"
-"<div id='notice'></div>"
-"<section><h2>Состояние</h2><div id='status'>Загрузка…</div><button onclick='testOpen()'>Тест открытия</button></section>"
-"<section><h2>ULP: соленоид и положение пластины</h2><div id='ulpStatus'>Загрузка…</div><table>"
-"<tr><td>Состояние замка</td><td id='ulock'>—</td></tr>"
-"<tr><td>Этап автомата ULP</td><td id='ufsm'>—</td></tr>"
-"<tr><td>Положение пластины</td><td id='uplate'>—</td></tr>"
-"<tr><td>Исходный уровень АЦП</td><td id='ubase'>—</td></tr>"
-"<tr><td>Питание, отсчёты АЦП</td><td id='uvbat'>—</td></tr>"
-"<tr><td>Измерение при импульсе</td><td id='usense'>—</td></tr>"
-"<tr><td>Разность измерений</td><td id='udelta'>—</td></tr>"
-"<tr><td>Нормированный признак положения</td><td id='ufeature'>—</td></tr>"
-"<tr><td>Ошибки</td><td id='ufaults'>—</td></tr>"
-"<tr><td>События</td><td id='uevents'>—</td></tr>"
-"<tr><td>Измерительных циклов</td><td id='umeasurements'>—</td></tr>"
-"<tr><td>Попытки закрытия / отклонения</td><td id='uclose'>—</td></tr>"
-"</table><p class='muted'>Данные обновляются раз в 500 мс. Ошибки и события приведены в виде битовой маски.</p></section>"
-"<section><h2>Настройки замка</h2><table>"
-"<tr><td>Текущий RSSI (сейчас)</td><td id='curRssi' class='muted'>—</td></tr>"
-"<tr><td>RSSI для допуска BLE-подключения, dBm</td><td><input id='bc' type='number' min='-127' max='0'></td></tr>"
-"<tr><td>RSSI для разрыва BLE-подключения, dBm</td><td><input id='bd' type='number' min='-127' max='0'></td></tr>"
-"<tr><td>Мощность BLE-передатчика, dBm</td><td><select id='bp'><option value='-12'>-12</option><option value='-9'>-9</option><option value='-6'>-6</option><option value='-3'>-3</option><option value='0'>0</option><option value='3'>3</option><option value='6'>6</option><option value='9'>9</option></select></td></tr>"
-"<tr><td>RSSI ESP32 для допуска открытия, dBm</td><td><input id='pr' type='number' min='-127' max='0'></td></tr>"
-"<tr><td>RSSI ESP32 для потери присутствия замка, dBm</td><td><input id='prh' type='number' min='-127' max='0'></td></tr>"
-"<tr><td>Таймер А, мс</td><td><input id='ta' type='number' min='0'></td></tr>"
-"<tr><td>Таймер Б выхода из жёлтого, с</td><td><input id='tb' type='number' min='0' max='3600'></td></tr>"
-"<tr><td>Долго открыт, мс</td><td><input id='lo' type='number' min='1000'></td></tr>"
-"<tr><td>Уровень GPIO замка при открытии</td><td><select id='ol'><option value='0'>LOW</option><option value='1'>HIGH</option></select></td></tr>"
-"<tr><td>GPIO замка</td><td><select id='lg'></select></td></tr>"
-"</table><button onclick='saveConfig()'>Сохранить</button><span id='saved'></span></section>"
-"<section><h2>Wi-Fi и OTA</h2><table>"
-"<tr><td>SSID Wi-Fi</td><td><input id='wssid' maxlength='32'></td></tr>"
-"<tr><td>Пароль Wi-Fi</td><td><input id='wpass' type='password' maxlength='64' placeholder='оставьте пустым, чтобы сохранить прежний'></td></tr>"
-"<tr><td>HTTPS-адрес прошивки</td><td><input id='wurl' maxlength='192' placeholder='https://...'></td></tr>"
-"</table><label><input id='wauto' type='checkbox' onchange='saveAutoConnect()'> Автоматически подключаться к Wi-Fi после запуска</label> <span id='autoSaved'></span><br>"
-"<button onclick='loadWifi()'>Прочитать Wi-Fi/OTA</button> <button onclick='saveWifi()'>Сохранить Wi-Fi/OTA</button>"
-" <button id='restartButton' onclick='restartEsp()'>Перезагрузить ESP32</button><span id='wifiSaved'></span>"
-"<p class='muted'>RSSI-контроль выполняется ESP32 после установления защищённого BLE-соединения. При устойчиво слабом сигнале ESP32 разрывает соединение после защитной задержки.</p></section>"
-"<section><h2>BLE</h2><div id='pairing'>Загрузка…</div><button onclick='allowPairing()'>Разрешить регистрацию телефона</button>"
-"<p class='muted'>Pairing нового телефона разрешается на 60 секунд. Все зарегистрированные телефоны на это время временно не смогут переподключиться — слот освобождается для нового устройства, затем всё работает как обычно.</p>"
-"<h3>Зарегистрированные телефоны</h3><button onclick='loadBonds()'>Обновить</button><button onclick='deleteAllBonds()'>Удалить все bonds</button>"
-"<table><thead><tr><th>Identity address</th><th>Тип</th><th></th></tr></thead><tbody id='bonds'></tbody></table></section>"
-"<section><h2>OTA</h2><input id='fw' type='file' accept='.bin'><button onclick='uploadFw()'>Загрузить</button><div id='ota'></div></section>"
-"<script>"
-"async function j(u,o){let r=await fetch(u,o);if(!r.ok)throw Error(await r.text());return r.json()}"
-"function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/\"/g,'&quot;')}"
-"function formatUptime(total){total=Math.max(0,Math.floor(total));let d=Math.floor(total/86400),h=Math.floor(total%86400/3600),m=Math.floor(total%3600/60),s=total%60;return `${d} д ${String(h).padStart(2,'0')} ч ${String(m).padStart(2,'0')} мин ${String(s).padStart(2,'0')} сек`}"
-"let noticeTimer=0,pendingConfirm='',pendingConfirmUntil=0;function showNotice(message,error=false){clearTimeout(noticeTimer);notice.textContent=message;notice.className=error?'bad':'ok';notice.style.display='block';noticeTimer=setTimeout(()=>{notice.className='';notice.style.display='none'},5000)}"
-"async function inlineConfirm(key,message,action){let now=Date.now();if(pendingConfirm!==key||now>pendingConfirmUntil){pendingConfirm=key;pendingConfirmUntil=now+5000;showNotice(message);return}pendingConfirm='';pendingConfirmUntil=0;await action()}"
-"async function loadStatus(){let statusView=document.getElementById('status');try{let s=await j('/api/status');statusView.innerHTML=`Версия: ${s.version}<br>Сборка ESP: ${s.build}<br>Замок: <b class='${s.open?'ok':'bad'}'>${s.open?'OPEN':'LOCKED'}</b><br>Телефон: ${s.connected?'подключён':'не подключён'}<br>Encrypted: ${s.encrypted?'да':'нет'}; Bonded: ${s.bonded?'да':'нет'}<br>RSSI: ${s.rssi===null?'—':s.rssi+' dBm'}<br>Аптайм: ${formatUptime(s.uptime_s)}`;document.getElementById('curRssi').textContent=s.rssi===null?'—':s.rssi+' dBm'}catch(e){statusView.textContent=e}}"
-"async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ufaults.textContent='0x'+u.fault_flags.toString(16);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}"
-"function populateGpioOptions(){let opts='';for(let i=0;i<=48;i++)opts+=`<option value='${i}'>GPIO${i}</option>`;lg.innerHTML=opts}"
-"async function loadConfig(){let c=await j('/api/config');bc.value=c.ble_connect_rssi_threshold;bd.value=c.ble_disconnect_rssi_threshold;bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;prh.value=c.phone_rssi_hold_threshold;lo.value=c.long_open_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s;ol.value=c.lock_open_level?1:0;lg.value=c.lock_gpio}"
-"async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wurl.value=c.url;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}"
-"async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения'}}"
-"async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value,url:wurl.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}"
-"async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}"
-"async function saveConfig(){let q=new URLSearchParams({ble_connect_rssi_threshold:bc.value,ble_disconnect_rssi_threshold:bd.value,ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,phone_rssi_hold_threshold:prh.value,long_open_ms:lo.value,timer_a_ms:ta.value,timer_b_s:tb.value,lock_gpio:lg.value,lock_open_level:ol.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено'}catch(e){saved.textContent=e}}"
-"async function blePowerSave(){let q=new URLSearchParams({power_dbm:bp.value});await j('/api/ble/power?'+q,{method:'POST'})}"
-"async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}"
-"async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.innerHTML=p.allowed?`<b class='ok'>Регистрация разрешена: ${p.remaining_s} с</b>`:`<b class='bad'>Регистрация запрещена</b>`}catch(e){pairing.textContent=e}}"
-"async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}"
-"async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${b.address}</td><td>${b.type}</td><td><button onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr><td colspan='3' class='muted'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}"
-"async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}"
-"async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все bonds» ещё раз',async()=>{try{await j('/api/ble/bonds',{method:'DELETE'});await loadBonds();showNotice('Все bonds удалены')}catch(e){showNotice(String(e),true)}})}"
-"async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите файл .bin',true);return}ota.textContent='Загрузка…';try{let r=await fetch('/api/ota',{method:'POST',body:f});ota.textContent=await r.text()}catch(e){ota.textContent=e}}"
-"let fastRefreshBusy=false,slowRefreshBusy=false;"
-"async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}"
-"async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}"
-"async function initPage(){populateGpioOptions();await loadConfig();await loadWifi();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000)}"
-"initPage()"
-"</script></body></html>";
+extern const uint8_t web_index_html_start[] asm("_binary_index_html_start");
+extern const uint8_t web_index_html_end[] asm("_binary_index_html_end");
 
 static esp_err_t send_json(httpd_req_t *req, const char *json)
 {
@@ -110,7 +37,9 @@ static esp_err_t send_json(httpd_req_t *req, const char *json)
 static esp_err_t index_get(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
-    return httpd_resp_send(req, INDEX_HTML, HTTPD_RESP_USE_STRLEN);
+    // EMBED_TXTFILES appends one NUL byte; it is not part of the HTTP body.
+    size_t html_length = (size_t)(web_index_html_end - web_index_html_start - 1);
+    return httpd_resp_send(req, (const char *)web_index_html_start, html_length);
 }
 
 static esp_err_t status_get(httpd_req_t *req)
