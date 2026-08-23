@@ -34,8 +34,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("boolean", "ENABLE_DIAGNOSTIC_LOGS", "true")
+        }
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
+            buildConfigField("boolean", "ENABLE_DIAGNOSTIC_LOGS", "false")
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseKeystoreFile.exists()) {
                 signingConfig = signingConfigs.create("playRelease")
@@ -57,5 +62,6 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core:1.13.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
 }

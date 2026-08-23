@@ -18,7 +18,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
-import android.os.PowerManager
 import android.os.SystemClock
 import android.net.Uri
 import android.net.wifi.WifiManager
@@ -45,6 +44,7 @@ import android.widget.ArrayAdapter
 import android.widget.Space
 import android.widget.Switch
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 
 class MainActivity : Activity() {
@@ -87,9 +87,7 @@ class MainActivity : Activity() {
     private lateinit var staticSettingsContainer: LinearLayout
     private lateinit var legacyAdvPowerContainer: LinearLayout
     private lateinit var legacyOtaContainer: LinearLayout
-    private lateinit var firmwareVersionView: TextView
     private lateinit var privacyPolicyButton: TextView
-    private lateinit var appVersionView: TextView
     private val adminButtons = mutableListOf<Button>()
     private val dynamicInputs = mutableMapOf<String, View>()
     private val dynamicSchemaItems = mutableMapOf<String, DeclarativeUiItem>()
@@ -296,9 +294,6 @@ class MainActivity : Activity() {
             }
 
             override fun onLockData(info: String?, status: String?) {
-                if (!info.isNullOrBlank()) {
-                    firmwareVersionView.text = getString(R.string.firmware_version, info)
-                }
                 if (::manualKeepOpenButton.isInitialized && !status.isNullOrBlank() &&
                     (keepOpenStatusExpected || !keepOpenCommandPending)) {
                     val alwaysOpen = status.trim().equals("OPEN_HOLD", ignoreCase = true)
@@ -581,11 +576,12 @@ class MainActivity : Activity() {
             addAction(BleLockService.ACTION_CONNECTION_STATE)
             addAction(BleLockService.ACTION_AUTOMATIC_MODE)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(backgroundConnectionReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(backgroundConnectionReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            backgroundConnectionReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
         backgroundReceiverRegistered = true
         // Сервис мог подключиться ещё до открытия экрана — подтягиваем
         // текущее состояние сразу, не дожидаясь следующей смены состояния.
@@ -677,21 +673,6 @@ class MainActivity : Activity() {
         }
         root.addView(adminContainer, fullWidth())
 
-        firmwareVersionView = TextView(this).apply {
-            text = getString(R.string.firmware_version_unknown)
-            textSize = 14f
-            setTextColor(getColor(R.color.secondary_text))
-        }
-        appVersionView = TextView(this).apply {
-            text = getString(
-                R.string.app_version_release,
-                BuildConfig.VERSION_NAME,
-                BuildConfig.VERSION_CODE,
-                BuildConfig.BUILD_TIMESTAMP
-            )
-            textSize = 14f
-            setTextColor(getColor(R.color.secondary_text))
-        }
         hotspotStatusView = TextView(this).apply {
             text = getString(R.string.local_hotspot_status)
             textSize = 14f
@@ -817,8 +798,6 @@ class MainActivity : Activity() {
             repository.rebootEsp32()
         })
 
-        root.addView(firmwareVersionView, topSpacedFullWidth(12).apply { leftMargin = dp(4) })
-        root.addView(appVersionView, topSpacedFullWidth(12).apply { leftMargin = dp(4) })
         privacyPolicyButton = TextView(this).apply {
             setText(R.string.privacy_policy_button)
             textSize = 14f
@@ -830,8 +809,6 @@ class MainActivity : Activity() {
             isFocusable = true
             setOnClickListener { showPrivacyPolicy() }
         }
-        root.addView(privacyPolicyButton, topSpacedFullWidth(8))
-
         adminContainer.addView(Space(this), fullWidth().apply { height = dp(32) })
 
         val scroll = ScrollView(this).apply {
@@ -854,19 +831,29 @@ class MainActivity : Activity() {
         return FrameLayout(this).apply {
             setBackgroundColor(getColor(R.color.screen_background))
             setOnApplyWindowInsetsListener { view, insets ->
-                val systemBars = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    insets.getInsets(WindowInsets.Type.systemBars())
+                val topInset: Int
+                val bottomInset: Int
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val systemBars = insets.getInsets(WindowInsets.Type.systemBars())
+                    topInset = systemBars.top
+                    bottomInset = systemBars.bottom
                 } else {
-                    null
+                    @Suppress("DEPRECATION")
+                    topInset = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    bottomInset = insets.systemWindowInsetBottom
                 }
-                val topInset = systemBars?.top ?: insets.systemWindowInsetTop
-                val bottomInset = systemBars?.bottom ?: insets.systemWindowInsetBottom
                 view.setPadding(0, topInset, 0, bottomInset)
                 insets
             }
             addView(swipeRefresh, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
+            ).apply { bottomMargin = dp(44) })
+            addView(privacyPolicyButton, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
             ))
             post { requestApplyInsets() }
         }
@@ -1138,7 +1125,17 @@ class MainActivity : Activity() {
     private fun showLegacyBleLocationNoticeIfNeeded() {
         if (Build.VERSION.SDK_INT !in Build.VERSION_CODES.M..Build.VERSION_CODES.R) return
         val locationManager = getSystemService(LocationManager::class.java)
-        if (locationManager.isLocationEnabled || legacyLocationDialog?.isShowing == true) return
+        val locationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            locationManager.isLocationEnabled
+        } else {
+            @Suppress("DEPRECATION")
+            Settings.Secure.getInt(
+                contentResolver,
+                Settings.Secure.LOCATION_MODE,
+                Settings.Secure.LOCATION_MODE_OFF
+            ) != Settings.Secure.LOCATION_MODE_OFF
+        }
+        if (locationEnabled || legacyLocationDialog?.isShowing == true) return
 
         legacyLocationDialog = AlertDialog.Builder(this)
             .setTitle(R.string.legacy_location_required_title)
@@ -1273,7 +1270,7 @@ class MainActivity : Activity() {
             .setTitle(R.string.battery_notice_title)
             .setMessage(R.string.battery_notice_message)
             .setPositiveButton(R.string.battery_notice_open_settings) { _, _ ->
-                requestIgnoreBatteryOptimizations()
+                openBatteryOptimizationSettings()
             }
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener { showAutoStartNoticeIfNeeded() }
@@ -1306,7 +1303,7 @@ class MainActivity : Activity() {
             manufacturer.contains("poco")
     }
 
-    private fun requestIgnoreBatteryOptimizations() {
+    private fun openBatteryOptimizationSettings() {
         val powerManager = getSystemService(PowerManager::class.java)
         if (powerManager?.isIgnoringBatteryOptimizations(packageName) == true) return
         startActivity(Intent(

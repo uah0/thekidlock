@@ -10,7 +10,8 @@ class BootReceiver : BroadcastReceiver() {
         val regularBoot = intent.action == Intent.ACTION_BOOT_COMPLETED
         val lockedBoot = Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
             intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
-        if (!regularBoot && !lockedBoot) return
+        val packageReplaced = intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
+        if (!regularBoot && !lockedBoot && !packageReplaced) return
         if (!LockSettings(context).autoOpenEnabled) {
             return
         }

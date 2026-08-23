@@ -8,6 +8,7 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
+import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
@@ -817,7 +818,7 @@ class BleRepository(
             if (Build.VERSION.SDK_INT >= 33) {
                 currentGatt.writeCharacteristic(
                     characteristic, value, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                ) == BluetoothGatt.GATT_SUCCESS
+                ) == BluetoothStatusCodes.SUCCESS
             } else {
                 @Suppress("DEPRECATION")
                 characteristic.value = value
