@@ -1304,13 +1304,10 @@ class MainActivity : Activity() {
     }
 
     private fun openBatteryOptimizationSettings() {
-        val powerManager = getSystemService(PowerManager::class.java)
-        if (powerManager?.isIgnoringBatteryOptimizations(packageName) == true) return
-        startActivity(Intent(
-            Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-            Uri.parse("package:$packageName")
-        ))
-    }
+    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+    runCatching { startActivity(intent) }
+        .onFailure { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+}
 
     private fun stopAutoOpenService() {
         stopService(Intent(this, BleLockService::class.java))
