@@ -1,0 +1,233 @@
+name: Apply character controls UI
+
+on:
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-check:
+    if: github.head_ref == 'feature/character-controls'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: feature/character-controls
+
+      - name: Wire adaptive character controls into MainActivity
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt')
+          text = p.read_text(encoding='utf-8')
+
+          def repl(old, new, label):
+              global text
+              if old not in text:
+                  if new in text:
+                      return
+                  raise SystemExit(f'block not found: {label}')
+              text = text.replace(old, new, 1)
+
+          repl(
+              '    private lateinit var swipeRefresh: SwipeRefreshLayout\n',
+              '    private lateinit var swipeRefresh: SwipeRefreshLayout\n    private lateinit var characterControlsLayout: CharacterControlsLayout\n',
+              'character field'
+          )
+
+          old_home = '''        root.addView(TextView(this).apply {
+              text = getString(R.string.app_title)
+              textSize = 26f
+              setTypeface(typeface, Typeface.BOLD)
+              setTextColor(getColor(R.color.primary_text))
+          }, fullWidth().apply { bottomMargin = dp(16) })
+
+          permissionButton = filledButton(R.string.grant_permissions) { requestMissingPermissions() }
+          root.addView(permissionButton, spacedFullWidth())
+
+          // Main controls intentionally resemble a simple industrial pendant:
+          // large, well-separated tiles that are easy to hit with one hand.
+          val accessCard = LinearLayout(this).apply {
+              orientation = LinearLayout.VERTICAL
+              gravity = Gravity.CENTER_HORIZONTAL
+          }
+          manualOpenButton = controlTile(R.string.mode_auto) { toggleAutomaticMode() }
+          accessCard.addView(manualOpenButton, controlTileParams())
+          manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }
+          accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 18))
+
+          hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }
+          hotspotOpenButton.isEnabled = true
+          hotspotOpenButton.visibility = View.GONE
+          accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 18))
+          connectButton = navigationButton(R.string.connect_admin) { activateServiceMenu() }
+          connectButton.visibility = View.GONE
+          root.addView(accessCard, spacedFullWidth().apply { bottomMargin = dp(48) })
+'''
+          new_home = '''        permissionButton = filledButton(R.string.grant_permissions) { requestMissingPermissions() }
+
+          characterControlsLayout = CharacterControlsLayout(this).apply {
+              automaticButton.setOnClickListener { toggleAutomaticMode() }
+              alwaysOpenButton.setOnClickListener { toggleKeepOpenMode() }
+              settingsButton.setOnClickListener { openEspWebUi() }
+          }
+          manualOpenButton = characterControlsLayout.automaticButton
+          manualKeepOpenButton = characterControlsLayout.alwaysOpenButton
+          hotspotOpenButton = characterControlsLayout.settingsButton
+
+          connectButton = navigationButton(R.string.connect_admin) { activateServiceMenu() }
+          connectButton.visibility = View.GONE
+'''
+          repl(old_home, new_home, 'home controls')
+
+          repl(
+              '''        swipeRefresh = SwipeRefreshLayout(this).apply {
+              setColorSchemeResources(R.color.accent_blue)
+''',
+              '''        swipeRefresh = SwipeRefreshLayout(this).apply {
+              visibility = View.GONE
+              setColorSchemeResources(R.color.accent_blue)
+''',
+              'swipe initial state'
+          )
+
+          old_frame = '''            addView(swipeRefresh, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT,
+                  ViewGroup.LayoutParams.MATCH_PARENT
+              ).apply { bottomMargin = dp(44) })
+              addView(privacyPolicyButton, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT,
+                  ViewGroup.LayoutParams.WRAP_CONTENT,
+                  Gravity.BOTTOM
+              ))
+'''
+          new_frame = '''            addView(characterControlsLayout, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT,
+                  ViewGroup.LayoutParams.MATCH_PARENT
+              ).apply { bottomMargin = dp(44) })
+              addView(swipeRefresh, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT,
+                  ViewGroup.LayoutParams.MATCH_PARENT
+              ).apply { bottomMargin = dp(44) })
+              addView(permissionButton, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.WRAP_CONTENT,
+                  ViewGroup.LayoutParams.WRAP_CONTENT,
+                  Gravity.TOP or Gravity.CENTER_HORIZONTAL
+              ).apply {
+                  topMargin = dp(12)
+                  leftMargin = dp(16)
+                  rightMargin = dp(16)
+              })
+              addView(privacyPolicyButton, FrameLayout.LayoutParams(
+                  ViewGroup.LayoutParams.MATCH_PARENT,
+                  ViewGroup.LayoutParams.WRAP_CONTENT,
+                  Gravity.BOTTOM
+              ))
+'''
+          repl(old_frame, new_frame, 'frame children')
+
+          repl(
+              '''        hotspotOpenButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
+''',
+              '''        hotspotOpenButton.visibility = View.VISIBLE
+''',
+              'refresh settings visibility'
+          )
+
+          repl(
+              '''        if (::hotspotOpenButton.isInitialized) {
+              hotspotOpenButton.visibility = if (adminModeAvailable) View.VISIBLE else View.GONE
+          }
+''',
+              '''        if (::hotspotOpenButton.isInitialized) {
+              hotspotOpenButton.visibility = View.VISIBLE
+          }
+''',
+              'admin entry settings visibility'
+          )
+
+          repl(
+              '''        if (::hotspotOpenButton.isInitialized) {
+              val settingsEnabled = connected && adminModeAvailable
+              hotspotOpenButton.isEnabled = settingsEnabled
+              hotspotOpenButton.alpha = if (settingsEnabled) 1f else 0.38f
+          }
+''',
+              '''        if (::hotspotOpenButton.isInitialized) {
+              hotspotOpenButton.isEnabled = permissionsGranted
+              hotspotOpenButton.alpha = if (permissionsGranted) 1f else 0.38f
+          }
+''',
+              'settings enabled state'
+          )
+
+          repl(
+              '''    private fun setManualButtonBlue(button: Button, blue: Boolean) {
+          button.background = getDrawable(
+              if (blue) R.drawable.bg_button_filled else R.drawable.bg_button_outline
+          )
+          button.setTextColor(if (blue) Color.WHITE else getColor(R.color.accent_blue))
+      }
+''',
+              '''    private fun setManualButtonBlue(button: Button, blue: Boolean) {
+          if (::characterControlsLayout.isInitialized && characterControlsLayout.isCharacterButton(button)) {
+              characterControlsLayout.setButtonActive(button, blue)
+              return
+          }
+          button.background = getDrawable(
+              if (blue) R.drawable.bg_button_filled else R.drawable.bg_button_outline
+          )
+          button.setTextColor(if (blue) Color.WHITE else getColor(R.color.accent_blue))
+      }
+''',
+              'character active state'
+          )
+
+          repl(
+              '''    private fun setAdminPanelVisible(visible: Boolean) {
+          adminContainer.visibility = if (visible) View.VISIBLE else View.GONE
+          if (::privacyPolicyButton.isInitialized) {
+              privacyPolicyButton.visibility = if (visible) View.GONE else View.VISIBLE
+          }
+      }
+''',
+              '''    private fun setAdminPanelVisible(visible: Boolean) {
+          adminContainer.visibility = if (visible) View.VISIBLE else View.GONE
+          if (::characterControlsLayout.isInitialized) {
+              characterControlsLayout.visibility = if (visible) View.GONE else View.VISIBLE
+          }
+          if (::swipeRefresh.isInitialized) {
+              swipeRefresh.visibility = if (visible) View.VISIBLE else View.GONE
+          }
+          if (::privacyPolicyButton.isInitialized) {
+              privacyPolicyButton.visibility = View.VISIBLE
+          }
+      }
+''',
+              'admin panel visibility'
+          )
+
+          p.write_text(text, encoding='utf-8')
+          PY
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt
+          git commit -m "Use background characters as adaptive home controls"
+          git push origin HEAD:feature/character-controls
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Lint and build
+        working-directory: android_lock_beacon
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon lintRelease bundleRelease assembleDebug
