@@ -1,0 +1,40 @@
+name: Android development check
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'android_lock_beacon/**'
+      - '.github/workflows/android-development-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Lint, release bundle and phone-test APK
+        working-directory: android_lock_beacon
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon lintRelease bundleRelease assembleDebug
+      - name: Upload phone-test APK
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-development-phone-test-apk
+          path: android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
