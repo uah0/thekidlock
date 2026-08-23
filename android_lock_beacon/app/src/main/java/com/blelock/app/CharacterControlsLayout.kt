@@ -54,8 +54,7 @@ class CharacterControlsLayout @JvmOverloads constructor(
         addView(alwaysOpenButton)
         addView(settingsButton)
 
-        val imageId = resources.getIdentifier("home_background", "drawable", context.packageName)
-        if (imageId != 0) imageView.setImageResource(imageId)
+        imageView.setImageResource(R.drawable.home_background)
     }
 
     fun setAutomaticActive(active: Boolean) = setActive(automaticButton, active)

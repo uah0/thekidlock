@@ -67,7 +67,7 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
             settingsButton.setOnClickListener {
                 // Programmatic click deliberately delegates to the existing
                 // settings/Web UI handler even while its old visual button is hidden.
-                originalSettings.performClick()
+                if (originalSettings.isEnabled) originalSettings.performClick()
             }
         }
 
@@ -99,7 +99,7 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
                 overlay.alwaysOpenButton.isEnabled = originalAlways.isEnabled
                 // Settings remains a valid entry point: its existing handler can
                 // establish the administrative BLE session when necessary.
-                overlay.settingsButton.isEnabled = originalAuto.isEnabled
+                overlay.settingsButton.isEnabled = originalSettings.isEnabled
             }
             privacyView?.apply {
                 visibility = View.VISIBLE
@@ -118,6 +118,7 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
 
         val originalAuto = findButton(appRoot, activity.getString(R.string.mode_auto)) ?: return
         val originalAlways = findButton(appRoot, activity.getString(R.string.mode_always_open)) ?: return
+        val originalSettings = findButton(appRoot, activity.getString(R.string.control_settings)) ?: return
         val privacyView = findTextView(appRoot, activity.getString(R.string.privacy_policy_button))
         val permissionVisible = findButton(appRoot, activity.getString(R.string.grant_permissions))?.isShown == true
         val adminVisible = findButton(appRoot, activity.getString(R.string.admin_close))?.isShown == true
@@ -127,7 +128,7 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
         overlay.setAlwaysOpenActive(originalAlways.currentTextColor == Color.WHITE)
         overlay.automaticButton.isEnabled = originalAuto.isEnabled
         overlay.alwaysOpenButton.isEnabled = originalAlways.isEnabled
-        overlay.settingsButton.isEnabled = originalAuto.isEnabled
+        overlay.settingsButton.isEnabled = originalSettings.isEnabled
         privacyView?.apply {
             visibility = View.VISIBLE
             bringToFront()

@@ -2888,3 +2888,25 @@ Pairing, Bonding и обязательное шифрование на этом 
   28250 байт: JavaScript успешно прошёл синтаксическую проверку Node, ESP32 build
   88 собран успешно. Бинарник занимает `0x13a460` байт, свободно `0xa5ba0` байт
   (35%) минимального app-раздела.
+## Character controls Android — 24.08.2026
+
+- Исходная debug-сборка до изменений: успешно (`build-android.ps1`).
+- Утверждённый JPEG: 812030 байт, 1080 x 2400, SHA-256 совпадает с Issue 10.
+- Проверки `lintRelease`, `bundleRelease`, `assembleDebug`, упаковки APK/AAB,
+  отсутствия Base64 decoder и геометрии 16:9 / 19.5:9 / 20:9 выполняются после
+  интеграции ресурса.
+- Первый полный Gradle-запуск собрал AAB и debug APK, но `lintRelease` остановился
+  на `PropertyEscape` для `local.properties`; проектный скрипт исправлен, требуется
+  повтор полного набора задач.
+- Повторный запуск `gradlew.bat --no-daemon lintRelease bundleRelease assembleDebug`:
+  успешно, 85 задач (23 выполнены, 62 актуальны).
+- В debug APK ресурс находится как `res/drawable-nodpi-v4/home_background.jpg`,
+  в release AAB — как `base/res/drawable-nodpi-v4/home_background.jpg`; в обоих
+  архивах 812030 байт и точный ожидаемый SHA-256.
+- В Android source set отсутствуют фоновые `.b64`, `BitmapFactory` и runtime decoder.
+  Единственный общий `Base64` в `BleRepository` относится к существующему обмену
+  BLE-данными и не используется для изображения.
+- Для 1080 x 1920 (16:9), 1080 x 2340 (19.5:9) и 1080 x 2400 (20:9)
+  подтверждён единый коэффициент масштаба по X/Y и нулевое пересечение трёх
+  hit-area. Минимальная область на этих профилях — 205,2 x 840 px, больше 48dp
+  на типичной плотности 1080p-телефонов.

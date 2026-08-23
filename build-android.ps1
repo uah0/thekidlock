@@ -44,7 +44,7 @@ if ([string]::IsNullOrWhiteSpace($env:GRADLE_OPTS)) {
 }
 
 $localProperties = Join-Path $ProjectDir "local.properties"
-$sdkEscaped = $AndroidSdk -replace '\\','\\'
+$sdkEscaped = $AndroidSdk.Replace('\', '\\').Replace(':', '\:')
 Set-Content -Path $localProperties -Value "sdk.dir=$sdkEscaped" -Encoding ASCII
 
 Set-Location $ProjectDir
