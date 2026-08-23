@@ -561,6 +561,20 @@ class MainActivity : Activity() {
         unregisterBackgroundReceiver()
     }
 
+    override fun onStop() {
+        super.onStop()
+        if (settings.autoOpenEnabled) {
+            // The visible screen temporarily promotes the shared BLE session to
+            // ADMIN. Screen lock/backgrounding does not destroy the Activity, so
+            // onDestroy() cannot be relied on to restore background automation.
+            if (serviceBound) {
+                boundService?.resumeAutomaticMode()
+            } else {
+                startAutoOpenService()
+            }
+        }
+    }
+
     private fun registerBackgroundReceiver() {
         if (backgroundReceiverRegistered) return
         val filter = IntentFilter().apply {

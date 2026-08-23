@@ -90,6 +90,13 @@ class BleLockService : Service(), BleRepository.Listener {
     }
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF) {
+                if (mode == Mode.ADMIN && settings.autoOpenEnabled) {
+                    Log.i(TAG, "Screen off: restoring automatic BLE mode")
+                    resumeAutomaticModeInternal()
+                }
+                return
+            }
             if (intent.action != BluetoothAdapter.ACTION_STATE_CHANGED) return
             when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)) {
                 BluetoothAdapter.STATE_OFF -> handleBluetoothOff()
@@ -120,7 +127,10 @@ class BleLockService : Service(), BleRepository.Listener {
         repositoryActive = true
         bluetoothAvailable = getSystemService(BluetoothManager::class.java)
             .adapter?.isEnabled == true
-        val stateFilter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        val stateFilter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(Intent.ACTION_SCREEN_OFF)
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(bluetoothStateReceiver, stateFilter, RECEIVER_NOT_EXPORTED)
         } else {
@@ -159,16 +169,6 @@ class BleLockService : Service(), BleRepository.Listener {
             scheduleSearch(0)
         }
         return START_STICKY
-    }
-    private val openLeaseRenewal = object : Runnable {
-        override fun run() {
-            if (stopping || mode != Mode.AUTO_OPEN || !repositoryActive) return
-            if (repository.currentState == BleRepository.State.READY ||
-                repository.currentState == BleRepository.State.OPEN_SENT) {
-                repository.openNow()
-            }
-            handler.postDelayed(this, OPEN_LEASE_RENEW_INTERVAL_MS)
-        }
     }
     private val otaRecovery = Runnable {
         if (stopping || mode != Mode.OTA || !bluetoothAvailable) return@Runnable
@@ -221,16 +221,10 @@ class BleLockService : Service(), BleRepository.Listener {
                 resetReconnectBackoff()
                 if (mode == Mode.AUTO_OPEN) {
                     if (!openSentForPresence) repository.openNow()
-                    handler.removeCallbacks(openLeaseRenewal)
-                    handler.postDelayed(openLeaseRenewal, OPEN_LEASE_RENEW_INTERVAL_MS)
                 }
             }
             BleRepository.State.OPEN_SENT -> {
                 openSentForPresence = true
-                if (mode == Mode.AUTO_OPEN) {
-                    handler.removeCallbacks(openLeaseRenewal)
-                    handler.postDelayed(openLeaseRenewal, OPEN_LEASE_RENEW_INTERVAL_MS)
-                }
             }
             BleRepository.State.IDLE, BleRepository.State.ERROR -> {
                 if (stopping) return
@@ -424,7 +418,6 @@ class BleLockService : Service(), BleRepository.Listener {
     private fun setAutomaticModeInternal(enabled: Boolean) {
         if (stopping) return
         if (!enabled) {
-            handler.removeCallbacks(openLeaseRenewal)
             openSentForPresence = false
             handler.removeCallbacks(searchRunnable)
             handler.removeCallbacks(departureRecovery)
@@ -456,7 +449,6 @@ class BleLockService : Service(), BleRepository.Listener {
         }
 
         mode = Mode.AUTO_OPEN
-        handler.removeCallbacks(openLeaseRenewal)
         if (!hasPermissions()) {
             mode = Mode.IDLE
             broadcastAutomaticMode(false)
@@ -512,6 +504,10 @@ class BleLockService : Service(), BleRepository.Listener {
         resetReconnectBackoff()
         handler.removeCallbacks(searchRunnable)
         handler.removeCallbacks(departureRecovery)
+        // The disconnect callback from the closing GATT is asynchronous. Clear
+        // this first so that callback cannot start a stale departure scan which
+        // would race the fresh repository created after Bluetooth STATE_ON.
+        openSentForPresence = false
         if (repositoryActive) {
             repository.close()
             repositoryActive = false
@@ -689,7 +685,6 @@ class BleLockService : Service(), BleRepository.Listener {
         // ready. ESP also needs up to three seconds to expire the old radio
         // link. Starting immediately creates a doomed first GATT session.
         private const val BLUETOOTH_RESTART_DELAY_MS = 8_000L
-        private const val OPEN_LEASE_RENEW_INTERVAL_MS = 2_000L
         private const val DEPARTURE_RECOVERY_MS = 30_000L
         private const val OTA_RECOVERY_DELAY_MS = 15_000L
         private const val SERVICE_RECOVERY_DELAY_MS = 5_000L
