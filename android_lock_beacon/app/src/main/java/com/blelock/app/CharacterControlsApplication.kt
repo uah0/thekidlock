@@ -99,7 +99,6 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
             permissionButton?.bringToFront()
         }
         appRoot.viewTreeObserver.addOnGlobalLayoutListener(observer)
-        appRoot.setTag(OBSERVER_TAG_ID, observer)
         refreshOverlay(activity)
     }
 
@@ -149,6 +148,5 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
 
     companion object {
         private const val OVERLAY_TAG = "ble-lock-character-controls-overlay"
-        private const val OBSERVER_TAG_ID = 0x6B1E0001
     }
 }
