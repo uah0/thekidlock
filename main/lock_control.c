@@ -25,6 +25,7 @@ typedef enum {
     LOCK_EVENT_TOGGLE_HOLD_OPEN,
     LOCK_EVENT_SET_HOLD_OPEN,
     LOCK_EVENT_SET_AUTO,
+    LOCK_EVENT_DISABLE_AUTO_CLOSE,
     LOCK_EVENT_CLOSE,
     LOCK_EVENT_RSSI_HIGH,
     LOCK_EVENT_RSSI_LOW,
@@ -130,6 +131,22 @@ static void lock_task(void *arg)
                         last_sufficient_ms = now_ms;
                         long_open_deadline_ms = now_ms + cfg.long_open_ms;
                         event_log_add("Замок: режим Не закрывать выключен");
+                    }
+                    break;
+                case LOCK_EVENT_DISABLE_AUTO_CLOSE:
+                    hold_open = false;
+                    s_hold_open = false;
+                    open_armed = false;
+                    release_pending = false;
+                    release_condition_active = false;
+                    low_rssi_count = 0;
+                    reopen_blocked = false;
+                    publish_reopen_blocked(false);
+                    if (!lock_control_is_open() || apply_state(false) == ESP_OK) {
+                        led_set_state(LED_STATE_LOCKED);
+                        event_log_add("Замок LOCKED: автоматический режим выключен телефоном");
+                    } else {
+                        event_log_add("Замок: ошибка закрытия при выключении автоматического режима");
                     }
                     break;
                 case LOCK_EVENT_CLOSE:
@@ -319,6 +336,12 @@ esp_err_t lock_request_toggle_hold_open(void)
 esp_err_t lock_request_set_hold_open(bool enabled)
 {
     lock_event_t event = enabled ? LOCK_EVENT_SET_HOLD_OPEN : LOCK_EVENT_SET_AUTO;
+    return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t lock_request_disable_auto_and_close(void)
+{
+    lock_event_t event = LOCK_EVENT_DISABLE_AUTO_CLOSE;
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 

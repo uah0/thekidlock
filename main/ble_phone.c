@@ -530,6 +530,20 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
             event_log_add("BLE MODE принят: %s", always_open ? "ALWAYS_OPEN" : "AUTO");
             return 0;
         }
+        if (len == 14 && memcmp(command, "AUTO_OFF_CLOSE", 14) == 0) {
+            struct ble_gap_conn_desc desc;
+            if (ble_gap_conn_find(conn_handle, &desc) != 0 ||
+                !desc.sec_state.encrypted || !desc.sec_state.bonded) {
+                event_log_add("BLE AUTO_OFF_CLOSE отклонён: соединение не encrypted/bonded");
+                return BLE_ATT_ERR_INSUFFICIENT_AUTHEN;
+            }
+            if (lock_request_disable_auto_and_close() != ESP_OK) {
+                event_log_add("BLE AUTO_OFF_CLOSE: очередь автомата недоступна");
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            event_log_add("BLE AUTO_OFF_CLOSE принят: автоматика выключается, замок закрывается");
+            return 0;
+        }
         if (len == 9 && memcmp(command, "KEEP_OPEN", 9) == 0) {
             struct ble_gap_conn_desc desc;
             if (ble_gap_conn_find(conn_handle, &desc) != 0 ||

@@ -632,6 +632,19 @@ class BleRepository(
         }
     }
 
+    fun disableAutomaticModeAndClose(): Boolean {
+        val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
+        val currentGatt = gatt
+        if ((state != State.READY && state != State.OPEN_SENT) ||
+            characteristic == null || currentGatt == null) {
+            return false
+        }
+        pendingLockCommand = "AUTO_OFF_CLOSE"
+        return write(characteristic, BleProtocol.AUTO_OFF_CLOSE_COMMAND, currentGatt).also {
+            if (!it) fail("Не удалось запустить запись AUTO_OFF_CLOSE")
+        }
+    }
+
     override fun readAdminConfig() {
         val characteristic = lockService?.getCharacteristic(BleProtocol.ADMIN_CONFIG_UUID)
         if (characteristic == null || !enqueueGattOperation("ADMIN_CONFIG") {

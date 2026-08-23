@@ -28,6 +28,8 @@ class BleLockService : Service(), BleRepository.Listener {
     private lateinit var repository: BleRepository
     private lateinit var settings: LockSettings
     private var openSentForPresence = false
+    private var autoOffClosePending = false
+    private var autoOffCloseWriteInFlight = false
     private var stopping = false
     private var repositoryActive = false
     private var bluetoothAvailable = false
@@ -77,7 +79,18 @@ class BleLockService : Service(), BleRepository.Listener {
         override fun deleteBond(address: String) = repository.deleteBond(address)
         override fun deleteAllBonds() = repository.deleteAllBonds()
         override fun rebootEsp32() = repository.rebootEsp32()
-        override fun setAutomaticMode(enabled: Boolean) = setAutomaticModeInternal(enabled)
+        override fun setAutomaticMode(enabled: Boolean) {
+            if (enabled) {
+                autoOffClosePending = false
+                autoOffCloseWriteInFlight = false
+                setAutomaticModeInternal(true)
+            } else {
+                autoOffClosePending = true
+                autoOffCloseWriteInFlight = false
+                setAutomaticModeInternal(false)
+                trySendAutoOffClose()
+            }
+        }
         override fun openNow() = repository.openNow()
         override fun forceOpenNow() = repository.forceOpenNow()
         override fun toggleKeepOpen() = repository.toggleKeepOpen()
@@ -219,7 +232,9 @@ class BleLockService : Service(), BleRepository.Listener {
         when (state) {
             BleRepository.State.READY -> {
                 resetReconnectBackoff()
-                if (mode == Mode.AUTO_OPEN) {
+                if (autoOffClosePending) {
+                    trySendAutoOffClose()
+                } else if (mode == Mode.AUTO_OPEN) {
                     if (!openSentForPresence) repository.openNow()
                 }
             }
@@ -234,6 +249,7 @@ class BleLockService : Service(), BleRepository.Listener {
                     return
                 }
                 if (state == BleRepository.State.ERROR) {
+                    if (autoOffClosePending) autoOffCloseWriteInFlight = false
                     // A failed GATT session is not evidence that OPEN reached
                     // the lock. The next secured session must retry OPEN
                     // immediately instead of waiting for departure detection.
@@ -274,10 +290,33 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onLockData(info: String?, status: String?) {
         if (!info.isNullOrBlank()) lastLockInfo = info
         if (!status.isNullOrBlank()) lastLockStatus = status
+        if (autoOffClosePending && autoOffCloseWriteInFlight &&
+            status?.trim()?.equals("LOCKED", ignoreCase = true) == true) {
+            autoOffClosePending = false
+            autoOffCloseWriteInFlight = false
+            openSentForPresence = false
+            Log.i(TAG, "Automatic mode disabled; lock closure confirmed")
+            if (clients.isEmpty()) setAutomaticModeInternal(false)
+        } else if (autoOffClosePending && autoOffCloseWriteInFlight &&
+            !status.isNullOrBlank()) {
+            // The command write is acknowledged before lock_task necessarily
+            // processes its queue. Allow one more send after the status read.
+            autoOffCloseWriteInFlight = false
+            handler.postDelayed({ trySendAutoOffClose() }, AUTO_OFF_CLOSE_RETRY_MS)
+        }
         if (info != null && status != null) {
             updateNotification("$info · $status")
         }
         clients.toList().forEach { it.onLockData(info, status) }
+    }
+
+    private fun trySendAutoOffClose() {
+        if (!autoOffClosePending || autoOffCloseWriteInFlight ||
+            !repositoryActive || !bluetoothAvailable) return
+        if (repository.disableAutomaticModeAndClose()) {
+            autoOffCloseWriteInFlight = true
+            Log.i(TAG, "AUTO_OFF_CLOSE sent; waiting for LOCKED status")
+        }
     }
 
     override fun onSignalRssi(rssi: Int?) {
@@ -423,7 +462,8 @@ class BleLockService : Service(), BleRepository.Listener {
             handler.removeCallbacks(departureRecovery)
             broadcastAutomaticMode(false)
 
-            if (clients.isNotEmpty() && hasPermissions() && bluetoothAvailable) {
+            if (hasPermissions() &&
+                ((clients.isNotEmpty() && bluetoothAvailable) || autoOffClosePending)) {
                 // Turning automatic opening off only disables OPEN automation.
                 // Keep the BLE control connection alive while the app is open.
                 mode = Mode.ADMIN
@@ -434,7 +474,8 @@ class BleLockService : Service(), BleRepository.Listener {
                     repository.setControlOnly(false)
                 }
                 startAsForeground(getString(R.string.service_starting))
-                if (!repository.isConnectingOrConnected()) scheduleSearch(0)
+                if (bluetoothAvailable && !repository.isConnectingOrConnected()) scheduleSearch(0)
+                if (!bluetoothAvailable) updateNotification(getString(R.string.bluetooth_disabled))
                 return
             }
 
@@ -688,6 +729,7 @@ class BleLockService : Service(), BleRepository.Listener {
         private const val DEPARTURE_RECOVERY_MS = 30_000L
         private const val OTA_RECOVERY_DELAY_MS = 15_000L
         private const val SERVICE_RECOVERY_DELAY_MS = 5_000L
+        private const val AUTO_OFF_CLOSE_RETRY_MS = 1_000L
         private const val RESTART_REQUEST_CODE = 1002
     }
 
