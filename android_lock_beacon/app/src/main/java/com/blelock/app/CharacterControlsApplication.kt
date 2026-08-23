@@ -76,10 +76,13 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply { bottomMargin = dp(activity, 44) }
+            ).apply { bottomMargin = dp(activity, PRIVACY_FOOTER_RESERVE_DP) }
         )
 
-        privacyView?.bringToFront()
+        privacyView?.apply {
+            visibility = View.VISIBLE
+            bringToFront()
+        }
         permissionButton?.bringToFront()
 
         val observer = ViewTreeObserver.OnGlobalLayoutListener {
@@ -95,7 +98,10 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
                 // establish the administrative BLE session when necessary.
                 overlay.settingsButton.isEnabled = originalAuto.isEnabled
             }
-            privacyView?.bringToFront()
+            privacyView?.apply {
+                visibility = View.VISIBLE
+                bringToFront()
+            }
             permissionButton?.bringToFront()
         }
         appRoot.viewTreeObserver.addOnGlobalLayoutListener(observer)
@@ -119,7 +125,10 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
         overlay.automaticButton.isEnabled = originalAuto.isEnabled
         overlay.alwaysOpenButton.isEnabled = originalAlways.isEnabled
         overlay.settingsButton.isEnabled = originalAuto.isEnabled
-        privacyView?.bringToFront()
+        privacyView?.apply {
+            visibility = View.VISIBLE
+            bringToFront()
+        }
     }
 
     private fun findButton(root: View, text: String): Button? =
@@ -148,5 +157,6 @@ class CharacterControlsApplication : Application(), Application.ActivityLifecycl
 
     companion object {
         private const val OVERLAY_TAG = "ble-lock-character-controls-overlay"
+        private const val PRIVACY_FOOTER_RESERVE_DP = 52
     }
 }
