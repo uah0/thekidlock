@@ -15,6 +15,9 @@ import android.widget.TextView
  * Installs the character-based home controls as a presentation layer over the
  * existing MainActivity. The real existing buttons remain the owners of all
  * BLE/Web UI/OTA behaviour: character taps delegate to their performClick().
+ *
+ * This class intentionally contains no BLE protocol logic. Removing the visual
+ * experiment therefore cannot fork or duplicate lock behaviour.
  */
 class CharacterControlsApplication : Application(), Application.ActivityLifecycleCallbacks {
     override fun onCreate() {
