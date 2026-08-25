@@ -2918,3 +2918,54 @@ Pairing, Bonding и обязательное шифрование на этом 
 - Итоговая сборка `build-android.ps1`: успешно; новых предупреждений нет.
 - В Android source set отсутствуют ссылки `CharacterControls` и `home_background`;
   `MainActivity` и её три существующих обработчика не изменялись.
+## Google Play release candidate Android — 25.08.2026
+
+- `clean lintRelease bundleRelease assembleRelease assembleDebug`: PASS,
+  94 задачи (91 выполнена, 3 актуальны).
+- Release APK и AAB подписаны upload-сертификатом RSA-4096/SHA256withRSA;
+  SHA-256: `1D:89:FD:F9:C7:32:70:43:41:30:C8:23:10:C4:4F:F9:12:9D:3B:B0:64:14:FE:C3:1F:47:03:EF:B2:6B:46:3B`.
+- AAB: 262641 байт,
+  SHA-256 `e233cdcc9b031c31d6d2054b94dba3b82d104c2fa3d424f82541359d33d03aa7`.
+- Release APK: 138789 байт,
+  SHA-256 `ae671821c92d9dd6cf60ef5732e68468ba4791b19ef3fa0edc53cf02143b0fde`.
+- Подтверждены `com.blelock.app`, version 1/1.0.0, minSdk 26, targetSdk 36,
+  release signing, manifest components/permissions и отсутствие локальных секретов.
+- Телефон `2510DRA23E`, Android 16/API 36 доступен, но release APK не установлен:
+  `INSTALL_FAILED_UPDATE_INCOMPATIBLE` из-за debug-подписи. Uninstall и удаление
+  данных не выполнялись, ориентация сохранена `0/0`.
+- Launch и hardware regression exact release candidate: NOT TESTED.
+## Production Privacy Policy Android — 25.08.2026
+
+- Проверяется наличие окончательного HTTPS URL в release APK/AAB, отсутствие
+  placeholder/privacy URL, неизменный upload-сертификат и полный clean Gradle build.
+- `clean lintRelease bundleRelease assembleRelease assembleDebug`: PASS;
+  lint — 0 ошибок, 78 предупреждений и 1 hint.
+- APK содержит окончательный URL; в AAB URL подтверждён в декомпрессированном
+  `base/resources.pb`. Placeholder/privacy URL отсутствуют.
+- APK и AAB подписаны прежним upload-сертификатом с SHA-256
+  `1D:89:FD:F9:C7:32:70:43:41:30:C8:23:10:C4:4F:F9:12:9D:3B:B0:64:14:FE:C3:1F:47:03:EF:B2:6B:46:3B`.
+
+## Аппаратный regression release candidate — 25.08.2026
+
+- Exact release APK чисто установлен на Xiaomi `2510DRA23E`, Android 16/API 36;
+  package `com.blelock.app`, versionCode 1, versionName `1.0.0`, targetSdk 36.
+- Ориентация до и после установки сохранена: `accelerometer_rotation=0`,
+  `user_rotation=0`. Bluetooth bond вручную не удалялся, ESP32 не
+  перезагружался, OTA не запускалась.
+- Clean launch, runtime permissions, BLE scan/connect, сохранённый bond и
+  защищённый reconnect: PASS. Crash/ANR не обнаружены.
+- Автоматический режим: PASS. При погашенном экране процесс и foreground service
+  продолжили работу, BLE characteristic и RSSI читались успешно. После проверки
+  автоматический режим возвращён в исходное выключенное состояние.
+- Режим постоянно открытого замка: PASS; после проверки выключен.
+- Settings/admin: PASS. LocalOnlyHotspot/Web UI: PASS — Android создал `ap0` от
+  UID приложения, ESP32 подключился к точке, Chrome открыл `http://10.116.222.33/`.
+  Наличие одновременного подключения `wlan0` к `Cisco` штатно для STA + AP и не
+  является ошибкой.
+- Foreground notification: PASS. Закрытие карточки приложения из recent apps,
+  повторный launch и обычный BLE reconnect: PASS; crash/ANR отсутствуют.
+- Privacy Policy после relaunch: PASS — нижняя строка открывает
+  `https://uah0.github.io/lock-ble/privacy/` через `ACTION_VIEW`.
+- Итог exact release candidate: Clean install / BLE / bond / automatic /
+  always-open / settings / foreground service / screen-off-background / relaunch /
+  reconnect / LocalOnlyHotspot / Web UI / Privacy Policy — PASS.

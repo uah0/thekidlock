@@ -1337,22 +1337,12 @@ class MainActivity : Activity() {
     }
 
     private fun showPrivacyPolicy() {
-        val policyText = TextView(this).apply {
-            text = getString(R.string.privacy_policy_text)
-            textSize = 15f
-            setTextColor(getColor(R.color.primary_text))
-            setPadding(dp(4), dp(2), dp(4), dp(2))
-            setTextIsSelectable(true)
-        }
-        val scroll = ScrollView(this).apply {
-            isFillViewport = true
-            addView(policyText, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.privacy_policy_title)
-            .setView(scroll)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        startActivity(
+            Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse(getString(R.string.privacy_policy_url))
+            )
+        )
     }
 
     private fun sendOpenCommand(keepOpen: Boolean) {

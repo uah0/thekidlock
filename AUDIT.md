@@ -1428,3 +1428,27 @@ CODE, RESILIENCE) и практики безопасного SDLC NIST SP 800-21
 - Для возврата интерфейса основной ветки достаточно убрать регистрацию custom
   `Application` и удалить визуальный слой. `MainActivity` и функциональная логика
   не изменяются.
+## Финальный Google Play release audit Android — 25.08.2026
+
+- Проверена ветка `feature/character-controls`, commit
+  `f3488a11fa95ff9da5285933da4086c210994106`; merge/rebase/reset не выполнялись.
+- Создан локальный upload key PKCS#12 с RSA-4096/SHA256withRSA. Signing-файлы и
+  пароли не tracked и исключены Git; публичный SHA-256 сертификата зафиксирован в
+  `android_lock_beacon/GOOGLE_PLAY_READINESS.md`.
+- Чистая сборка `lintRelease bundleRelease assembleRelease assembleDebug` успешна.
+- Manifest и release-артефакты подтверждают package/version/API, signing,
+  `allowBackup=false`, закрытый connected-device foreground service и отсутствие
+  debug/test flags, signing secrets, machine paths и diagnostic markers.
+- После отдельного разрешения выполнены удаление debug APK и чистая установка
+  подписанного release APK на Xiaomi `2510DRA23E` с Android 16/API 36. Системный
+  Bluetooth bond вручную не удалялся; ориентация до и после установки сохранена `0/0`.
+- Аппаратный regression exact release candidate подтвердил BLE reconnect с
+  сохранённым bond, оба режима замка, foreground service, работу при погашенном
+  экране, relaunch, admin/settings, LocalOnlyHotspot/Web UI и Privacy Policy.
+- Диагностика LocalOnlyHotspot подтвердила штатный параллельный режим STA + AP:
+  телефон сохраняет соединение с `Cisco` через `wlan0`, а отдельный `ap0`
+  создаётся от UID приложения; ESP32 подключается к `ap0`, после чего браузер
+  открывает полученный по BLE локальный IP. Изменения hotspot/BLE-кода не нужны.
+- Production Privacy Policy опубликована по
+  `https://uah0.github.io/lock-ble/privacy/`; нижняя строка открывает этот адрес
+  через стандартный Android `ACTION_VIEW`, локальный диалог удалён.

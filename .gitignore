@@ -21,6 +21,10 @@ out/
 .idea/
 *.iml
 local.properties
+keystore.properties
+*.jks
+*.keystore
+*.p12
 
 # Generated application files
 *.apk
