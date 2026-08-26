@@ -1954,6 +1954,15 @@
 ## 25.08.2026 — Production Privacy Policy Android
 
 - Нижняя строка «Политика конфиденциальности» сохранена на прежнем месте и теперь
-  открывает `https://uah0.github.io/lock-ble/privacy/` через `ACTION_VIEW`.
+  открывает `https://uah0.github.io/thekidlock/privacy/` через `ACTION_VIEW`.
 - Удалены ставшие неиспользуемыми локальный диалог и его строковые ресурсы.
 - BLE, ESP32, Web UI, OTA и foreground-service логика не изменялись.
+
+## 26.08.2026 — Название Android-приложения TheKidLock
+
+- Launcher label, заголовок приложения, фоновые уведомления и системные подсказки
+  используют окончательное пользовательское название `TheKidLock`.
+- `applicationId`, namespace, версия, BLE advertising/protocol identifiers,
+  permissions, signing и функциональность не изменены.
+- Privacy Policy URL обновлён для переименованного репозитория:
+  `https://uah0.github.io/thekidlock/privacy/`.

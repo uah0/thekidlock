@@ -1,4 +1,4 @@
-# Аудит Android-приложения BLE Lock
+# Аудит Android-приложения TheKidLock
 
 ## Удаление ADMIN_AUTH — 22.07.2026
 

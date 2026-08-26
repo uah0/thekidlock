@@ -1,4 +1,4 @@
-# BLE Lock Android
+# TheKidLock Android
 
 Android-клиент для ESP32 BLE Lock.
 

@@ -1,4 +1,4 @@
-# Аудит проекта BLE Lock
+# Аудит проекта TheKidLock
 
 ## Issue #4: повторное нажатие AUTO — 22.08.2026
 
@@ -1450,5 +1450,19 @@ CODE, RESILIENCE) и практики безопасного SDLC NIST SP 800-21
   создаётся от UID приложения; ESP32 подключается к `ap0`, после чего браузер
   открывает полученный по BLE локальный IP. Изменения hotspot/BLE-кода не нужны.
 - Production Privacy Policy опубликована по
-  `https://uah0.github.io/lock-ble/privacy/`; нижняя строка открывает этот адрес
+  `https://uah0.github.io/thekidlock/privacy/`; нижняя строка открывает этот адрес
   через стандартный Android `ACTION_VIEW`, локальный диалог удалён.
+
+## Аудит переименования Android-приложения — 26.08.2026
+
+- Пользовательский бренд и launcher label локально изменяются с `BLE Lock` на
+  `TheKidLock` через существующие Android string resources.
+- `applicationId` и namespace остаются `com.blelock.app`; versionCode/versionName —
+  `1`/`1.0.0`.
+- Техническое advertising/device name `BLE Lock`, GATT/protocol identifiers и
+  пользовательские сообщения, обозначающие физическое BLE-устройство, намеренно
+  сохраняются для совместимости с ESP32.
+- BLE, ESP32, UI-компоновка, permissions, signing и функциональные обработчики не
+  изменяются.
+- Окончательный Privacy Policy URL после переименования репозитория:
+  `https://uah0.github.io/thekidlock/privacy/`.

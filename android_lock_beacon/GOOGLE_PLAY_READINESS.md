@@ -1,9 +1,9 @@
-# Готовность BLE Lock к Google Play
+# Готовность TheKidLock к Google Play
 
-Дата локальной проверки: 25.08.2026.
+Дата локальной проверки: 26.08.2026.
 
-Проверенный commit: `f3488a11fa95ff9da5285933da4086c210994106`, ветка
-`feature/character-controls`.
+Основа проверки: HEAD `fc56d9efd2a1dbc5ab3dca5a953fdc8368089709` и локальный
+неотправленный diff, ветка `feature/character-controls`.
 
 ## Подтверждено локально
 
@@ -15,10 +15,17 @@
   `SHA256withRSA`; keystore, пароли и `keystore.properties` исключены из Git.
 - SHA-256 upload-сертификата:
   `1D:89:FD:F9:C7:32:70:43:41:30:C8:23:10:C4:4F:F9:12:9D:3B:B0:64:14:FE:C3:1F:47:03:EF:B2:6B:46:3B`.
-- Чистый запуск `lintRelease bundleRelease assembleRelease assembleDebug` успешен.
+- Чистый запуск `clean lintRelease bundleRelease assembleRelease` успешен.
 - Release APK и AAB подписаны одним production upload-сертификатом.
 - Нижняя строка Privacy Policy открывает окончательный production HTTPS URL:
-  `https://uah0.github.io/lock-ble/privacy/`.
+  `https://uah0.github.io/thekidlock/privacy/`.
+- Launcher label и пользовательское название: `TheKidLock`; release APK/AAB
+  содержат новое название и окончательный Privacy Policy URL, предыдущий URL
+  отсутствует.
+- Release AAB SHA-256:
+  `E64A5E77FC23AA940EAD112DD231AE7DB19FD4AFB2D133D14D2C23B0E4E8ED79`.
+- Release APK SHA-256:
+  `3FCFBCE712D5D3B22F7DF2D814160BCC8CC5E1162F9EFC4346D204C3272EE056`.
 - Release manifest: `allowBackup=false`, debug/test flags отсутствуют,
   `BleLockService` не экспортирован и использует `connectedDevice`, MainActivity —
   единственная экспортированная Activity.

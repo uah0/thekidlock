@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">BLE Lock</string>
-    <string name="app_title">BLE Lock</string>
+    <string name="app_name">TheKidLock</string>
+    <string name="app_title">TheKidLock</string>
     <string name="grant_permissions">Выдать разрешения</string>
     <string name="legacy_location_required_title">Включите геолокацию</string>
-    <string name="legacy_location_required_message">На Android 6–11 система разрешает поиск BLE-устройств только при включённой геолокации. BLE Lock не использует и не сохраняет местоположение телефона. Начиная с Android 12 это системное требование отсутствует.</string>
+    <string name="legacy_location_required_message">На Android 6–11 система разрешает поиск BLE-устройств только при включённой геолокации. TheKidLock не использует и не сохраняет местоположение телефона. Начиная с Android 12 это системное требование отсутствует.</string>
     <string name="legacy_location_open_settings">Открыть настройки</string>
     <string name="local_hotspot_status">Локальная точка доступа не запущена</string>
     <string name="control_settings">Настройки</string>
@@ -18,10 +18,10 @@
     <string name="lock_signal">%1$d dBm</string>
     <string name="lock_signal_unavailable">—</string>
     <string name="battery_notice_title">Настройка работы в фоне</string>
-    <string name="battery_notice_message">Для работы приложения необходимо отключить оптимизацию батареи для BLE Lock в настройках телефона.</string>
+    <string name="battery_notice_message">Для работы приложения необходимо отключить оптимизацию батареи для TheKidLock в настройках телефона.</string>
     <string name="battery_notice_open_settings">Открыть настройки</string>
     <string name="autostart_notice_title">Разрешить автозапуск</string>
-    <string name="autostart_notice_message">Чтобы BLE Lock продолжал работать после закрытия приложения, найдите BLE Lock в списке и разрешите автозапуск.</string>
+    <string name="autostart_notice_message">Чтобы TheKidLock продолжал работать после закрытия приложения, найдите TheKidLock в списке и разрешите автозапуск.</string>
     <string name="autostart_notice_open_settings">Открыть автозапуск</string>
     <string name="admin_title">Настройки замка по BLE</string>
     <string name="phone_service_title">Сервис телефона</string>
@@ -31,7 +31,7 @@
     <string name="app_version_timestamp">Версия приложения от %1$s</string>
     <string name="app_version_release">Приложение %1$s (%2$d) · сборка %3$s</string>
     <string name="privacy_policy_button">Политика конфиденциальности</string>
-    <string name="privacy_policy_url" translatable="false">https://uah0.github.io/lock-ble/privacy/</string>
+    <string name="privacy_policy_url" translatable="false">https://uah0.github.io/thekidlock/privacy/</string>
     <string name="section_access">ДОСТУП</string>
     <string name="section_rssi">RSSI</string>
     <string name="section_timers">ТАЙМЕРЫ</string>
@@ -70,7 +70,7 @@
     <string name="ready_for_ble">Bluetooth готов</string>
     <string name="event_log_title">События:</string>
     <string name="stage_a2_note">При включении режима настройки через GPIO0 окно BLE-регистрации открыто постоянно. Эта кнопка только продлевает окно для уже подключённого администратора.</string>
-    <string name="service_title">BLE Lock работает в фоне</string>
+    <string name="service_title">TheKidLock работает в фоне</string>
     <string name="service_channel">Автоматическое открытие</string>
     <string name="service_starting">Запуск фонового поиска</string>
     <string name="service_permissions_missing">Нет разрешений Bluetooth</string>

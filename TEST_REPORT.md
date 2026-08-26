@@ -2965,7 +2965,26 @@ Pairing, Bonding и обязательное шифрование на этом 
 - Foreground notification: PASS. Закрытие карточки приложения из recent apps,
   повторный launch и обычный BLE reconnect: PASS; crash/ANR отсутствуют.
 - Privacy Policy после relaunch: PASS — нижняя строка открывает
-  `https://uah0.github.io/lock-ble/privacy/` через `ACTION_VIEW`.
+  `https://uah0.github.io/thekidlock/privacy/` через `ACTION_VIEW`.
 - Итог exact release candidate: Clean install / BLE / bond / automatic /
   always-open / settings / foreground service / screen-off-background / relaunch /
   reconnect / LocalOnlyHotspot / Web UI / Privacy Policy — PASS.
+
+## Проверка переименования Android-приложения — 26.08.2026
+
+- Исходная сборка `build-android.ps1` до изменений: PASS.
+- Проверяемые параметры после изменения: launcher label и пользовательские строки
+  `TheKidLock`, неизменные package/version, новый Privacy Policy URL и техническое
+  BLE-имя.
+- Проектная debug-сборка после изменения: PASS.
+- `lintRelease`, `bundleRelease`, `assembleRelease`: PASS.
+- Чистая сборка `lintRelease`, `bundleRelease`, `assembleRelease`: PASS.
+- Release AAB SHA-256:
+  `e64a5e77fc23aa940ead112dd231ae7db19fd4afb2d133d14d2c23b0e4e8ed79`.
+- Release APK SHA-256:
+  `3fcfbce712d5d3b22f7df2d814160bcc8cc5e1162f9efc4346d204c3272ee056`.
+- APK/AAB подписаны прежним upload-сертификатом SHA-256
+  `1D:89:FD:F9:C7:32:70:43:41:30:C8:23:10:C4:4F:F9:12:9D:3B:B0:64:14:FE:C3:1F:47:03:EF:B2:6B:46:3B`.
+- В APK/AAB присутствуют `TheKidLock` и новый URL; старый URL отсутствует.
+- Окончательный Privacy Policy URL для release-проверки:
+  `https://uah0.github.io/thekidlock/privacy/`.
