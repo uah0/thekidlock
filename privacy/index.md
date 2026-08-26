@@ -1,18 +1,18 @@
-# BLE Lock Privacy Policy
+# TheKidLock Privacy Policy
 
-**Last updated: August 25, 2026**
+**Last updated: August 26, 2026**
 
-BLE Lock is an Android application used to communicate with and control a compatible BLE-enabled lock.
+TheKidLock is an Android application used to communicate with and control a compatible BLE-enabled lock.
 
 ## Information We Collect
 
-BLE Lock does not require user registration and does not collect personal information for advertising, analytics, profiling, or marketing purposes.
+TheKidLock does not require user registration and does not collect personal information for advertising, analytics, profiling, or marketing purposes.
 
 The application does not operate a remote user-account service and does not intentionally transmit personal information to the developer.
 
 ## Bluetooth
 
-BLE Lock uses Bluetooth Low Energy (BLE) to discover, connect to, and communicate with a compatible lock.
+TheKidLock uses Bluetooth Low Energy (BLE) to discover, connect to, and communicate with a compatible lock.
 
 Bluetooth permissions are used only for communication with the lock and related Android Bluetooth functionality.
 
@@ -20,21 +20,21 @@ Information required for operation, such as the selected lock address and applic
 
 ## Local Wi-Fi and Web Interface
 
-BLE Lock may create or use a local Wi-Fi connection to communicate with the compatible lock and provide access to its local web interface.
+TheKidLock may create or use a local Wi-Fi connection to communicate with the compatible lock and provide access to its local web interface.
 
 This communication takes place between the Android device and the lock on the local network.
 
-Wi-Fi functionality is not used by BLE Lock for advertising or user tracking.
+Wi-Fi functionality is not used by TheKidLock for advertising or user tracking.
 
 ## Location
 
 On older Android versions, Android may require location permission for Bluetooth device discovery.
 
-BLE Lock does not use this permission to track the user's physical location or create a location history.
+TheKidLock does not use this permission to track the user's physical location or create a location history.
 
 ## Notifications and Background Operation
 
-BLE Lock may use notifications and a foreground service when automatic lock functionality is enabled.
+TheKidLock may use notifications and a foreground service when automatic lock functionality is enabled.
 
 These Android features allow the application to maintain the device connection and provide the requested lock functionality while the application is not visible on screen.
 
@@ -48,25 +48,25 @@ Configuration stored independently on the compatible lock is not controlled by A
 
 ## Data Sharing
 
-BLE Lock does not sell personal data.
+TheKidLock does not sell personal data.
 
-BLE Lock does not include advertising SDKs or analytics SDKs and does not intentionally share personal information with advertisers or data brokers.
+TheKidLock does not include advertising SDKs or analytics SDKs and does not intentionally share personal information with advertisers or data brokers.
 
 ## Data Retention and Deletion
 
 Locally stored application data remains on the Android device until it is changed, cleared through Android settings, or the application is uninstalled.
 
-Users can delete the application's locally stored data using Android application settings or by uninstalling BLE Lock.
+Users can delete the application's locally stored data using Android application settings or by uninstalling TheKidLock.
 
 ## Security
 
-BLE Lock uses Android platform security mechanisms and Bluetooth security features when communicating with compatible hardware.
+TheKidLock uses Android platform security mechanisms and Bluetooth security features when communicating with compatible hardware.
 
 Users should keep their Android device and compatible lock firmware up to date.
 
 ## Children's Privacy
 
-BLE Lock is a utility application for operating compatible hardware and is not designed specifically for children.
+TheKidLock is a utility application for operating compatible hardware and is not designed specifically for children.
 
 The application does not knowingly collect personal information from children.
 
