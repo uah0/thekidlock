@@ -28,6 +28,10 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
+import android.view.ViewConfiguration
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -46,6 +50,7 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import kotlin.math.hypot
 
 class MainActivity : Activity() {
     private enum class WebUiConnectionState {
@@ -71,8 +76,6 @@ class MainActivity : Activity() {
     private lateinit var adminLongOpen: EditText
     private lateinit var adminTimerA: EditText
     private lateinit var adminTimerB: EditText
-    private lateinit var adminLockGpio: EditText
-    private lateinit var adminOpenLevel: Switch
     private lateinit var adminAdvTxPower: Spinner
     private lateinit var adminAdvTxPowerValue: TextView
     private lateinit var otaSsidField: EditText
@@ -80,6 +83,15 @@ class MainActivity : Activity() {
     private lateinit var otaUrlField: EditText
     private lateinit var adminSaveButton: Button
     private lateinit var swipeRefresh: SwipeRefreshLayout
+    private lateinit var contentFrame: FrameLayout
+    private var rssiSettingsScreen: View? = null
+    private var rssiSliders: List<VerticalRssiSlider> = emptyList()
+    private var rssiSettingsScreenVisible = false
+    private var closingRssiSettingsScreen = false
+    private var rssiBackCallback: Any? = null
+    private var ignoreSwipeForCurrentGesture = false
+    private var gestureStartX = 0f
+    private var gestureStartY = 0f
     private lateinit var adminBondsContainer: LinearLayout
     private lateinit var adminDeleteBondButton: Button
     private lateinit var adminContainer: LinearLayout
@@ -111,6 +123,9 @@ class MainActivity : Activity() {
     private var pendingWorkingMode: Boolean? = null
     private var resumeAutoAfterModeSync = false
     private var lastWorkingModeAlwaysOpen = false
+    private var workingModeKnown = false
+    private var workingModeCommandPending = false
+    private var automaticModeActive = BleLockService.lastAutomaticMode
     private var hotspotCredentialWriteInFlight = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
@@ -175,9 +190,11 @@ class MainActivity : Activity() {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
                 }
                 BleLockService.ACTION_AUTOMATIC_MODE -> {
-                    if (::manualOpenButton.isInitialized) {
-                        setManualButtonBlue(manualOpenButton, settings.autoOpenEnabled)
-                    }
+                    automaticModeActive = intent.getBooleanExtra(
+                        BleLockService.EXTRA_AUTOMATIC_MODE,
+                        BleLockService.lastAutomaticMode
+                    )
+                    updateWorkingModeButtons()
                 }
             }
         }
@@ -202,6 +219,8 @@ class MainActivity : Activity() {
                         keepOpenStatusExpected = false
                         manualCommandWaitingForReady = false
                         hotspotCredentialWriteInFlight = false
+                        workingModeCommandPending = false
+                        workingModeKnown = false
                         resetManualButtonStates()
                     }
                     else -> Unit
@@ -255,6 +274,8 @@ class MainActivity : Activity() {
                 keepOpenCommandPending = false
                 keepOpenStatusExpected = false
                 manualCommandWaitingForReady = false
+                workingModeCommandPending = false
+                workingModeKnown = false
                 resetManualButtonStates()
                 updateAdminEntryButton()
                 updateMainControlsEnabled()
@@ -294,15 +315,17 @@ class MainActivity : Activity() {
             }
 
             override fun onLockData(info: String?, status: String?) {
-                if (::manualKeepOpenButton.isInitialized && !status.isNullOrBlank() &&
+                // Fault/transition statuses describe hardware, not a change to AUTO mode.
+                val modeKnownFromStatus = status != null &&
+                    listOf("OPEN", "LOCKED", "OPEN_HOLD").any { status.trim().equals(it, ignoreCase = true) }
+                if (::manualKeepOpenButton.isInitialized && modeKnownFromStatus && !status.isNullOrBlank() &&
                     (keepOpenStatusExpected || !keepOpenCommandPending)) {
                     val alwaysOpen = status.trim().equals("OPEN_HOLD", ignoreCase = true)
                     lastWorkingModeAlwaysOpen = alwaysOpen
-                    setManualButtonBlue(
-                        manualKeepOpenButton,
-                        alwaysOpen
-                    )
-                    setManualButtonBlue(manualOpenButton, settings.autoOpenEnabled)
+                    workingModeKnown = true
+                    workingModeCommandPending = false
+                    updateWorkingModeButtons()
+                    updateMainControlsEnabled()
                     if (resumeAutoAfterModeSync && !webUiRequestPending) {
                         resumeAutoAfterModeSync = false
                         boundService?.resumeAutomaticMode()
@@ -314,26 +337,17 @@ class MainActivity : Activity() {
             override fun onAdminConfig(value: String) {
                 appendLog("Получена строка конфигурации: \"$value\"")
                 val fields = value.split(',')
-                if (fields.size !in 7..8) {
+                if (fields.size !in 5..6) {
                     appendLog("Некорректный формат настроек: $value")
                     swipeRefresh.isRefreshing = false
                     return
                 }
                 espOpenRssiField.setText(fields[0])
                 espHoldRssiField.setText(fields[1])
-                val longOpenMs = fields[2].toLongOrNull()
-                val longOpenMinutes = if (longOpenMs == null || longOpenMs <= 0L) {
-                    0L
-                } else {
-                    ((longOpenMs + LONG_OPEN_MINUTE_MS - 1L) / LONG_OPEN_MINUTE_MS)
-                        .coerceAtMost(MAX_LONG_OPEN_MINUTES)
-                }
-                adminLongOpen.setText(longOpenMinutes.toString())
+                adminLongOpen.setText(fields[2])
                 adminTimerA.setText(fields[3])
                 adminTimerB.setText(fields[4])
-                adminLockGpio.setText(fields[5])
-                adminOpenLevel.isChecked = fields[6] == "1"
-                val advPower = fields.getOrNull(7)?.toIntOrNull() ?: DEFAULT_ADV_TX_POWER_DBM
+                val advPower = fields.getOrNull(5)?.toIntOrNull() ?: DEFAULT_ADV_TX_POWER_DBM
                 val powerIndex = ADV_TX_POWER_VALUES.indexOf(advPower).takeIf { it >= 0 }
                     ?: ADV_TX_POWER_VALUES.indexOf(DEFAULT_ADV_TX_POWER_DBM)
                 adminAdvTxPower.setSelection(powerIndex)
@@ -490,6 +504,11 @@ class MainActivity : Activity() {
                     closeLocalHotspot("ESP32 больше не сообщает IP открытой страницы")
                     return
                 }
+                if (webUiRequestPending && value == "CONNECTING_WEB") {
+                    setWebUiConnectionState(WebUiConnectionState.WAITING_WEBUI_ADDRESS)
+                    appendLog("ESP32 подключается к сохранённой Wi-Fi сети, ожидаю IP")
+                    return
+                }
                 if (webUiRequestPending && !hotspotProvisioningStarted) {
                     hotspotProvisioningStarted = true
                     appendLog("IP ESP32 не присвоен, запускаю точку доступа телефона")
@@ -527,7 +546,8 @@ class MainActivity : Activity() {
             }
 
         }
-        setContentView(createContent())
+        contentFrame = createContent() as FrameLayout
+        setContentView(contentFrame)
         showBatteryOptimizationNoticeIfNeeded()
         bindBleService()
         refreshState()
@@ -537,6 +557,298 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         if (intent != null) setIntent(intent)
     }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+            gestureStartX = event.rawX
+            gestureStartY = event.rawY
+            ignoreSwipeForCurrentGesture = rssiSettingsScreenVisible && isInsideRssiSlider(event.rawX, event.rawY)
+        }
+
+        val pageWasVisible = rssiSettingsScreenVisible
+        val wasIgnored = ignoreSwipeForCurrentGesture
+        val handled = super.dispatchTouchEvent(event)
+
+        if (event.actionMasked == MotionEvent.ACTION_UP) {
+            val dx = event.rawX - gestureStartX
+            val dy = event.rawY - gestureStartY
+            val minDistance = maxOf(dp(72).toFloat(), ViewConfiguration.get(this).scaledTouchSlop * 3f)
+            val isSwipe = kotlin.math.hypot(dx.toDouble(), dy.toDouble()) >= minDistance
+            if (pageWasVisible && !wasIgnored && isSwipe) {
+                closeRssiThresholdScreen()
+            } else if (!pageWasVisible && !serviceMenuRequested && dy <= -minDistance &&
+                kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                openRssiThresholdScreen()
+            }
+            ignoreSwipeForCurrentGesture = false
+        } else if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
+            ignoreSwipeForCurrentGesture = false
+        }
+        return handled
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (rssiSettingsScreenVisible) closeRssiThresholdScreen() else super.onBackPressed()
+    }
+
+
+    private fun openRssiThresholdScreen() {
+        if (rssiSettingsScreenVisible) return
+        val page = createRssiThresholdScreen()
+        rssiSettingsScreen = page
+        rssiSettingsScreenVisible = true
+        closingRssiSettingsScreen = false
+        registerRssiBackCallback()
+        contentFrame.addView(page, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        page.post {
+            if (rssiSettingsScreen !== page) return@post
+            page.translationY = page.height.toFloat()
+            page.animate().translationY(0f).setDuration(220L).start()
+        }
+    }
+
+    private fun closeRssiThresholdScreen() {
+        if (!rssiSettingsScreenVisible || closingRssiSettingsScreen) return
+        val page = rssiSettingsScreen ?: return
+        closingRssiSettingsScreen = true
+        unregisterRssiBackCallback()
+        page.animate().translationY(page.height.toFloat()).setDuration(200L).withEndAction {
+            contentFrame.removeView(page)
+            rssiSettingsScreen = null
+            rssiSliders = emptyList()
+            rssiSettingsScreenVisible = false
+            closingRssiSettingsScreen = false
+        }.start()
+    }
+
+    private fun registerRssiBackCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || rssiBackCallback != null) return
+        val callback = OnBackInvokedCallback { closeRssiThresholdScreen() }
+        window.onBackInvokedDispatcher.registerOnBackInvokedCallback(
+            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
+            callback
+        )
+        rssiBackCallback = callback
+    }
+
+    private fun unregisterRssiBackCallback() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        (rssiBackCallback as? OnBackInvokedCallback)?.let {
+            window.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
+        }
+        rssiBackCallback = null
+    }
+
+    private fun createRssiThresholdScreen(): View {
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(SettingsUi.PAGE_BG)
+        }
+        val topBar = SettingsUi.topBar(this, "Настройки BLE")
+        (topBar.getChildAt(2) as? TextView)?.setOnClickListener { closeRssiThresholdScreen() }
+        page.addView(topBar, SettingsUi.matchWrap())
+
+        page.addView(TextView(this).apply {
+            text = "AUTO сканирует BLE-рекламу замка до порога RSSI или окончания окна. Пауза задаёт начальную задержку повторного поиска после неудачи; следующие задержки увеличиваются до 30 секунд. После OPEN приложение отдельно отслеживает повторное появление замка."
+            textSize = 14f
+            setTextColor(Color.DKGRAY)
+            gravity = Gravity.CENTER
+            setPadding(dp(22), dp(12), dp(22), dp(6))
+        }, SettingsUi.matchWrap())
+
+        val connectValueLabel = TextView(this).apply {
+            text = "${settings.rssiThreshold} dBm"
+            contentDescription = "Порог подключения ${settings.rssiThreshold} dBm"
+        }
+        connectValueLabel.textSize = 15f
+        connectValueLabel.setTypeface(connectValueLabel.typeface, Typeface.BOLD)
+        connectValueLabel.setTextColor(SettingsUi.ACCENT)
+        connectValueLabel.gravity = Gravity.CENTER
+
+        val settleDelayValueLabel = TextView(this).apply {
+            text = "${settings.securitySettleDelayMs} мс"
+            contentDescription = "Пауза восстановления безопасности ${settings.securitySettleDelayMs} миллисекунд"
+        }
+        settleDelayValueLabel.textSize = 15f
+        settleDelayValueLabel.setTypeface(settleDelayValueLabel.typeface, Typeface.BOLD)
+        settleDelayValueLabel.setTextColor(SettingsUi.ACCENT)
+        settleDelayValueLabel.gravity = Gravity.CENTER
+
+        fun formatWindow(ms: Int): String = if (ms % 1000 == 0) {
+            "${ms / 1000} с"
+        } else {
+            "${ms / 1000}.${(ms % 1000) / 100} с"
+        }
+        val scanWindowValueLabel = TextView(this).apply {
+            text = formatWindow(settings.autoScanWindowMs)
+            contentDescription = "Окно сканирования ${formatWindow(settings.autoScanWindowMs)}"
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(SettingsUi.ACCENT)
+            gravity = Gravity.CENTER
+        }
+        val scanPauseValueLabel = TextView(this).apply {
+            text = "${settings.autoScanPauseMs / 1000} с"
+            contentDescription = "Пауза перед повторным поиском ${settings.autoScanPauseMs / 1000} секунд"
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(SettingsUi.ACCENT)
+            gravity = Gravity.CENTER
+        }
+
+        fun sliderColumn(
+            title: String,
+            valueLabel: TextView,
+            slider: VerticalRssiSlider,
+            topText: String,
+            bottomText: String
+        ): LinearLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(this@MainActivity).apply {
+                text = title
+                textSize = 12f
+                setTextColor(SettingsUi.SECONDARY)
+                gravity = Gravity.CENTER
+            }, SettingsUi.matchWrap())
+            addView(valueLabel, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(4) })
+            val card = FrameLayout(this@MainActivity).apply {
+                setBackgroundColor(SettingsUi.ROW_BG)
+                elevation = dp(2).toFloat()
+                addView(slider, FrameLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
+                addView(TextView(this@MainActivity).apply {
+                    text = topText
+                    textSize = 11f
+                    setTextColor(SettingsUi.SECONDARY)
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+                addView(TextView(this@MainActivity).apply {
+                    text = bottomText
+                    textSize = 11f
+                    setTextColor(SettingsUi.SECONDARY)
+                    setPadding(dp(4), dp(6), dp(4), dp(6))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
+            }
+            addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
+                topMargin = dp(10)
+                bottomMargin = dp(18)
+            })
+        }
+
+        val connectSlider = VerticalRssiSlider(
+            this, LockSettings.RSSI_THRESHOLD_MIN, LockSettings.RSSI_THRESHOLD_MAX, "Порог подключения маяка"
+        ).apply {
+            setValue(settings.rssiThreshold, notify = false)
+            onValueChanged = { value ->
+                settings.rssiThreshold = value
+                connectValueLabel.text = "$value dBm"
+                connectValueLabel.contentDescription = "Порог подключения $value dBm"
+            }
+        }
+        val settleDelaySlider = VerticalRssiSlider(
+            this,
+            LockSettings.SECURITY_SETTLE_DELAY_MIN_MS,
+            LockSettings.SECURITY_SETTLE_DELAY_MAX_MS,
+            "Пауза перед защищённой BLE-командой"
+        ).apply {
+            setValue(settings.securitySettleDelayMs, notify = false)
+            onValueChanged = { value ->
+                val steppedValue = ((value + 25) / 50) * 50
+                settings.securitySettleDelayMs = steppedValue
+                setValue(steppedValue, notify = false)
+                settleDelayValueLabel.text = "${settings.securitySettleDelayMs} мс"
+                settleDelayValueLabel.contentDescription =
+                    "Пауза восстановления безопасности ${settings.securitySettleDelayMs} миллисекунд"
+            }
+        }
+        val scanWindowSlider = VerticalRssiSlider(
+            this,
+            LockSettings.AUTO_SCAN_WINDOW_MIN_MS,
+            LockSettings.AUTO_SCAN_WINDOW_MAX_MS,
+            "Окно активного сканирования"
+        ).apply {
+            setValue(settings.autoScanWindowMs, notify = false)
+            onValueChanged = { value ->
+                val steppedValue = ((value + 50) / 100 * 100).coerceIn(
+                    LockSettings.AUTO_SCAN_WINDOW_MIN_MS, LockSettings.AUTO_SCAN_WINDOW_MAX_MS
+                )
+                settings.autoScanWindowMs = steppedValue
+                setValue(steppedValue, notify = false)
+                scanWindowValueLabel.text = formatWindow(steppedValue)
+                scanWindowValueLabel.contentDescription = "Окно сканирования ${formatWindow(steppedValue)}"
+            }
+        }
+        val scanPauseSlider = VerticalRssiSlider(
+            this,
+            LockSettings.AUTO_SCAN_PAUSE_MIN_MS / 1000,
+            LockSettings.AUTO_SCAN_PAUSE_MAX_MS / 1000,
+            "Пауза перед повторным поиском"
+        ).apply {
+            setValue(settings.autoScanPauseMs / 1000, notify = false)
+            onValueChanged = { seconds ->
+                val boundedSeconds = seconds.coerceIn(
+                    LockSettings.AUTO_SCAN_PAUSE_MIN_MS / 1000,
+                    LockSettings.AUTO_SCAN_PAUSE_MAX_MS / 1000
+                )
+                settings.autoScanPauseMs = boundedSeconds * 1000
+                scanPauseValueLabel.text = "$boundedSeconds с"
+                scanPauseValueLabel.contentDescription =
+                    "Пауза перед повторным поиском $boundedSeconds секунд"
+            }
+        }
+        rssiSliders = listOf(connectSlider, settleDelaySlider, scanWindowSlider, scanPauseSlider)
+
+        val sliderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(sliderColumn(
+                "Порог RSSI", connectValueLabel, connectSlider,
+                "${LockSettings.RSSI_THRESHOLD_MAX} dBm", "${LockSettings.RSSI_THRESHOLD_MIN} dBm"
+            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                marginStart = dp(6)
+                marginEnd = dp(3)
+            })
+            addView(sliderColumn(
+                "Пауза защиты", settleDelayValueLabel, settleDelaySlider,
+                "2 с", "0 мс"
+            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            })
+            addView(sliderColumn(
+                "Окно скана", scanWindowValueLabel, scanWindowSlider,
+                "15 с", "100 мс"
+            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                marginStart = dp(3)
+                marginEnd = dp(3)
+            })
+            addView(sliderColumn(
+                "Пауза повтора", scanPauseValueLabel, scanPauseSlider,
+                "30 с", "1 с"
+            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
+                marginStart = dp(3)
+                marginEnd = dp(6)
+            })
+        }
+        page.addView(sliderRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+        ))
+        return page
+    }
+
+    private fun isInsideRssiSlider(rawX: Float, rawY: Float): Boolean {
+        return rssiSliders.any { slider ->
+            val location = IntArray(2)
+            slider.getLocationOnScreen(location)
+            rawX >= location[0] && rawX <= location[0] + slider.width &&
+                rawY >= location[1] && rawY <= location[1] + slider.height
+        }
+    }
+
 
     override fun onResume() {
         super.onResume()
@@ -715,7 +1027,7 @@ class MainActivity : Activity() {
         adminTimerB = adminNumberField(false)
         addRow(timersCard, stepperRow(
             getString(R.string.admin_long_open), adminLongOpen,
-            0, MAX_LONG_OPEN_MINUTES, 1
+            1, MAX_LONG_OPEN_SECONDS, 1
         ))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_a), adminTimerA, 0, 10_000, 100))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_b), adminTimerB, 0, 120, 1))
@@ -723,12 +1035,6 @@ class MainActivity : Activity() {
 
         // --- АППАРАТНАЯ ЧАСТЬ ---
         staticSettingsContainer.addView(sectionHeader(R.string.section_hardware), topSpacedFullWidth(20))
-        val hardwareCard = newCard()
-        adminLockGpio = adminNumberField(false)
-        addRow(hardwareCard, stepperRow(getString(R.string.admin_lock_gpio), adminLockGpio, 0, 39, 1))
-        adminOpenLevel = Switch(this)
-        tintSwitch(adminOpenLevel)
-        addRow(hardwareCard, switchRow(getString(R.string.admin_open_level), adminOpenLevel))
         adminAdvTxPower = Spinner(this).apply {
             adapter = ArrayAdapter(
                 this@MainActivity,
@@ -747,7 +1053,6 @@ class MainActivity : Activity() {
         adminAdvTxPowerValue = TextView(this).apply {
             text = ADV_TX_POWER_LABELS[ADV_TX_POWER_VALUES.indexOf(DEFAULT_ADV_TX_POWER_DBM)]
         }
-        staticSettingsContainer.addView(hardwareCard, fullWidth())
         legacyAdvPowerContainer = newCard()
         addRow(legacyAdvPowerContainer, disclosureRow(
             getString(R.string.admin_adv_tx_power), adminAdvTxPowerValue, adminAdvTxPower
@@ -849,8 +1154,30 @@ class MainActivity : Activity() {
             addView(swipeRefresh, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
-            ).apply { bottomMargin = dp(44) })
-            addView(privacyPolicyButton, FrameLayout.LayoutParams(
+            ).apply { bottomMargin = dp(84) })
+            val appInfo = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setPadding(dp(8), dp(4), dp(8), 0)
+                addView(TextView(this@MainActivity).apply {
+                    text = getString(
+                        R.string.app_version_release,
+                        BuildConfig.VERSION_NAME,
+                        BuildConfig.BUILD_NUMBER
+                    )
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(getColor(R.color.secondary_text))
+                }, fullWidth())
+                addView(TextView(this@MainActivity).apply {
+                    text = getString(R.string.app_version_timestamp, BuildConfig.BUILD_TIMESTAMP)
+                    textSize = 12f
+                    gravity = Gravity.CENTER
+                    setTextColor(getColor(R.color.secondary_text))
+                }, fullWidth())
+                addView(privacyPolicyButton, fullWidth())
+            }
+            addView(appInfo, FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM
@@ -1117,7 +1444,7 @@ class MainActivity : Activity() {
         connectButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
         hotspotOpenButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
         updateAdminEntryButton()
-        setManualButtonBlue(manualOpenButton, settings.autoOpenEnabled)
+        updateWorkingModeButtons()
         updateMainControlsEnabled()
         updateAdminButtonsEnabled()
     }
@@ -1152,10 +1479,11 @@ class MainActivity : Activity() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         val permissionsGranted = hasBlePermissions()
         val connected = lastBleState == BleRepository.State.READY
-        manualOpenButton.isEnabled = permissionsGranted
-        manualKeepOpenButton.isEnabled = connected
-        manualOpenButton.alpha = if (permissionsGranted) 1f else 0.38f
-        manualKeepOpenButton.alpha = if (connected) 1f else 0.38f
+        val modeSelectionEnabled = connected && !workingModeCommandPending
+        manualOpenButton.isEnabled = modeSelectionEnabled
+        manualKeepOpenButton.isEnabled = modeSelectionEnabled
+        manualOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
+        manualKeepOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
         if (::hotspotOpenButton.isInitialized) {
             val settingsEnabled = connected && adminModeAvailable
             hotspotOpenButton.isEnabled = settingsEnabled
@@ -1365,16 +1693,33 @@ class MainActivity : Activity() {
             requestMissingPermissions()
             return
         }
-        val enabled = !settings.autoOpenEnabled
-        settings.autoOpenEnabled = enabled
-        setManualButtonBlue(manualOpenButton, enabled)
-        android.util.Log.d("BleLockUi", "Автоматическое открытие телефоном: $enabled")
-        if (serviceBound) {
-            repository.setAutomaticMode(enabled)
-        } else if (enabled) {
-            startAutoOpenService()
+        if (!serviceBound || repository.currentState != BleRepository.State.READY ||
+            workingModeCommandPending) return
+        val currentlyEnabled = settings.autoOpenEnabled &&
+            workingModeKnown && !lastWorkingModeAlwaysOpen
+        if (currentlyEnabled) {
+            settings.autoOpenEnabled = false
+            automaticModeActive = false
+            resumeAutoAfterModeSync = false
+            workingModeCommandPending = true
+            android.util.Log.d("BleLockUi", "Запрошено выключение режима AUTO")
+            boundService?.setAutomaticMode(false)
+            updateWorkingModeButtons()
+            updateMainControlsEnabled()
+            return
         }
-        refreshState()
+        settings.autoOpenEnabled = true
+        automaticModeActive = false
+        if (workingModeKnown && lastWorkingModeAlwaysOpen) {
+            workingModeCommandPending = true
+            resumeAutoAfterModeSync = true
+            pendingWorkingMode = null
+            android.util.Log.d("BleLockUi", "Запрошен режим AUTO")
+            repository.setWorkingMode(false)
+        } else {
+            boundService?.setAutomaticMode(true)
+        }
+        updateMainControlsEnabled()
     }
 
     private fun toggleKeepOpenMode() {
@@ -1382,11 +1727,14 @@ class MainActivity : Activity() {
             requestMissingPermissions()
             return
         }
-        if (!serviceBound || repository.currentState != BleRepository.State.READY) return
-        val requestedAlwaysOpen = !lastWorkingModeAlwaysOpen
+        if (!serviceBound || repository.currentState != BleRepository.State.READY ||
+            workingModeCommandPending) return
         pendingWorkingMode = null
-        resumeAutoAfterModeSync = settings.autoOpenEnabled
+        val requestedAlwaysOpen = !(workingModeKnown && lastWorkingModeAlwaysOpen)
+        resumeAutoAfterModeSync = !requestedAlwaysOpen && settings.autoOpenEnabled
+        workingModeCommandPending = true
         repository.setWorkingMode(requestedAlwaysOpen)
+        updateMainControlsEnabled()
     }
 
     private fun showOpenCommandAccepted() {
@@ -1395,10 +1743,19 @@ class MainActivity : Activity() {
     }
 
     private fun resetManualButtonStates() {
-        if (::manualOpenButton.isInitialized) {
-            setManualButtonBlue(manualOpenButton, settings.autoOpenEnabled)
-        }
-        if (::manualKeepOpenButton.isInitialized) setManualButtonBlue(manualKeepOpenButton, false)
+        updateWorkingModeButtons()
+    }
+
+    private fun updateWorkingModeButtons() {
+        if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
+        setManualButtonBlue(
+            manualOpenButton,
+            automaticModeActive && workingModeKnown && !lastWorkingModeAlwaysOpen
+        )
+        setManualButtonBlue(
+            manualKeepOpenButton,
+            workingModeKnown && lastWorkingModeAlwaysOpen
+        )
     }
 
     private fun setManualButtonBlue(button: Button, blue: Boolean) {
@@ -1440,6 +1797,7 @@ class MainActivity : Activity() {
             boundService = binder
             repository = binder
             serviceBound = true
+            automaticModeActive = BleLockService.lastAutomaticMode
             binder.registerClient(bleListener)
             refreshState()
             if (hasBlePermissions()) {
@@ -1611,21 +1969,17 @@ class MainActivity : Activity() {
         val mapping = listOf(
             "phone_rssi_threshold" to { value: Long -> espOpenRssiField.setText(value.toString()) },
             "phone_rssi_hold_threshold" to { value: Long -> espHoldRssiField.setText(value.toString()) },
+            "long_open_s" to { value: Long -> adminLongOpen.setText(value.toString()) },
             "timer_a_ms" to { value: Long -> adminTimerA.setText(value.toString()) },
             "timer_b_s" to { value: Long -> adminTimerB.setText(value.toString()) }
         )
         mapping.forEach { (id, apply) ->
             read(id)?.let { values[id] = it; apply(it) }
         }
-        read("long_open_ms")?.let {
-            values["long_open_ms"] = it
-            adminLongOpen.setText(((it + LONG_OPEN_MINUTE_MS - 1L) / LONG_OPEN_MINUTE_MS).toString())
-        }
-        (dynamicInputs["lock_open_level"] as? Switch)?.let { adminOpenLevel.isChecked = it.isChecked }
         (dynamicInputs["ota_wifi_ssid"] as? EditText)?.let { otaSsidField.setText(it.text.toString()) }
         (dynamicInputs["ota_wifi_password"] as? EditText)?.let { otaPasswordField.setText(it.text.toString()) }
         (dynamicInputs["ota_firmware_url"] as? EditText)?.let { otaUrlField.setText(it.text.toString()) }
-        if (values.size < mapping.size + 1) {
+        if (values.size < mapping.size) {
             Toast.makeText(this, "Проверьте числовые значения декларативной панели", Toast.LENGTH_LONG).show()
             return false
         }
@@ -1636,11 +1990,9 @@ class MainActivity : Activity() {
         val values = listOf(
             espOpenRssiField.text.toString(), espHoldRssiField.text.toString(),
             adminLongOpen.text.toString().toLongOrNull()
-                ?.coerceIn(0L, MAX_LONG_OPEN_MINUTES)
-                ?.times(LONG_OPEN_MINUTE_MS)
+                ?.coerceIn(1L, MAX_LONG_OPEN_SECONDS)
                 ?.toString() ?: "", adminTimerA.text.toString(),
-            adminTimerB.text.toString(),
-            adminLockGpio.text.toString()
+            adminTimerB.text.toString()
         )
         if (values.any { it.toLongOrNull() == null }) {
             appendLog("Заполните все числовые поля настроек")
@@ -1649,9 +2001,7 @@ class MainActivity : Activity() {
         val advTxPower = ADV_TX_POWER_VALUES.getOrElse(adminAdvTxPower.selectedItemPosition) {
             DEFAULT_ADV_TX_POWER_DBM
         }
-        val config = values.joinToString(",") +
-            (if (adminOpenLevel.isChecked) ",1" else ",0") +
-            ",$advTxPower"
+        val config = values.joinToString(",") + ",$advTxPower"
         repository.writeAdminConfig(config)
     }
 
@@ -1934,8 +2284,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val LONG_OPEN_MINUTE_MS = 60_000L
-        private const val MAX_LONG_OPEN_MINUTES = 60L
+        private const val MAX_LONG_OPEN_SECONDS = 3_600L
         private const val REQUEST_BLE_PERMISSIONS = 100
         private const val REQUEST_HOTSPOT_PERMISSIONS = 101
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L

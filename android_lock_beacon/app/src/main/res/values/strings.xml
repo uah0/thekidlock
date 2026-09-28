@@ -28,8 +28,8 @@
     <string name="phone_service_note">Настройки замка, Wi-Fi и OTA перенесены в Web UI ESP32. Здесь остаются функции телефона.</string>
     <string name="firmware_version">Прошивка ESP32: %1$s</string>
     <string name="firmware_version_unknown">Прошивка ESP32: неизвестна</string>
-    <string name="app_version_timestamp">Версия приложения от %1$s</string>
-    <string name="app_version_release">Приложение %1$s (%2$d) · сборка %3$s</string>
+    <string name="app_version_timestamp">Собрано: %1$s</string>
+    <string name="app_version_release">Версия приложения %1$s (сборка %2$d)</string>
     <string name="privacy_policy_button">Политика конфиденциальности</string>
     <string name="privacy_policy_url" translatable="false">https://uah0.github.io/thekidlock/privacy/</string>
     <string name="section_access">ДОСТУП</string>
@@ -41,11 +41,9 @@
     <string name="section_danger">ОПАСНАЯ ЗОНА</string>
     <string name="esp_open_rssi_threshold">RSSI открытия (ESP), dBm (например -68)</string>
     <string name="esp_hold_rssi_threshold">RSSI удержания (ESP), dBm (например -78)</string>
-    <string name="admin_long_open">Таймер длительного открытия, мин</string>
+    <string name="admin_long_open">Таймер длительного открытия, с</string>
     <string name="admin_timer_a">Таймер A, мс</string>
     <string name="admin_timer_b">Таймер Б выхода из жёлтого, с</string>
-    <string name="admin_lock_gpio">GPIO управления замком</string>
-    <string name="admin_open_level">Активный уровень GPIO для открытия: HIGH</string>
     <string name="admin_adv_tx_power">Мощность BLE-маяка замка</string>
     <string name="section_wifi_ota">WI-FI И ОБНОВЛЕНИЕ ПРОШИВКИ</string>
     <string name="ota_wifi_ssid">Имя домашней Wi-Fi сети</string>
