@@ -120,7 +120,7 @@ class BleLockService : Service(), BleRepository.Listener {
     private val departureRecovery = Runnable {
         if (!stopping && mode == Mode.AUTO_OPEN && openSentForPresence) {
             openSentForPresence = false
-            repository.findAndConnect(settings.autoScanWindowMs)
+            repository.findAndConnect()
         }
     }
 
@@ -390,9 +390,7 @@ class BleLockService : Service(), BleRepository.Listener {
             return
         }
         val exponent = reconnectAttempt.coerceAtMost(RECONNECT_BACKOFF_STEPS)
-        val initialDelay = if (mode == Mode.AUTO_OPEN) settings.autoScanPauseMs.toLong()
-            else RECONNECT_DELAY_MS
-        val delay = (initialDelay * (1L shl exponent)).coerceAtMost(RECONNECT_MAX_DELAY_MS)
+        val delay = (RECONNECT_DELAY_MS shl exponent).coerceAtMost(RECONNECT_MAX_DELAY_MS)
         reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(RECONNECT_BACKOFF_STEPS + 1)
         Log.i(TAG, "BLE reconnect scheduled in ${delay}ms (attempt=$reconnectAttempt)")
         scheduleSearch(delay)
@@ -451,7 +449,7 @@ class BleLockService : Service(), BleRepository.Listener {
             if (repository.currentState == BleRepository.State.READY) {
                 repository.openNow()
             } else if (!repository.isConnectingOrConnected()) {
-                repository.findAndConnect(settings.autoScanWindowMs)
+                repository.findAndConnect()
             }
         }
     }
@@ -536,11 +534,7 @@ class BleLockService : Service(), BleRepository.Listener {
         }
         if (!repository.isConnectingOrConnected()) {
             Log.i(TAG, "BLE reconnect scan started")
-            if (mode == Mode.AUTO_OPEN) {
-                repository.findAndConnect(settings.autoScanWindowMs)
-            } else {
-                repository.findAndConnect()
-            }
+            repository.findAndConnect()
         } else {
             Log.d(TAG, "BLE search skipped: repository state=${repository.currentState}")
         }
@@ -696,9 +690,6 @@ class BleLockService : Service(), BleRepository.Listener {
         const val ACTION_START = "com.blelock.app.action.START"
         const val ACTION_STOP = "com.blelock.app.action.STOP"
         const val ACTION_ADMIN = "com.blelock.app.action.ADMIN"
-        // Kept for source compatibility with unused passive-scan test helpers.
-        const val ACTION_DEVICE_DETECTED = "com.blelock.app.action.DEVICE_DETECTED"
-        const val EXTRA_DETECTED_DEVICE = "detected_device"
         const val ACTION_SIGNAL_RSSI = "com.blelock.app.action.SIGNAL_RSSI"
         const val EXTRA_SIGNAL_VALID = "signal_valid"
         const val EXTRA_SIGNAL_RSSI = "signal_rssi"

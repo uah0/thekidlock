@@ -28,10 +28,6 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
-import android.view.ViewConfiguration
-import android.window.OnBackInvokedCallback
-import android.window.OnBackInvokedDispatcher
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -50,7 +46,6 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-import kotlin.math.hypot
 
 class MainActivity : Activity() {
     private enum class WebUiConnectionState {
@@ -83,15 +78,6 @@ class MainActivity : Activity() {
     private lateinit var otaUrlField: EditText
     private lateinit var adminSaveButton: Button
     private lateinit var swipeRefresh: SwipeRefreshLayout
-    private lateinit var contentFrame: FrameLayout
-    private var rssiSettingsScreen: View? = null
-    private var rssiSliders: List<VerticalRssiSlider> = emptyList()
-    private var rssiSettingsScreenVisible = false
-    private var closingRssiSettingsScreen = false
-    private var rssiBackCallback: Any? = null
-    private var ignoreSwipeForCurrentGesture = false
-    private var gestureStartX = 0f
-    private var gestureStartY = 0f
     private lateinit var adminBondsContainer: LinearLayout
     private lateinit var adminDeleteBondButton: Button
     private lateinit var adminContainer: LinearLayout
@@ -546,8 +532,7 @@ class MainActivity : Activity() {
             }
 
         }
-        contentFrame = createContent() as FrameLayout
-        setContentView(contentFrame)
+        setContentView(createContent())
         showBatteryOptimizationNoticeIfNeeded()
         bindBleService()
         refreshState()
@@ -557,298 +542,6 @@ class MainActivity : Activity() {
         super.onNewIntent(intent)
         if (intent != null) setIntent(intent)
     }
-
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            gestureStartX = event.rawX
-            gestureStartY = event.rawY
-            ignoreSwipeForCurrentGesture = rssiSettingsScreenVisible && isInsideRssiSlider(event.rawX, event.rawY)
-        }
-
-        val pageWasVisible = rssiSettingsScreenVisible
-        val wasIgnored = ignoreSwipeForCurrentGesture
-        val handled = super.dispatchTouchEvent(event)
-
-        if (event.actionMasked == MotionEvent.ACTION_UP) {
-            val dx = event.rawX - gestureStartX
-            val dy = event.rawY - gestureStartY
-            val minDistance = maxOf(dp(72).toFloat(), ViewConfiguration.get(this).scaledTouchSlop * 3f)
-            val isSwipe = kotlin.math.hypot(dx.toDouble(), dy.toDouble()) >= minDistance
-            if (pageWasVisible && !wasIgnored && isSwipe) {
-                closeRssiThresholdScreen()
-            } else if (!pageWasVisible && !serviceMenuRequested && dy <= -minDistance &&
-                kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
-                openRssiThresholdScreen()
-            }
-            ignoreSwipeForCurrentGesture = false
-        } else if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
-            ignoreSwipeForCurrentGesture = false
-        }
-        return handled
-    }
-
-    @Suppress("DEPRECATION")
-    override fun onBackPressed() {
-        if (rssiSettingsScreenVisible) closeRssiThresholdScreen() else super.onBackPressed()
-    }
-
-
-    private fun openRssiThresholdScreen() {
-        if (rssiSettingsScreenVisible) return
-        val page = createRssiThresholdScreen()
-        rssiSettingsScreen = page
-        rssiSettingsScreenVisible = true
-        closingRssiSettingsScreen = false
-        registerRssiBackCallback()
-        contentFrame.addView(page, FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT
-        ))
-        page.post {
-            if (rssiSettingsScreen !== page) return@post
-            page.translationY = page.height.toFloat()
-            page.animate().translationY(0f).setDuration(220L).start()
-        }
-    }
-
-    private fun closeRssiThresholdScreen() {
-        if (!rssiSettingsScreenVisible || closingRssiSettingsScreen) return
-        val page = rssiSettingsScreen ?: return
-        closingRssiSettingsScreen = true
-        unregisterRssiBackCallback()
-        page.animate().translationY(page.height.toFloat()).setDuration(200L).withEndAction {
-            contentFrame.removeView(page)
-            rssiSettingsScreen = null
-            rssiSliders = emptyList()
-            rssiSettingsScreenVisible = false
-            closingRssiSettingsScreen = false
-        }.start()
-    }
-
-    private fun registerRssiBackCallback() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || rssiBackCallback != null) return
-        val callback = OnBackInvokedCallback { closeRssiThresholdScreen() }
-        window.onBackInvokedDispatcher.registerOnBackInvokedCallback(
-            OnBackInvokedDispatcher.PRIORITY_DEFAULT,
-            callback
-        )
-        rssiBackCallback = callback
-    }
-
-    private fun unregisterRssiBackCallback() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        (rssiBackCallback as? OnBackInvokedCallback)?.let {
-            window.onBackInvokedDispatcher.unregisterOnBackInvokedCallback(it)
-        }
-        rssiBackCallback = null
-    }
-
-    private fun createRssiThresholdScreen(): View {
-        val page = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(SettingsUi.PAGE_BG)
-        }
-        val topBar = SettingsUi.topBar(this, "Настройки BLE")
-        (topBar.getChildAt(2) as? TextView)?.setOnClickListener { closeRssiThresholdScreen() }
-        page.addView(topBar, SettingsUi.matchWrap())
-
-        page.addView(TextView(this).apply {
-            text = "AUTO сканирует BLE-рекламу замка до порога RSSI или окончания окна. Пауза задаёт начальную задержку повторного поиска после неудачи; следующие задержки увеличиваются до 30 секунд. После OPEN приложение отдельно отслеживает повторное появление замка."
-            textSize = 14f
-            setTextColor(Color.DKGRAY)
-            gravity = Gravity.CENTER
-            setPadding(dp(22), dp(12), dp(22), dp(6))
-        }, SettingsUi.matchWrap())
-
-        val connectValueLabel = TextView(this).apply {
-            text = "${settings.rssiThreshold} dBm"
-            contentDescription = "Порог подключения ${settings.rssiThreshold} dBm"
-        }
-        connectValueLabel.textSize = 15f
-        connectValueLabel.setTypeface(connectValueLabel.typeface, Typeface.BOLD)
-        connectValueLabel.setTextColor(SettingsUi.ACCENT)
-        connectValueLabel.gravity = Gravity.CENTER
-
-        val settleDelayValueLabel = TextView(this).apply {
-            text = "${settings.securitySettleDelayMs} мс"
-            contentDescription = "Пауза восстановления безопасности ${settings.securitySettleDelayMs} миллисекунд"
-        }
-        settleDelayValueLabel.textSize = 15f
-        settleDelayValueLabel.setTypeface(settleDelayValueLabel.typeface, Typeface.BOLD)
-        settleDelayValueLabel.setTextColor(SettingsUi.ACCENT)
-        settleDelayValueLabel.gravity = Gravity.CENTER
-
-        fun formatWindow(ms: Int): String = if (ms % 1000 == 0) {
-            "${ms / 1000} с"
-        } else {
-            "${ms / 1000}.${(ms % 1000) / 100} с"
-        }
-        val scanWindowValueLabel = TextView(this).apply {
-            text = formatWindow(settings.autoScanWindowMs)
-            contentDescription = "Окно сканирования ${formatWindow(settings.autoScanWindowMs)}"
-            textSize = 15f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(SettingsUi.ACCENT)
-            gravity = Gravity.CENTER
-        }
-        val scanPauseValueLabel = TextView(this).apply {
-            text = "${settings.autoScanPauseMs / 1000} с"
-            contentDescription = "Пауза перед повторным поиском ${settings.autoScanPauseMs / 1000} секунд"
-            textSize = 15f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(SettingsUi.ACCENT)
-            gravity = Gravity.CENTER
-        }
-
-        fun sliderColumn(
-            title: String,
-            valueLabel: TextView,
-            slider: VerticalRssiSlider,
-            topText: String,
-            bottomText: String
-        ): LinearLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            addView(TextView(this@MainActivity).apply {
-                text = title
-                textSize = 12f
-                setTextColor(SettingsUi.SECONDARY)
-                gravity = Gravity.CENTER
-            }, SettingsUi.matchWrap())
-            addView(valueLabel, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply { topMargin = dp(4) })
-            val card = FrameLayout(this@MainActivity).apply {
-                setBackgroundColor(SettingsUi.ROW_BG)
-                elevation = dp(2).toFloat()
-                addView(slider, FrameLayout.LayoutParams(dp(72), ViewGroup.LayoutParams.MATCH_PARENT, Gravity.CENTER))
-                addView(TextView(this@MainActivity).apply {
-                    text = topText
-                    textSize = 11f
-                    setTextColor(SettingsUi.SECONDARY)
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-                addView(TextView(this@MainActivity).apply {
-                    text = bottomText
-                    textSize = 11f
-                    setTextColor(SettingsUi.SECONDARY)
-                    setPadding(dp(4), dp(6), dp(4), dp(6))
-                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL))
-            }
-            addView(card, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-                topMargin = dp(10)
-                bottomMargin = dp(18)
-            })
-        }
-
-        val connectSlider = VerticalRssiSlider(
-            this, LockSettings.RSSI_THRESHOLD_MIN, LockSettings.RSSI_THRESHOLD_MAX, "Порог подключения маяка"
-        ).apply {
-            setValue(settings.rssiThreshold, notify = false)
-            onValueChanged = { value ->
-                settings.rssiThreshold = value
-                connectValueLabel.text = "$value dBm"
-                connectValueLabel.contentDescription = "Порог подключения $value dBm"
-            }
-        }
-        val settleDelaySlider = VerticalRssiSlider(
-            this,
-            LockSettings.SECURITY_SETTLE_DELAY_MIN_MS,
-            LockSettings.SECURITY_SETTLE_DELAY_MAX_MS,
-            "Пауза перед защищённой BLE-командой"
-        ).apply {
-            setValue(settings.securitySettleDelayMs, notify = false)
-            onValueChanged = { value ->
-                val steppedValue = ((value + 25) / 50) * 50
-                settings.securitySettleDelayMs = steppedValue
-                setValue(steppedValue, notify = false)
-                settleDelayValueLabel.text = "${settings.securitySettleDelayMs} мс"
-                settleDelayValueLabel.contentDescription =
-                    "Пауза восстановления безопасности ${settings.securitySettleDelayMs} миллисекунд"
-            }
-        }
-        val scanWindowSlider = VerticalRssiSlider(
-            this,
-            LockSettings.AUTO_SCAN_WINDOW_MIN_MS,
-            LockSettings.AUTO_SCAN_WINDOW_MAX_MS,
-            "Окно активного сканирования"
-        ).apply {
-            setValue(settings.autoScanWindowMs, notify = false)
-            onValueChanged = { value ->
-                val steppedValue = ((value + 50) / 100 * 100).coerceIn(
-                    LockSettings.AUTO_SCAN_WINDOW_MIN_MS, LockSettings.AUTO_SCAN_WINDOW_MAX_MS
-                )
-                settings.autoScanWindowMs = steppedValue
-                setValue(steppedValue, notify = false)
-                scanWindowValueLabel.text = formatWindow(steppedValue)
-                scanWindowValueLabel.contentDescription = "Окно сканирования ${formatWindow(steppedValue)}"
-            }
-        }
-        val scanPauseSlider = VerticalRssiSlider(
-            this,
-            LockSettings.AUTO_SCAN_PAUSE_MIN_MS / 1000,
-            LockSettings.AUTO_SCAN_PAUSE_MAX_MS / 1000,
-            "Пауза перед повторным поиском"
-        ).apply {
-            setValue(settings.autoScanPauseMs / 1000, notify = false)
-            onValueChanged = { seconds ->
-                val boundedSeconds = seconds.coerceIn(
-                    LockSettings.AUTO_SCAN_PAUSE_MIN_MS / 1000,
-                    LockSettings.AUTO_SCAN_PAUSE_MAX_MS / 1000
-                )
-                settings.autoScanPauseMs = boundedSeconds * 1000
-                scanPauseValueLabel.text = "$boundedSeconds с"
-                scanPauseValueLabel.contentDescription =
-                    "Пауза перед повторным поиском $boundedSeconds секунд"
-            }
-        }
-        rssiSliders = listOf(connectSlider, settleDelaySlider, scanWindowSlider, scanPauseSlider)
-
-        val sliderRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            addView(sliderColumn(
-                "Порог RSSI", connectValueLabel, connectSlider,
-                "${LockSettings.RSSI_THRESHOLD_MAX} dBm", "${LockSettings.RSSI_THRESHOLD_MIN} dBm"
-            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                marginStart = dp(6)
-                marginEnd = dp(3)
-            })
-            addView(sliderColumn(
-                "Пауза защиты", settleDelayValueLabel, settleDelaySlider,
-                "2 с", "0 мс"
-            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                marginStart = dp(3)
-                marginEnd = dp(3)
-            })
-            addView(sliderColumn(
-                "Окно скана", scanWindowValueLabel, scanWindowSlider,
-                "15 с", "100 мс"
-            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                marginStart = dp(3)
-                marginEnd = dp(3)
-            })
-            addView(sliderColumn(
-                "Пауза повтора", scanPauseValueLabel, scanPauseSlider,
-                "30 с", "1 с"
-            ), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply {
-                marginStart = dp(3)
-                marginEnd = dp(6)
-            })
-        }
-        page.addView(sliderRow, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
-        ))
-        return page
-    }
-
-    private fun isInsideRssiSlider(rawX: Float, rawY: Float): Boolean {
-        return rssiSliders.any { slider ->
-            val location = IntArray(2)
-            slider.getLocationOnScreen(location)
-            rawX >= location[0] && rawX <= location[0] + slider.width &&
-                rawY >= location[1] && rawY <= location[1] + slider.height
-        }
-    }
-
 
     override fun onResume() {
         super.onResume()

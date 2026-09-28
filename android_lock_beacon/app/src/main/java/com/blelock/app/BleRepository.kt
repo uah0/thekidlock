@@ -87,8 +87,6 @@ class BleRepository(
     fun isConnectingOrConnected(): Boolean =
         state != State.IDLE && state != State.ERROR && state != State.DEPARTED
     private var departureMode = false
-    private var weakRssiLoggedForScan = false
-    private var activeScanTimeoutMs = SCAN_TIMEOUT_MS
     private var adminProbePending = false
     private var mtuNegotiationRetries = 0
     private var mtuRetryWatchdog: Runnable? = null
@@ -175,21 +173,10 @@ class BleRepository(
                 handler.removeCallbacks(departureConfirmed)
                 handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
                 handler.post { listener.onSignalRssi(result.rssi) }
-            }
-            if (result.rssi < lockSettings.rssiThreshold) {
-                if (!weakRssiLoggedForScan) {
-                    weakRssiLoggedForScan = true
-                    Log.i(TAG, "Ignoring BLE result below RSSI threshold: " +
-                        "rssi=${result.rssi}, threshold=${lockSettings.rssiThreshold}")
-                }
-                return
-            }
-            weakRssiLoggedForScan = false
-            Log.i(TAG, "BLE_DEVICE_DETECTED: ${result.device.address}, rssi=${result.rssi}")
-            if (departureMode) {
+                // Любое обнаружение маяка считается основанием для попытки
+                // подключения. Решение по RSSI принимает ESP32.
                 departureMode = false
                 stopScan()
-                update(State.DEPARTED, "Замок снова появился выше порога RSSI")
                 lockSettings.lockAddress = result.device.address
                 pairOrConnect(result.device)
                 return
@@ -320,7 +307,7 @@ class BleRepository(
                 if (this@BleRepository.gatt === gatt) {
                     proceedAfterMtuNegotiation(gatt)
                 }
-            }, lockSettings.securitySettleDelayMs.toLong())
+            }, SECURITY_SETTLE_DELAY_MS)
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, statusCode: Int) {
@@ -380,7 +367,7 @@ class BleRepository(
             // otherwise healthy link. Give the security state a bounded settle
             // window before the first protected ATT operation.
             val delay = if (statusCode == BluetoothGatt.GATT_SUCCESS) {
-                lockSettings.securitySettleDelayMs.toLong()
+                SECURITY_SETTLE_DELAY_MS
             } else {
                 MTU_FALLBACK_DELAY_MS
             }
@@ -529,17 +516,8 @@ class BleRepository(
     }
 
     override fun findAndConnect() {
-        findAndConnect(SCAN_TIMEOUT_MS.toInt())
-    }
-
-    fun findAndConnect(timeoutMs: Int) {
         closeGatt()
         departureMode = false
-        weakRssiLoggedForScan = false
-        activeScanTimeoutMs = timeoutMs.coerceIn(
-            LockSettings.AUTO_SCAN_WINDOW_MIN_MS,
-            LockSettings.AUTO_SCAN_WINDOW_MAX_MS
-        ).toLong()
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
         if (scanner == null) {
             fail("Bluetooth выключен или BLE scanner недоступен")
@@ -554,7 +532,7 @@ class BleRepository(
             .build()
         scanner.startScan(listOf(filter), settings, scanCallback)
         handler.removeCallbacks(scanTimeout)
-        handler.postDelayed(scanTimeout, activeScanTimeoutMs)
+        handler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS)
     }
 
     fun startSignalMonitoring() {
@@ -867,7 +845,7 @@ class BleRepository(
 
     private val scanTimeout = Runnable {
         stopScan()
-        fail("BLE Lock не найден за ${activeScanTimeoutMs} мс")
+        fail("BLE Lock не найден за 15 секунд")
     }
 
     private val rssiPoll = Runnable {
@@ -1178,5 +1156,6 @@ class BleRepository(
         private const val MAX_MTU_NEGOTIATION_RETRIES = 2
         private const val MTU_RETRY_DELAY_MS = 400L
         private const val MTU_RETRY_CALLBACK_TIMEOUT_MS = 1_500L
+        private const val SECURITY_SETTLE_DELAY_MS = 700L
     }
 }
