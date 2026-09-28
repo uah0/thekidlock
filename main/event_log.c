@@ -17,6 +17,19 @@ static int s_head;
 static int s_count;
 static SemaphoreHandle_t s_mutex;
 
+/* Drop an incomplete trailing UTF-8 code point after bounded formatting. */
+static void trim_utf8(char *text)
+{
+    size_t n = strlen(text);
+    if (!n) return;
+    size_t start = n - 1;
+    while (start && ((unsigned char)text[start] & 0xc0) == 0x80) start--;
+    unsigned char c = (unsigned char)text[start];
+    size_t width = c < 0x80 ? 1 : (c & 0xe0) == 0xc0 ? 2 :
+                   (c & 0xf0) == 0xe0 ? 3 : (c & 0xf8) == 0xf0 ? 4 : 1;
+    if (n - start < width) text[start] = '\0';
+}
+
 void event_log_init(void)
 {
     s_mutex = xSemaphoreCreateMutex();
@@ -29,10 +42,12 @@ void event_log_add(const char *fmt, ...)
     va_start(ap, fmt);
     vsnprintf(text, sizeof(text), fmt, ap);
     va_end(ap);
+    trim_utf8(text);
 
     uint64_t sec = (uint64_t)(esp_timer_get_time() / 1000000ULL);
     char line[LOG_TEXT_LEN];
     snprintf(line, sizeof(line), "[%llu s] %s", (unsigned long long)sec, text);
+    trim_utf8(line);
     ESP_LOGI(TAG, "%s", line);
 
     if (!s_mutex) return;
@@ -64,6 +79,12 @@ size_t event_log_to_json(char *out, size_t out_size)
     if (s_mutex) xSemaphoreTake(s_mutex, portMAX_DELAY);
     for (int i = 0; i < s_count; i++) {
         int idx = (s_head - s_count + i + LOG_ENTRIES) % LOG_ENTRIES;
+        size_t needed = 2;
+        for (const unsigned char *p = (const unsigned char *)s_entries[idx]; *p; p++) {
+            if (*p >= 0x20) needed += (*p == '"' || *p == '\\') ? 2 : 1;
+        }
+        /* Only whole entries: reserve comma, closing bracket and NUL. */
+        if (needed + (i ? 1 : 0) + 2 > out_size - pos) break;
         if (i && pos < out_size - 1) out[pos++] = ',';
         pos = append_json_string(out, out_size, pos, s_entries[idx]);
     }

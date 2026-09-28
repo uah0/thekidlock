@@ -4,6 +4,7 @@
 #include "event_log.h"
 #include "led.h"
 #include "esp_timer.h"
+#include "nvs.h"
 #include "ulp_controller.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -12,11 +13,43 @@
 
 static SemaphoreHandle_t s_mutex;
 static bool s_initialized;
-static bool s_is_open;
+static bool s_requested_open;
 static volatile bool s_hold_open;
 static bool s_reopen_blocked;
 static QueueHandle_t s_events;
-static int s_gpio = APP_LOCK_GPIO;
+static TaskHandle_t s_lock_task;
+unsigned lock_control_stack_free(void)
+{
+    return s_lock_task ? (unsigned)uxTaskGetStackHighWaterMark(s_lock_task) : 0;
+}
+static lock_feedback_t s_feedback = {.state = LOCK_STATE_STARTING};
+static int64_t s_feedback_time_ms;
+static bool lock_control_requested_open(void);
+static void refresh_feedback(int64_t now_ms);
+
+#define LOCK_MODE_NVS_NAMESPACE "lock_mode"
+#define LOCK_MODE_NVS_KEY       "hold_open"
+#define TEST_OPEN_DURATION_MS   10000LL
+
+static bool load_hold_open(void)
+{
+    nvs_handle_t nvs = 0;
+    uint8_t stored = 0;
+    if (nvs_open(LOCK_MODE_NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_get_u8(nvs, LOCK_MODE_NVS_KEY, &stored);
+    nvs_close(nvs);
+    return err == ESP_OK && stored == 1;
+}
+
+static esp_err_t save_hold_open(bool enabled)
+{
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(LOCK_MODE_NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) err = nvs_set_u8(nvs, LOCK_MODE_NVS_KEY, enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    if (nvs) nvs_close(nvs);
+    return err;
+}
 
 typedef enum {
     LOCK_EVENT_OPEN,
@@ -32,16 +65,20 @@ typedef enum {
     LOCK_EVENT_DISCONNECTED,
 } lock_event_t;
 
-static esp_err_t apply_state(bool open)
+static esp_err_t apply_command(ulp_command_t command)
 {
     if (!s_initialized || !s_mutex) return ESP_ERR_INVALID_STATE;
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    ulp_controller_request(open ? ULP_CMD_OPEN : ULP_CMD_CLOSE);
-    esp_err_t err = ESP_OK;
-    s_is_open = open;
+    esp_err_t err = ulp_controller_request(command);
+    if (err == ESP_OK) s_requested_open = command != ULP_CMD_CLOSE;
     xSemaphoreGive(s_mutex);
     return err;
+}
+
+static esp_err_t apply_state(bool open)
+{
+    return apply_command(open ? ULP_CMD_OPEN : ULP_CMD_CLOSE);
 }
 
 static void publish_reopen_blocked(bool blocked)
@@ -55,9 +92,10 @@ static void lock_task(void *arg)
 {
     (void)arg;
     int64_t last_sufficient_ms = 0;
-    int64_t long_open_deadline_ms = 0;
+    int64_t test_open_deadline_ms = 0;
+    bool test_open_active = false;
     bool reopen_blocked = false;
-    bool hold_open = false;
+    bool hold_open = s_hold_open;
     bool open_armed = false;
     uint8_t low_rssi_count = 0;
     bool release_pending = false;
@@ -75,97 +113,101 @@ static void lock_task(void *arg)
         if (received) {
             switch (event) {
                 case LOCK_EVENT_OPEN:
-                    open_armed = true;
-                    if (!reopen_blocked && !lock_control_is_open()) {
+                    if (!reopen_blocked && !lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
-                            long_open_deadline_ms = now_ms + cfg.long_open_ms;
-                            led_set_state(LED_STATE_UNLOCKED);
-                            event_log_add("Замок UNLOCKED по единому интерфейсу");
+                            test_open_active = false;
+                            event_log_add("Замок: запрос открытия по единому интерфейсу");
                         }
                     }
                     break;
                 case LOCK_EVENT_ARM_OPEN:
                     open_armed = true;
-                    event_log_add("Замок: открытие вооружено, ожидание RSSI");
+                    event_log_add("Замок: открытие вооружено внешней командой, ожидание RSSI");
                     break;
                 case LOCK_EVENT_TEST_OPEN:
                     // Admin-initiated test open is a deliberate manual override: it must
                     // always physically actuate the lock, even while automatic BLE/RSSI
                     // reopening is being held back by the anti-flap "reopen_blocked" guard.
-                    // It intentionally does not touch open_armed, so it doesn't start
-                    // arming automatic RSSI-triggered reopen behaviour.
-                    if (!lock_control_is_open()) {
+                    // It intentionally does not start RSSI-triggered opening.
+                    if (!lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
-                            long_open_deadline_ms = now_ms + cfg.long_open_ms;
-                            led_set_state(LED_STATE_UNLOCKED);
-                            event_log_add("Замок UNLOCKED по тестовой команде (админ, минуя блокировку)");
+                            test_open_deadline_ms = now_ms + TEST_OPEN_DURATION_MS;
+                            test_open_active = true;
+                            event_log_add("Замок: тест открытия на 10 секунд запущен (админ, минуя блокировку)");
                         }
                     }
                     break;
                 case LOCK_EVENT_TOGGLE_HOLD_OPEN:
                 case LOCK_EVENT_SET_HOLD_OPEN:
-                case LOCK_EVENT_SET_AUTO:
+                case LOCK_EVENT_SET_AUTO: {
+                    bool was_hold_open = hold_open;
+                    test_open_active = false;
                     hold_open = event == LOCK_EVENT_TOGGLE_HOLD_OPEN ? !hold_open :
                                 event == LOCK_EVENT_SET_HOLD_OPEN;
                     s_hold_open = hold_open;
-                    open_armed = true;
                     release_pending = false;
                     release_condition_active = false;
                     low_rssi_count = 0;
                     reopen_blocked = false;
                     publish_reopen_blocked(false);
                     if (hold_open) {
-                        if (!lock_control_is_open() && apply_state(true) != ESP_OK) {
+                        if (apply_command(ULP_CMD_HOLD_OPEN) != ESP_OK) {
                             hold_open = false;
                             s_hold_open = false;
                             event_log_add("Замок: не удалось включить режим Не закрывать");
                             break;
                         }
                         last_sufficient_ms = now_ms;
-                        long_open_deadline_ms = now_ms + cfg.long_open_ms;
-                        led_set_state(LED_STATE_UNLOCKED);
                         event_log_add("Замок: режим Не закрывать включён");
                     } else {
+                        if (was_hold_open && lock_control_requested_open() &&
+                            apply_state(true) != ESP_OK) {
+                            event_log_add("Замок: не удалось возобновить измерение зазора");
+                        }
                         last_sufficient_ms = now_ms;
-                        long_open_deadline_ms = now_ms + cfg.long_open_ms;
                         event_log_add("Замок: режим Не закрывать выключен");
                     }
+                    if (save_hold_open(hold_open) != ESP_OK) {
+                        event_log_add("Замок: ошибка сохранения режима в NVS");
+                    }
                     break;
+                }
                 case LOCK_EVENT_DISABLE_AUTO_CLOSE:
+                    test_open_active = false;
+                    open_armed = false;
                     hold_open = false;
                     s_hold_open = false;
-                    open_armed = false;
+                    if (save_hold_open(false) != ESP_OK) {
+                        event_log_add("Замок: ошибка сохранения AUTO в NVS");
+                    }
                     release_pending = false;
                     release_condition_active = false;
                     low_rssi_count = 0;
                     reopen_blocked = false;
                     publish_reopen_blocked(false);
-                    if (!lock_control_is_open() || apply_state(false) == ESP_OK) {
-                        led_set_state(LED_STATE_LOCKED);
-                        event_log_add("Замок LOCKED: автоматический режим выключен телефоном");
+                    if (!lock_control_requested_open() || apply_state(false) == ESP_OK) {
+                        event_log_add("Замок: запрос закрытия: автоматический режим выключен телефоном");
                     } else {
                         event_log_add("Замок: ошибка закрытия при выключении автоматического режима");
                     }
                     break;
                 case LOCK_EVENT_CLOSE:
+                    test_open_active = false;
                     open_armed = false;
-                    if (!hold_open && lock_control_is_open() && apply_state(false) == ESP_OK) {
-                        led_set_state(LED_STATE_LOCKED);
-                        event_log_add("Замок LOCKED по единому интерфейсу");
+                    if (!hold_open && lock_control_requested_open() && apply_state(false) == ESP_OK) {
+                        event_log_add("Замок: запрос закрытия по единому интерфейсу");
                     }
                     break;
                 case LOCK_EVENT_RSSI_HIGH:
                     connection_present = true;
-                    if (lock_control_is_open()) {
+                    if (lock_control_requested_open()) {
                         last_sufficient_ms = now_ms;
                     } else if (open_armed && !reopen_blocked) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
-                            long_open_deadline_ms = now_ms + cfg.long_open_ms;
-                            led_set_state(LED_STATE_UNLOCKED);
-                            event_log_add("Замок UNLOCKED при повторном приближении телефона");
+                            event_log_add("Замок: открытие по ранее полученной команде ARM_OPEN");
                         }
                     }
                     // Strict consecutive streak: any single strong sample resets the
@@ -193,7 +235,6 @@ static void lock_task(void *arg)
                             if (cfg.timer_b_s == 0) {
                                 reopen_blocked = false;
                                 publish_reopen_blocked(false);
-                                if (!lock_control_is_open()) led_set_state(LED_STATE_LOCKED);
                                 event_log_add("Замок: запрет повторного открытия снят по слабому RSSI");
                             } else {
                                 release_pending = true;
@@ -214,7 +255,6 @@ static void lock_task(void *arg)
                             reopen_blocked = false;
                             release_pending = false;
                             publish_reopen_blocked(false);
-                            if (!lock_control_is_open()) led_set_state(LED_STATE_LOCKED);
                             event_log_add("Замок: запрет повторного открытия снят по потере BLE-соединения");
                         } else if (!release_pending) {
                             release_pending = true;
@@ -227,22 +267,17 @@ static void lock_task(void *arg)
             }
         }
 
-        if (lock_control_is_open() && !hold_open) {
-            bool close_a = cfg.timer_a_ms > 0 &&
+        if (lock_control_requested_open() && !hold_open) {
+            bool close_a = !test_open_active && cfg.timer_a_ms > 0 &&
                            now_ms - last_sufficient_ms > (int64_t)cfg.timer_a_ms;
-            bool close_long = now_ms >= long_open_deadline_ms;
-            if (close_a || close_long) {
+            bool close_test = test_open_active &&
+                              now_ms >= test_open_deadline_ms;
+            if (close_a || close_test) {
                 if (apply_state(false) == ESP_OK) {
-                    if (!close_a && close_long) {
-                        reopen_blocked = true;
-                        low_rssi_count = 0;
-                        release_pending = false;
-                        release_condition_active = false;
-                        publish_reopen_blocked(true);
-                    }
-                    led_set_state(reopen_blocked ? LED_STATE_LOCKED_BLOCKED : LED_STATE_LOCKED);
-                    event_log_add("Замок LOCKED по %s",
-                                  close_a ? "таймеру А" : "таймеру долго открыт");
+                    test_open_active = false;
+                    event_log_add("Замок: запрос закрытия по %s",
+                                  close_a ? "таймеру А" :
+                                  "тестовому таймеру");
                 }
             }
         }
@@ -253,12 +288,12 @@ static void lock_task(void *arg)
             if (release_condition_active || !connection_present) {
                 reopen_blocked = false;
                 publish_reopen_blocked(false);
-                if (!lock_control_is_open()) led_set_state(LED_STATE_LOCKED);
-                event_log_add("Замок: таймер Б истёк, условие подтверждено, включён красный");
+                event_log_add("Замок: таймер Б истёк, условие подтверждено");
             } else {
                 event_log_add("Замок: таймер Б истёк, условие перехода не подтверждено");
             }
         }
+        refresh_feedback(now_ms);
     }
 }
 
@@ -269,32 +304,25 @@ esp_err_t lock_control_init(void)
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return ESP_ERR_NO_MEM;
     s_events = xQueueCreate(8, sizeof(lock_event_t));
-    if (!s_events) return ESP_ERR_NO_MEM;
+    if (!s_events) { vSemaphoreDelete(s_mutex); s_mutex = NULL; return ESP_ERR_NO_MEM; }
 
-    s_gpio = APP_LOCK_GPIO;
-
-    ulp_controller_request(ULP_CMD_CLOSE);
-
-    s_is_open = false;
-    s_hold_open = false;
-    /* Режим удержания действует только до перезагрузки и не записывается в NVS. */
+    s_hold_open = load_hold_open();
+    s_requested_open = s_hold_open;
+    esp_err_t err = ulp_controller_request(s_hold_open ? ULP_CMD_HOLD_OPEN : ULP_CMD_CLOSE);
+    if (err != ESP_OK) goto failed;
     s_initialized = true;
 
-    /* The lock always boots physically LOCKED (safe/closed level applied
-     * above), so the LED must reflect that immediately rather than sitting
-     * on the neutral boot color until the first open/close event. Requires
-     * led_init() to already have run before lock_control_init(). */
-    led_set_state(LED_STATE_LOCKED);
+    /* The ULP has not confirmed either state yet. */
+    led_set_state(LED_STATE_BOOT);
+    event_log_add("Замок: режим из NVS — %s", s_hold_open ? "ALWAYS_OPEN" : "AUTO");
 
-    return xTaskCreate(lock_task, "lock_control", 4096, NULL, 6, NULL) == pdPASS
-               ? ESP_OK : ESP_ERR_NO_MEM;
-}
-
-esp_err_t lock_control_set_gpio(int gpio_num)
-{
-    if (gpio_num != APP_LOCK_GPIO) return ESP_ERR_INVALID_ARG;
-    if (!s_initialized || !s_mutex) return ESP_ERR_INVALID_STATE;
-    return gpio_num == s_gpio ? ESP_OK : ESP_ERR_INVALID_ARG;
+    if (xTaskCreate(lock_task, "lock_control", 4096, NULL, 6, &s_lock_task) == pdPASS) return ESP_OK;
+    err = ESP_ERR_NO_MEM;
+failed:
+    s_initialized = false;
+    vQueueDelete(s_events); s_events = NULL;
+    vSemaphoreDelete(s_mutex); s_mutex = NULL;
+    return err;
 }
 
 esp_err_t lock_request_open(void)
@@ -348,7 +376,8 @@ esp_err_t lock_request_disable_auto_and_close(void)
 esp_err_t lock_control_config_changed(void)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
-    return apply_state(lock_control_is_open());
+    if (lock_control_is_hold_open()) return apply_command(ULP_CMD_HOLD_OPEN);
+    return apply_state(lock_control_requested_open());
 }
 
 void lock_control_report_rssi(bool sufficient)
@@ -365,11 +394,11 @@ void lock_control_report_disconnected(void)
     xQueueSend(s_events, &event, 0);
 }
 
-bool lock_control_is_open(void)
+static bool lock_control_requested_open(void)
 {
     if (!s_initialized || !s_mutex) return false;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    bool open = s_is_open;
+    bool open = s_requested_open;
     xSemaphoreGive(s_mutex);
     return open;
 }
@@ -386,4 +415,86 @@ bool lock_control_is_blocked(void)
     bool blocked = s_reopen_blocked;
     xSemaphoreGive(s_mutex);
     return blocked;
+}
+
+
+static void refresh_feedback(int64_t now_ms)
+{
+    ulp_diagnostics_t d;
+    bool valid = ulp_controller_read_diagnostics(&d);
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    lock_feedback_t previous = s_feedback;
+    if (valid) {
+        s_feedback.state = d.lock_state;
+        s_feedback.fault_flags = d.fault_flags;
+        s_feedback.close_rejected = d.close_reject_latched != 0;
+        s_feedback.calibrating = d.calibration_mode != 0;
+        s_feedback.calibration_required = !d.calibration_valid;
+        s_feedback.valid = true;
+        s_feedback_time_ms = now_ms;
+    } else if (now_ms - s_feedback_time_ms > 1000) {
+        s_feedback.valid = false;
+        s_feedback.state = LOCK_STATE_STARTING;
+    }
+    s_feedback.hold_open = s_hold_open;
+    s_feedback.requested_open = s_requested_open;
+    bool blocked = s_reopen_blocked;
+    lock_feedback_t current = s_feedback;
+    xSemaphoreGive(s_mutex);
+
+    static int last_led = -1;
+    led_state_t led = !current.valid ? LED_STATE_BOOT :
+        current.state == LOCK_STATE_FAULT || current.fault_flags || current.close_rejected ? LED_STATE_FAULT :
+        current.calibrating ? LED_STATE_CONFIGURATION :
+        current.calibration_required ? LED_STATE_FAULT :
+        current.state == LOCK_STATE_LOCKED ? (blocked ? LED_STATE_LOCKED_BLOCKED : LED_STATE_LOCKED) :
+        current.state == LOCK_STATE_UNLOCKED ? LED_STATE_UNLOCKED : LED_STATE_BOOT;
+    if ((int)led != last_led) { led_set_state(led); last_led = led; }
+    if (previous.state != current.state || previous.valid != current.valid ||
+        previous.fault_flags != current.fault_flags ||
+        previous.close_rejected != current.close_rejected ||
+        previous.calibration_required != current.calibration_required) {
+        event_log_add("ULP факт: %s fault=0x%lx", lock_control_feedback_name(&current),
+                      (unsigned long)current.fault_flags);
+    }
+}
+
+void lock_control_get_feedback(lock_feedback_t *out)
+{
+    if (!out) return;
+    if (!s_initialized || !s_mutex) {
+        *out = (lock_feedback_t){.state = LOCK_STATE_STARTING};
+        return;
+    }
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    *out = s_feedback;
+    out->hold_open = s_hold_open;
+    out->requested_open = s_requested_open;
+    xSemaphoreGive(s_mutex);
+}
+
+const char *lock_control_feedback_name(const lock_feedback_t *state)
+{
+    if (!state->valid) return "STARTING";
+    if (state->state == LOCK_STATE_FAULT || state->fault_flags) return "FAULT";
+    if (state->calibrating) return "CALIBRATING";
+    if (state->calibration_required) return "CALIBRATION_REQUIRED";
+    if (state->close_rejected) return "CLOSE_REJECTED";
+    if (state->state == LOCK_STATE_LOCKED) return state->hold_open ? "OPENING_HOLD" : "LOCKED";
+    if (state->state == LOCK_STATE_UNLOCKED) return state->hold_open ? "OPEN_HOLD" : "OPEN";
+    return "STARTING";
+}
+
+const char *lock_control_status_name(void)
+{
+    lock_feedback_t state;
+    lock_control_get_feedback(&state);
+    return lock_control_feedback_name(&state);
+}
+
+bool lock_control_is_open(void)
+{
+    lock_feedback_t state;
+    lock_control_get_feedback(&state);
+    return state.valid && state.state == LOCK_STATE_UNLOCKED && !state.fault_flags;
 }

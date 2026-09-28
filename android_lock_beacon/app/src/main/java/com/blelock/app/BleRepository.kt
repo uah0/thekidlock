@@ -35,6 +35,7 @@ class BleRepository(
         fun onConnectionLost() {}
         fun onLockData(info: String?, status: String?)
         fun onSignalRssi(rssi: Int?) {}
+        fun onGattRssi(rssi: Int?) {}
         fun onAdminConfig(value: String) {}
         fun onAdminSchema(value: String) {}
         fun onAdminSchemaError(detail: String) {}
@@ -56,6 +57,12 @@ class BleRepository(
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private val lockSettings = LockSettings(context)
     private var gatt: BluetoothGatt? = null
+    private var autoConnectGattActive = false
+    private var gattConnectionEstablished = false
+    private var autoConnectLinkConnected = false
+    private var autoConnectOpenWritePending = false
+    private var secureStatusProbeAttempts = 0
+    private var secureStatusProbeRetry: Runnable? = null
     private var connectWatchdog: Runnable? = null
     private var lockService: BluetoothGattService? = null
     private var state = State.IDLE
@@ -85,8 +92,18 @@ class BleRepository(
      *  DEPARTED сюда не входит: это завершённое состояние («уход подтверждён»),
      *  которое как раз ждёт вызова findAndConnect() для нового цикла поиска. */
     fun isConnectingOrConnected(): Boolean =
-        state != State.IDLE && state != State.ERROR && state != State.DEPARTED
+        (state != State.IDLE && state != State.ERROR && state != State.DEPARTED) ||
+            hasNativeAutoConnectRequest
+
+    val hasNativeAutoConnectRequest: Boolean
+        get() = autoConnectGattActive && gatt != null
+    val hasOpenBeenSentForAutoConnectPresence: Boolean
+        get() = autoConnectGattActive && autoConnectOpenSentForPresence
+    val hasOpenPendingForAutoConnectPresence: Boolean
+        get() = autoConnectGattActive && autoConnectOpenWritePending
     private var departureMode = false
+    private var departureScanActive = false
+    private var autoConnectOpenSentForPresence = false
     private var adminProbePending = false
     private var mtuNegotiationRetries = 0
     private var mtuRetryWatchdog: Runnable? = null
@@ -131,6 +148,14 @@ class BleRepository(
         activeGattOperation = operation
         if (!operation.start()) {
             finishGattOperation(GattOperationResult.FAILED, pumpNext = false)
+            if (operation.name == "LOCK_STATUS" && autoConnectGattActive && controlOnly) {
+                scheduleSecureStatusProbeRetry("start rejected")
+                return
+            }
+            if (autoConnectOpenWritePending &&
+                operation.name == "WRITE:${BleProtocol.COMMAND_UUID}") {
+                autoConnectOpenWritePending = false
+            }
             fail("Не удалось запустить GATT-операцию: ${operation.name}")
             gattQueue.clear()
             return
@@ -138,6 +163,14 @@ class BleRepository(
         val timeout = Runnable {
             if (activeGattOperation !== operation) return@Runnable
             finishGattOperation(GattOperationResult.TIMEOUT, pumpNext = false)
+            if (operation.name == "LOCK_STATUS" && autoConnectGattActive && controlOnly) {
+                scheduleSecureStatusProbeRetry("callback timeout")
+                return@Runnable
+            }
+            if (autoConnectOpenWritePending &&
+                operation.name == "WRITE:${BleProtocol.COMMAND_UUID}") {
+                autoConnectOpenWritePending = false
+            }
             gattQueue.clear()
             closeGatt()
             fail("Таймаут GATT-операции: ${operation.name}")
@@ -170,9 +203,12 @@ class BleRepository(
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             if (departureMode) {
-                handler.removeCallbacks(departureConfirmed)
-                handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
                 handler.post { listener.onSignalRssi(result.rssi) }
+                if (autoConnectGattActive && gatt != null) {
+                    if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
+                    return
+                }
+                scheduleDepartureConfirmation()
                 // Любое обнаружение маяка считается основанием для попытки
                 // подключения. Решение по RSSI принимает ESP32.
                 departureMode = false
@@ -181,12 +217,19 @@ class BleRepository(
                 pairOrConnect(result.device)
                 return
             }
+            Log.i(TAG, "BLE advertisement accepted for GATT connection: ${result.device.address}, rssi=${result.rssi}")
+            BleEventTones.advertisementDetected()
             stopScan()
             lockSettings.lockAddress = result.device.address
             pairOrConnect(result.device)
         }
 
         override fun onScanFailed(errorCode: Int) {
+            if (departureMode && autoConnectGattActive) {
+                departureScanActive = false
+                Log.w(TAG, "Native auto-connect remains armed; departure scan failed: $errorCode")
+                return
+            }
             fail("Ошибка BLE scan: $errorCode")
         }
     }
@@ -255,7 +298,12 @@ class BleRepository(
             connectWatchdog?.let(handler::removeCallbacks)
             connectWatchdog = null
             Log.d(TAG, "onConnectionStateChange gattHash=${System.identityHashCode(gatt)} status=$statusCode newState=$newState bondState=${gatt.device.bondState}")
+            if (autoConnectGattActive && newState == BluetoothProfile.STATE_DISCONNECTED) {
+                handleAutoConnectDisconnect(statusCode)
+                return
+            }
             if (statusCode != BluetoothGatt.GATT_SUCCESS) {
+                playDisconnectToneIfConnected()
                 handler.post { listener.onConnectionLost() }
                 fail("Ошибка GATT connection: $statusCode")
                 closeGatt()
@@ -263,10 +311,20 @@ class BleRepository(
             }
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
+                    if (autoConnectGattActive) autoConnectLinkConnected = true
+                    if (departureMode) {
+                        handler.removeCallbacks(departureConfirmed)
+                    }
+                    if (!gattConnectionEstablished) {
+                        gattConnectionEstablished = true
+                        Log.i(TAG, "GATT_CONNECTED: ${gatt.device.address}")
+                        BleEventTones.connected()
+                    }
                     update(State.DISCOVERING, "Подключено, поиск GATT-сервиса")
                     gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
+                    playDisconnectToneIfConnected()
                     handler.post { listener.onConnectionLost() }
                     stopRssiPolling()
                     setAdminAvailability(false)
@@ -277,7 +335,7 @@ class BleRepository(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, statusCode: Int) {
-            if (this@BleRepository.gatt !== gatt) {
+            if (!isGattCallbackCurrent(gatt)) {
                 Log.w(TAG, "Ignoring stale GATT services callback")
                 return
             }
@@ -291,6 +349,9 @@ class BleRepository(
                 fail("Сервис BLE Lock не найден")
                 return
             }
+            secureStatusProbeRetry?.let(handler::removeCallbacks)
+            secureStatusProbeRetry = null
+            secureStatusProbeAttempts = 0
             mtuHandshakeComplete = false
             mtuNegotiationRetries = 0
             /* По умолчанию ATT MTU = 23 байта (~20 байт полезной нагрузки на запись).
@@ -304,14 +365,14 @@ class BleRepository(
             // security is restored returns status=6 on Android 16 and can hang
             // after a radio restart on Android 11.
             handler.postDelayed({
-                if (this@BleRepository.gatt === gatt) {
+                if (isGattCallbackCurrent(gatt)) {
                     proceedAfterMtuNegotiation(gatt)
                 }
             }, SECURITY_SETTLE_DELAY_MS)
         }
 
         override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, statusCode: Int) {
-            if (this@BleRepository.gatt !== gatt) {
+            if (!isGattCallbackCurrent(gatt)) {
                 Log.w(TAG, "Ignoring stale GATT MTU callback")
                 return
             }
@@ -331,14 +392,14 @@ class BleRepository(
                 mtuNegotiationRetries < MAX_MTU_NEGOTIATION_RETRIES) {
                 mtuNegotiationRetries++
                 handler.postDelayed({
-                    if (this@BleRepository.gatt === gatt) {
+                    if (isGattCallbackCurrent(gatt)) {
                         val started = gatt.requestMtu(REQUESTED_MTU)
                         Log.i(TAG, "MTU retry $mtuNegotiationRetries/" +
                             "$MAX_MTU_NEGOTIATION_RETRIES started=$started")
                         if (started) {
                             val retryNumber = mtuNegotiationRetries
                             val watchdog = Runnable {
-                                if (this@BleRepository.gatt === gatt &&
+                                if (isGattCallbackCurrent(gatt) &&
                                     !mtuHandshakeComplete &&
                                     mtuNegotiationRetries == retryNumber) {
                                     Log.w(TAG, "MTU retry callback timeout; reconnecting GATT")
@@ -372,7 +433,7 @@ class BleRepository(
                 MTU_FALLBACK_DELAY_MS
             }
             handler.postDelayed({
-                if (this@BleRepository.gatt === gatt) {
+                if (isGattCallbackCurrent(gatt)) {
                     proceedAfterMtuNegotiation(gatt)
                 }
             }, delay)
@@ -384,7 +445,7 @@ class BleRepository(
             characteristic: BluetoothGattCharacteristic,
             statusCode: Int
         ) {
-            if (this@BleRepository.gatt !== gatt) return
+            if (!isGattCallbackCurrent(gatt)) return
             handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             handleRead(characteristic.uuid, characteristic.value ?: byteArrayOf(), statusCode)
         }
@@ -395,7 +456,7 @@ class BleRepository(
             value: ByteArray,
             statusCode: Int
         ) {
-            if (this@BleRepository.gatt !== gatt) return
+            if (!isGattCallbackCurrent(gatt)) return
             handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             handleRead(characteristic.uuid, value, statusCode)
         }
@@ -405,7 +466,7 @@ class BleRepository(
             characteristic: BluetoothGattCharacteristic,
             statusCode: Int
         ) {
-            if (this@BleRepository.gatt !== gatt) return
+            if (!isGattCallbackCurrent(gatt)) return
             handler.post { completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS) }
             Log.d(TAG, "onCharacteristicWrite uuid=${characteristic.uuid} status=$statusCode")
             if (characteristic.uuid == BleProtocol.ADMIN_CONFIG_UUID) {
@@ -464,18 +525,33 @@ class BleRepository(
             }
             if (characteristic.uuid != BleProtocol.COMMAND_UUID) return
             if (statusCode == BluetoothGatt.GATT_SUCCESS) {
+                if (autoConnectGattActive && pendingLockCommand == "OPEN") {
+                    autoConnectOpenWritePending = false
+                }
+                if (autoConnectGattActive && pendingLockCommand == "OPEN") {
+                    autoConnectOpenSentForPresence = true
+                    Log.i(TAG, "OPEN_SENT: command write accepted for this presence")
+                }
                 update(State.OPEN_SENT, "Команда $pendingLockCommand передана замку")
                 handler.postDelayed({ readStatus() }, 500)
             } else {
+                if (autoConnectGattActive && pendingLockCommand == "OPEN") {
+                    autoConnectOpenWritePending = false
+                    Log.w(TAG, "OPEN write failed on native auto-connect; retaining request for secure retry")
+                    update(State.CONNECTING, "Ожидание защищённого повтора записи OPEN")
+                    scheduleSecureStatusProbeRetry("OPEN write status=$statusCode")
+                    return
+                }
                 fail("ESP32 отклонила $pendingLockCommand, GATT status: $statusCode")
             }
         }
 
         override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, statusCode: Int) {
-            if (this@BleRepository.gatt !== gatt) return
+            if (!isGattCallbackCurrent(gatt)) return
             val validRssi = if (statusCode == BluetoothGatt.GATT_SUCCESS) rssi else null
             handler.post {
                 completeGattOperation(statusCode == BluetoothGatt.GATT_SUCCESS)
+                listener.onGattRssi(validRssi)
                 listener.onSignalRssi(validRssi)
                 // GATT-опрос остаётся резервным источником: если фактически все 3 BLE-слота
                 // замка заняты, advertising приостанавливается, и пассивный скан временно
@@ -494,12 +570,10 @@ class BleRepository(
                 fail("Не удалось запустить системный Pairing/Bonding")
             }
         } else if (controlOnly) {
-            // LOCK_INFO is READ_ENC on the ESP32 and is informational only.
-            // Do not block automatic opening on a protected metadata read;
-            // the OPEN write below remains protected and is the real
-            // encrypted-session check.
-            update(State.READY, "Замок готов к автоматическому управлению")
-            scheduleRssiPoll()
+            // READY is published only after a successful READ_ENC response.
+            // This proves the encrypted link before the service sends OPEN.
+            Log.i(TAG, "AUTO_CONNECT_SECURE_PROBE_START: reading encrypted lock status")
+            readStatus()
         } else {
             readInfo()
         }
@@ -516,8 +590,30 @@ class BleRepository(
     }
 
     override fun findAndConnect() {
+        if (isConnectingOrConnected()) {
+            Log.i(TAG, "ACTIVE_CONNECT_SKIPPED_ALREADY_RUNNING: state=$state native=$hasNativeAutoConnectRequest")
+            return
+        }
         closeGatt()
         departureMode = false
+        if (controlOnly && EXPERIMENT_BONDED_AUTO_CONNECT) {
+            val savedAddress = lockSettings.lockAddress
+            val adapter = bluetoothManager?.adapter
+            val bondedDevice = runCatching {
+                val address = savedAddress ?: return@runCatching null
+                val currentAdapter = adapter ?: return@runCatching null
+                currentAdapter.getRemoteDevice(address)
+                    .takeIf { it.bondState == BluetoothDevice.BOND_BONDED }
+            }.getOrNull()
+            if (bondedDevice != null) {
+                stopScan()
+                stopSignalMonitoring()
+                Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_START: bonded device=$savedAddress")
+                connect(bondedDevice, autoConnect = true)
+                return
+            }
+            Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_FALLBACK: no saved bonded device; using filtered scan")
+        }
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
         if (scanner == null) {
             fail("Bluetooth выключен или BLE scanner недоступен")
@@ -531,12 +627,10 @@ class BleRepository(
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
         scanner.startScan(listOf(filter), settings, scanCallback)
-        handler.removeCallbacks(scanTimeout)
-        handler.postDelayed(scanTimeout, SCAN_TIMEOUT_MS)
     }
 
     fun startSignalMonitoring() {
-        if (signalMonitoring) return
+        if (signalMonitoring || departureScanActive || departureMode) return
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner ?: return
         val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
         val settings = ScanSettings.Builder()
@@ -557,7 +651,7 @@ class BleRepository(
     }
 
     fun waitForDeparture() {
-        closeGatt()
+        if (!autoConnectGattActive) closeGatt()
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
         if (scanner == null) {
             fail("Нельзя проверить уход: BLE scanner недоступен")
@@ -565,6 +659,10 @@ class BleRepository(
         }
         departureMode = true
         update(State.WAITING_DEPARTURE, "Ожидание ухода от замка")
+        if (departureScanActive) {
+            if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
+            return
+        }
         val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
         val settings = ScanSettings.Builder()
             /* BALANCED вместо LOW_POWER: у LOW_POWER окно сканирования ~0.5с раз в ~5с,
@@ -575,11 +673,20 @@ class BleRepository(
             .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             .build()
         scanner.startScan(listOf(filter), settings, scanCallback)
-        handler.removeCallbacks(departureConfirmed)
-        handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
+        departureScanActive = true
+        if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
     }
 
     override fun openNow() {
+        if (autoConnectGattActive && !autoConnectLinkConnected) {
+            Log.i(TAG, "OPEN_SKIPPED_AUTO_CONNECT_DISCONNECTED: waiting for system GATT reconnect")
+            return
+        }
+        if (autoConnectGattActive &&
+            (autoConnectOpenSentForPresence || autoConnectOpenWritePending)) {
+            Log.i(TAG, "OPEN_SKIPPED_AUTO_CONNECT_ALREADY_SENT_OR_PENDING")
+            return
+        }
         val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
         val currentGatt = gatt
         if (state != State.READY || characteristic == null || currentGatt == null) {
@@ -587,7 +694,9 @@ class BleRepository(
             return
         }
         pendingLockCommand = "OPEN"
+        if (autoConnectGattActive) autoConnectOpenWritePending = true
         if (!write(characteristic, BleProtocol.OPEN_COMMAND, currentGatt)) {
+            autoConnectOpenWritePending = false
             fail("Не удалось запустить запись OPEN")
         }
     }
@@ -840,12 +949,8 @@ class BleRepository(
         if (!departureMode) return@Runnable
         stopScan()
         departureMode = false
+        autoConnectOpenSentForPresence = false
         update(State.DEPARTED, "Уход подтверждён, новый цикл разрешён")
-    }
-
-    private val scanTimeout = Runnable {
-        stopScan()
-        fail("BLE Lock не найден за 15 секунд")
     }
 
     private val rssiPoll = Runnable {
@@ -866,27 +971,48 @@ class BleRepository(
         if (gatt != null) handler.postDelayed(rssiPoll, RSSI_POLL_INTERVAL_MS)
     }
 
+    fun requestImmediateRssi() {
+        handler.removeCallbacks(rssiPoll)
+        handler.post(rssiPoll)
+    }
+
     private fun stopRssiPolling() {
         handler.removeCallbacks(rssiPoll)
         handler.post { listener.onSignalRssi(null) }
     }
 
     private fun stopScan() {
-        handler.removeCallbacks(scanTimeout)
         handler.removeCallbacks(departureConfirmed)
         runCatching { bluetoothManager?.adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
+        departureScanActive = false
     }
 
-    private fun connect(device: BluetoothDevice) {
-        if (gatt != null) return
+    private fun connect(device: BluetoothDevice, autoConnect: Boolean = false) {
+        if (gatt != null) {
+            Log.i(TAG, "ACTIVE_CONNECT_SKIPPED_ALREADY_RUNNING: GATT request already exists")
+            return
+        }
         setAdminAvailability(false)
-        update(State.CONNECTING, "Подключение к ${device.address}")
+        update(
+            State.CONNECTING,
+            if (autoConnect) "Ожидание системного BLE-подключения к ${device.address}"
+            else "Подключение к ${device.address}"
+        )
         val newGatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
-            device.connectGatt(context, false, gattCallback)
+            device.connectGatt(context, autoConnect, gattCallback)
         }
         gatt = newGatt
+        if (autoConnect) {
+            autoConnectGattActive = true
+            autoConnectLinkConnected = false
+            autoConnectOpenWritePending = false
+            autoConnectOpenSentForPresence = false
+            secureStatusProbeAttempts = 0
+            Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_PENDING: gatt=${newGatt != null}")
+            return
+        }
         val watchdog = Runnable {
             if (gatt !== newGatt || state != State.CONNECTING) return@Runnable
             Log.w(TAG, "connectGatt callback timeout; recreating GATT")
@@ -933,7 +1059,36 @@ class BleRepository(
         if (characteristic == null || !enqueueGattOperation("LOCK_STATUS") {
                 gatt?.readCharacteristic(characteristic) == true
             }) {
-            fail("Не удалось прочитать LOCK_STATUS")
+            if (autoConnectGattActive && controlOnly) {
+                scheduleSecureStatusProbeRetry("queue rejected")
+            } else {
+                fail("Не удалось прочитать LOCK_STATUS")
+            }
+        }
+    }
+
+    private fun scheduleSecureStatusProbeRetry(reason: String) {
+        handler.post {
+            val candidate = gatt ?: return@post
+            if (!autoConnectGattActive || !controlOnly) return@post
+            secureStatusProbeRetry?.let(handler::removeCallbacks)
+            secureStatusProbeAttempts++
+            val delay = (SECURE_STATUS_PROBE_RETRY_MS shl
+                (secureStatusProbeAttempts - 1).coerceAtMost(3)).coerceAtMost(
+                SECURE_STATUS_PROBE_MAX_RETRY_MS
+            )
+            Log.w(
+                TAG,
+                "AUTO_CONNECT_SECURE_PROBE_RETRY: reason=$reason attempt=$secureStatusProbeAttempts delay=${delay}ms"
+            )
+            val retry = Runnable {
+                secureStatusProbeRetry = null
+                if (isGattCallbackCurrent(candidate) && lockService != null) {
+                    readStatus()
+                }
+            }
+            secureStatusProbeRetry = retry
+            handler.postDelayed(retry, delay)
         }
     }
 
@@ -948,6 +1103,10 @@ class BleRepository(
             }
             if (uuid == BleProtocol.ADMIN_SCHEMA_UUID) {
                 listener.onAdminSchemaError("Прошивка отклонила чтение схемы, GATT status: $statusCode")
+                return
+            }
+            if (uuid == BleProtocol.STATUS_UUID && autoConnectGattActive && controlOnly) {
+                scheduleSecureStatusProbeRetry("read status=$statusCode")
                 return
             }
             fail("Защищённое чтение отклонено, GATT status: $statusCode")
@@ -979,14 +1138,22 @@ class BleRepository(
                 BleProtocol.STATUS_UUID -> {
                     status = text
                     listener.onLockData(info, status)
+                    if (autoConnectGattActive && controlOnly) {
+                        secureStatusProbeRetry?.let(handler::removeCallbacks)
+                        secureStatusProbeRetry = null
+                        secureStatusProbeAttempts = 0
+                        Log.i(TAG, "AUTH_SUCCESS: encrypted lock status read succeeded")
+                    }
                     update(State.READY, "Замок готов к защищённой команде")
                     scheduleRssiPoll()
-                    val currentGatt = gatt
-                    postReadyMtuPending = currentGatt != null &&
-                        currentGatt.requestMtu(REQUESTED_MTU)
-                    if (!postReadyMtuPending) {
-                        adminProbePending = true
-                        handler.post { readAdminState() }
+                    if (!controlOnly) {
+                        val currentGatt = gatt
+                        postReadyMtuPending = currentGatt != null &&
+                            currentGatt.requestMtu(REQUESTED_MTU)
+                        if (!postReadyMtuPending) {
+                            adminProbePending = true
+                            handler.post { readAdminState() }
+                        }
                     }
                 }
                 BleProtocol.ADMIN_CONFIG_UUID -> {
@@ -1113,6 +1280,13 @@ class BleRepository(
         }
     }
 
+    private fun playDisconnectToneIfConnected() {
+        if (!gattConnectionEstablished) return
+        gattConnectionEstablished = false
+        Log.i(TAG, "GATT_DISCONNECTED")
+        BleEventTones.disconnected()
+    }
+
     private fun setAdminAvailability(available: Boolean) {
         handler.post { listener.onAdminAvailability(available) }
     }
@@ -1120,6 +1294,14 @@ class BleRepository(
     private fun fail(message: String) = update(State.ERROR, message)
 
     private fun closeGatt() {
+        autoConnectGattActive = false
+        autoConnectLinkConnected = false
+        autoConnectOpenWritePending = false
+        autoConnectOpenSentForPresence = false
+        secureStatusProbeRetry?.let(handler::removeCallbacks)
+        secureStatusProbeRetry = null
+        secureStatusProbeAttempts = 0
+        playDisconnectToneIfConnected()
         connectWatchdog?.let(handler::removeCallbacks)
         connectWatchdog = null
         stopRssiPolling()
@@ -1141,9 +1323,51 @@ class BleRepository(
         gatt = null
     }
 
+    private fun handleAutoConnectDisconnect(statusCode: Int) {
+        autoConnectLinkConnected = false
+        autoConnectOpenWritePending = false
+        secureStatusProbeRetry?.let(handler::removeCallbacks)
+        secureStatusProbeRetry = null
+        secureStatusProbeAttempts = 0
+        playDisconnectToneIfConnected()
+        handler.post { listener.onConnectionLost() }
+        stopRssiPolling()
+        stopSignalMonitoring()
+        setAdminAvailability(false)
+        finishGattOperation(GattOperationResult.CANCELLED, pumpNext = false)
+        activeGattTimeout?.let(handler::removeCallbacks)
+        activeGattTimeout = null
+        gattQueue.clear()
+        activeGattOperation = null
+        mtuHandshakeComplete = false
+        mtuNegotiationRetries = 0
+        postReadyMtuPending = false
+        mtuRetryWatchdog?.let(handler::removeCallbacks)
+        mtuRetryWatchdog = null
+        adminProbePending = false
+        pendingConfigVerification = null
+        lockService = null
+        Log.i(TAG, "NATIVE_AUTO_CONNECT_RETAINED: status=$statusCode; keeping GATT request armed")
+        if (autoConnectOpenSentForPresence) {
+            waitForDeparture()
+        } else {
+            update(State.CONNECTING, "Ожидание системного GATT-переподключения")
+        }
+    }
+
+    private fun isGattCallbackCurrent(candidate: BluetoothGatt): Boolean =
+        this.gatt === candidate && (!autoConnectGattActive || autoConnectLinkConnected)
+
+    private fun scheduleDepartureConfirmation() {
+        handler.removeCallbacks(departureConfirmed)
+        handler.postDelayed(departureConfirmed, DEPARTURE_SILENCE_MS)
+    }
+
     companion object {
         private const val TAG = "BleLock"
-        private const val SCAN_TIMEOUT_MS = 15_000L
+        // Temporary debug experiment: use Android's native background auto-connect
+        // for the already-bonded lock while AUTO mode is active.
+        private const val EXPERIMENT_BONDED_AUTO_CONNECT = true
         private const val DEPARTURE_SILENCE_MS = 20_000L
         private const val PHONE_NAME_MAX_BYTES = 20
         private const val RSSI_POLL_INTERVAL_MS = 2_000L
@@ -1157,5 +1381,7 @@ class BleRepository(
         private const val MTU_RETRY_DELAY_MS = 400L
         private const val MTU_RETRY_CALLBACK_TIMEOUT_MS = 1_500L
         private const val SECURITY_SETTLE_DELAY_MS = 700L
+        private const val SECURE_STATUS_PROBE_RETRY_MS = 750L
+        private const val SECURE_STATUS_PROBE_MAX_RETRY_MS = 4_000L
     }
 }

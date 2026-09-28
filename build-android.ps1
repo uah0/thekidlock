@@ -49,6 +49,12 @@ Set-Content -Path $localProperties -Value "sdk.dir=$sdkEscaped" -Encoding ASCII
 
 Set-Location $ProjectDir
 
+if ($Action -ne "clean") {
+    $buildNumberFile = Join-Path $ProjectDir "BUILD_NUMBER"
+    $buildNumber = [int](Get-Content -LiteralPath $buildNumberFile -Raw).Trim()
+    Set-Content -LiteralPath $buildNumberFile -Value ($buildNumber + 1) -Encoding ASCII
+}
+
 switch ($Action) {
     "debug" {
         & ".\gradlew.bat" --no-daemon assembleDebug

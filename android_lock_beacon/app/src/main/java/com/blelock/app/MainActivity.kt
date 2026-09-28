@@ -28,6 +28,7 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -56,19 +57,19 @@ class MainActivity : Activity() {
     private lateinit var settings: LockSettings
     private lateinit var repository: BleClient
     private lateinit var bleListener: BleRepository.Listener
+    private lateinit var mainContentView: View
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
+    private var rssiThresholdScreenVisible = false
     private lateinit var permissionButton: Button
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
     private lateinit var hotspotStatusView: TextView
     private lateinit var hotspotWebUrlView: TextView
     private lateinit var hotspotOpenButton: Button
-    private lateinit var connectButton: Button
     private lateinit var freeKeysView: TextView
     private lateinit var espOpenRssiField: EditText
     private lateinit var espHoldRssiField: EditText
-    private lateinit var adminLongOpen: EditText
     private lateinit var adminTimerA: EditText
     private lateinit var adminTimerB: EditText
     private lateinit var adminAdvTxPower: Spinner
@@ -94,6 +95,10 @@ class MainActivity : Activity() {
     private var manualConnectionActive = false
     private var lastBleState = BleRepository.State.IDLE
     private var activityResumed = false
+    private var rssiThresholdSlider: View? = null
+    private var swipeStartX = 0f
+    private var swipeStartY = 0f
+    private var swipeStartedOnSlider = false
     private var legacyLocationDialog: AlertDialog? = null
     private var selectedBondAddress: String? = null
     private var otaStartPending = false
@@ -225,8 +230,6 @@ class MainActivity : Activity() {
                         else repository.forceOpenNow()
                     }
                 }
-                connectButton.isEnabled = state != BleRepository.State.SCANNING &&
-                    state != BleRepository.State.CONNECTING && state != BleRepository.State.BONDING
                 updateMainControlsEnabled()
                 updateAdminButtonsEnabled()
                 if (state == BleRepository.State.IDLE || state == BleRepository.State.ERROR) {
@@ -263,7 +266,7 @@ class MainActivity : Activity() {
                 workingModeCommandPending = false
                 workingModeKnown = false
                 resetManualButtonStates()
-                updateAdminEntryButton()
+                updateAdminEntryState()
                 updateMainControlsEnabled()
                 signalHandler.removeCallbacks(adminSignalPoll)
                 appendLog("ESP32 недоступен")
@@ -283,7 +286,7 @@ class MainActivity : Activity() {
                     return
                 }
                 adminModeAvailable = available
-                updateAdminEntryButton()
+                updateAdminEntryState()
                 val showAdmin = available && serviceMenuRequested
                 setAdminPanelVisible(showAdmin)
                 signalHandler.removeCallbacks(adminSignalPoll)
@@ -330,7 +333,6 @@ class MainActivity : Activity() {
                 }
                 espOpenRssiField.setText(fields[0])
                 espHoldRssiField.setText(fields[1])
-                adminLongOpen.setText(fields[2])
                 adminTimerA.setText(fields[3])
                 adminTimerB.setText(fields[4])
                 val advPower = fields.getOrNull(5)?.toIntOrNull() ?: DEFAULT_ADV_TX_POWER_DBM
@@ -532,10 +534,85 @@ class MainActivity : Activity() {
             }
 
         }
-        setContentView(createContent())
+        mainContentView = createContent()
+        setContentView(mainContentView)
+        if (savedInstanceState?.getBoolean(KEY_RSSI_SCREEN_VISIBLE) == true) {
+            showRssiThresholdScreen(animated = false)
+        }
         showBatteryOptimizationNoticeIfNeeded()
         bindBleService()
         refreshState()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeStartX = event.rawX
+                swipeStartY = event.rawY
+                swipeStartedOnSlider = rssiThresholdScreenVisible && isInsideRssiThresholdSlider(
+                    event.rawX,
+                    event.rawY
+                )
+            }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.rawX - swipeStartX
+                val dy = event.rawY - swipeStartY
+                if (rssiThresholdScreenVisible) {
+                    if (!swipeStartedOnSlider && kotlin.math.hypot(dx, dy) >= dp(72)) {
+                        window.decorView.post { closeRssiThresholdScreen(animated = true) }
+                    }
+                } else if (::mainContentView.isInitialized && !serviceMenuRequested &&
+                    -dy >= dp(90) && -dy > kotlin.math.abs(dx) * 1.2f) {
+                    window.decorView.post { showRssiThresholdScreen(animated = true) }
+                }
+                swipeStartedOnSlider = false
+            }
+            MotionEvent.ACTION_CANCEL -> swipeStartedOnSlider = false
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(KEY_RSSI_SCREEN_VISIBLE, rssiThresholdScreenVisible)
+        super.onSaveInstanceState(outState)
+    }
+
+    @Deprecated("Deprecated by Android in favor of predictive Back")
+    override fun onBackPressed() {
+        if (rssiThresholdScreenVisible) {
+            closeRssiThresholdScreen(animated = true)
+        } else if (serviceMenuRequested) {
+            closeServiceMenu()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    private fun showRssiThresholdScreen(animated: Boolean) {
+        if (rssiThresholdScreenVisible) return
+        rssiThresholdScreenVisible = true
+        val screen = createRssiThresholdScreen()
+        setContentView(screen)
+        if (animated) {
+            screen.translationY = resources.displayMetrics.heightPixels.toFloat()
+            screen.animate()
+                .translationY(0f)
+                .setDuration(SCREEN_TRANSITION_DURATION_MS)
+                .start()
+        }
+    }
+
+    private fun closeRssiThresholdScreen(animated: Boolean) {
+        if (!rssiThresholdScreenVisible) return
+        rssiThresholdScreenVisible = false
+        setContentView(mainContentView)
+        if (animated) {
+            mainContentView.translationY = -resources.displayMetrics.heightPixels.toFloat()
+            mainContentView.animate()
+                .translationY(0f)
+                .setDuration(SCREEN_TRANSITION_DURATION_MS)
+                .start()
+        }
     }
 
     override fun onNewIntent(intent: Intent?) {
@@ -667,8 +744,6 @@ class MainActivity : Activity() {
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
         accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 18))
-        connectButton = navigationButton(R.string.connect_admin) { activateServiceMenu() }
-        connectButton.visibility = View.GONE
         root.addView(accessCard, spacedFullWidth().apply { bottomMargin = dp(48) })
 
         // --- Admin container: everything that only appears once the lock exposes admin mode ---
@@ -690,11 +765,6 @@ class MainActivity : Activity() {
             visibility = View.GONE
         }
         adminContainer.addView(hotspotWebUrlView, topSpacedFullWidth(6))
-        adminContainer.addView(
-            outlineButton(R.string.admin_close) { closeServiceMenu() },
-            topSpacedFullWidth(10)
-        )
-
         dynamicSettingsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -715,13 +785,8 @@ class MainActivity : Activity() {
         // --- ТАЙМЕРЫ ---
         staticSettingsContainer.addView(sectionHeader(R.string.section_timers), topSpacedFullWidth(20))
         val timersCard = newCard()
-        adminLongOpen = adminNumberField(false)
         adminTimerA = adminNumberField(false)
         adminTimerB = adminNumberField(false)
-        addRow(timersCard, stepperRow(
-            getString(R.string.admin_long_open), adminLongOpen,
-            1, MAX_LONG_OPEN_SECONDS, 1
-        ))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_a), adminTimerA, 0, 10_000, 100))
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_b), adminTimerB, 0, 120, 1))
         staticSettingsContainer.addView(timersCard, fullWidth())
@@ -816,6 +881,7 @@ class MainActivity : Activity() {
         }
         swipeRefresh = SwipeRefreshLayout(this).apply {
             setColorSchemeResources(R.color.accent_blue)
+            isEnabled = false
             setOnRefreshListener {
                 if (adminModeAvailable) {
                     repository.pollAdminState()
@@ -1023,53 +1089,80 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun localSliderRow(
-        label: String,
-        min: Long,
-        max: Long,
-        step: Long,
-        initial: Long,
-        onChange: (Long) -> Unit
-    ): View {
+    private fun createRssiThresholdScreen(): View {
         val valueLabel = TextView(this).apply {
-            textSize = 16f
+            text = "${settings.rssiThreshold} dBm"
+            textSize = 32f
             setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
             setTextColor(getColor(R.color.accent_blue))
         }
-        val steps = ((max - min) / step).toInt().coerceAtLeast(1)
-        val seekBar = SeekBar(this)
-        seekBar.max = steps
-
-        fun show(value: Long) {
-            val clamped = value.coerceIn(min, max)
-            seekBar.progress = ((clamped - min) / step).toInt()
-            valueLabel.text = clamped.toString()
-        }
-        show(initial)
-
-        seekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (!fromUser) return
-                val value = (min + progress * step).coerceIn(min, max)
-                valueLabel.text = value.toString()
-                onChange(value)
+        val slider = VerticalRssiSlider(this, RSSI_THRESHOLD_MIN, RSSI_THRESHOLD_MAX).apply {
+            setValue(settings.rssiThreshold, notify = false)
+            onValueChanged = { value ->
+                settings.rssiThreshold = value
+                valueLabel.text = "$value dBm"
             }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
-        })
+        }
+        rssiThresholdSlider = slider
 
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            addView(rowLabel(label))
-            addView(valueLabel)
-        }
-        return LinearLayout(this).apply {
+        val scaleLabels = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            rowPadding(this)
-            addView(header)
-            addView(seekBar, fullWidth().apply { topMargin = dp(4) })
+            gravity = Gravity.CENTER_HORIZONTAL
+            addView(TextView(this@MainActivity).apply {
+                text = "$RSSI_THRESHOLD_MAX dBm"
+                setTextColor(getColor(R.color.secondary_text))
+            })
+            addView(Space(this@MainActivity), LinearLayout.LayoutParams(1, 0, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = "$RSSI_THRESHOLD_MIN dBm"
+                setTextColor(getColor(R.color.secondary_text))
+            })
         }
+
+        val sliderRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            addView(scaleLabels, LinearLayout.LayoutParams(dp(80), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(slider, LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.MATCH_PARENT))
+        }
+
+        val screen = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(24))
+            setBackgroundColor(getColor(R.color.screen_background))
+        }
+        screen.addView(TextView(this).apply {
+            text = getString(R.string.rssi_threshold_title)
+            textSize = 23f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setTextColor(getColor(R.color.primary_text))
+        }, topSpacedFullWidth(20))
+        screen.addView(valueLabel, topSpacedFullWidth(12))
+        screen.addView(sliderRow, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ).apply {
+            topMargin = dp(20)
+            bottomMargin = dp(20)
+        })
+        screen.addView(TextView(this).apply {
+            text = "Подключение начинается независимо от RSSI. OPEN отправляется после защищённого подключения, когда сигнал достигает порога."
+            textSize = 14f
+            setTextColor(getColor(R.color.secondary_text))
+            setPadding(dp(8), dp(12), dp(8), dp(12))
+        }, fullWidth())
+        return screen
+    }
+
+    private fun isInsideRssiThresholdSlider(rawX: Float, rawY: Float): Boolean {
+        val slider = rssiThresholdSlider ?: return false
+        val location = IntArray(2)
+        slider.getLocationOnScreen(location)
+        return rawX >= location[0] && rawX <= location[0] + slider.width &&
+            rawY >= location[1] && rawY <= location[1] + slider.height
     }
 
     private fun selectableBackground(): android.graphics.drawable.Drawable? {
@@ -1102,13 +1195,6 @@ class MainActivity : Activity() {
         setOnClickListener { onClick() }
     }
 
-    private fun navigationButton(textRes: Int, onClick: () -> Unit): Button = styledButton(textRes).apply {
-        background = selectableBackground()
-        setTextColor(getColor(R.color.accent_blue))
-        gravity = Gravity.CENTER_VERTICAL or Gravity.START
-        setOnClickListener { onClick() }
-    }
-
     private fun destructiveButton(textRes: Int, onClick: () -> Unit): Button = styledButton(textRes).apply {
         background = selectableBackground()
         setTextColor(getColor(R.color.danger_red))
@@ -1133,10 +1219,10 @@ class MainActivity : Activity() {
 
     private fun refreshState() {
         val permissionsGranted = hasBlePermissions()
+        if (serviceBound) lastBleState = repository.currentState
         permissionButton.visibility = if (permissionsGranted) View.GONE else View.VISIBLE
-        connectButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
-        hotspotOpenButton.visibility = if (permissionsGranted && adminModeAvailable) View.VISIBLE else View.GONE
-        updateAdminEntryButton()
+        hotspotOpenButton.visibility = if (permissionsGranted) View.VISIBLE else View.GONE
+        updateAdminEntryState()
         updateWorkingModeButtons()
         updateMainControlsEnabled()
         updateAdminButtonsEnabled()
@@ -1178,7 +1264,7 @@ class MainActivity : Activity() {
         manualOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
         manualKeepOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
         if (::hotspotOpenButton.isInitialized) {
-            val settingsEnabled = connected && adminModeAvailable
+            val settingsEnabled = hasBlePermissions()
             hotspotOpenButton.isEnabled = settingsEnabled
             hotspotOpenButton.alpha = if (settingsEnabled) 1f else 0.38f
         }
@@ -1201,16 +1287,14 @@ class MainActivity : Activity() {
             topMargin = dp(topMarginDp)
         }
 
-    private fun updateAdminEntryButton() {
-        if (!::connectButton.isInitialized) return
-        connectButton.visibility = if (adminModeAvailable) View.VISIBLE else View.GONE
+    private fun updateAdminEntryState() {
         if (::hotspotOpenButton.isInitialized) {
-            hotspotOpenButton.visibility = if (adminModeAvailable) View.VISIBLE else View.GONE
+            hotspotOpenButton.visibility = if (hasBlePermissions()) View.VISIBLE else View.GONE
+        }
+        if (::swipeRefresh.isInitialized) {
+            swipeRefresh.isEnabled = adminModeAvailable && serviceMenuRequested
         }
         updateMainControlsEnabled()
-        connectButton.text = getString(
-            if (adminModeAvailable) R.string.register_phone else R.string.connect_admin
-        )
     }
 
     private fun updateAdminButtonsEnabled() {
@@ -1267,6 +1351,7 @@ class MainActivity : Activity() {
 
     private fun activateServiceMenu() {
         serviceMenuRequested = true
+        updateAdminEntryState()
         if (adminModeAvailable && repository.currentState == BleRepository.State.READY) {
             setAdminPanelVisible(true)
             signalHandler.removeCallbacks(adminSignalPoll)
@@ -1469,7 +1554,7 @@ class MainActivity : Activity() {
         serviceMenuRequested = false
         manualConnectionActive = false
         adminModeAvailable = false
-        updateAdminEntryButton()
+        updateAdminEntryState()
         adminProbeRetries = 0
         signalHandler.removeCallbacks(adminSignalPoll)
         signalHandler.removeCallbacks(resumeService)
@@ -1493,17 +1578,13 @@ class MainActivity : Activity() {
             automaticModeActive = BleLockService.lastAutomaticMode
             binder.registerClient(bleListener)
             refreshState()
-            if (hasBlePermissions()) {
-                manualConnectionActive = true
-                boundService?.requestAdminConnection()
-            }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
             boundService = null
             adminModeAvailable = false
-            updateAdminEntryButton()
+            updateAdminEntryState()
             setAdminPanelVisible(false)
         }
     }
@@ -1661,8 +1742,6 @@ class MainActivity : Activity() {
         }
         val mapping = listOf(
             "phone_rssi_threshold" to { value: Long -> espOpenRssiField.setText(value.toString()) },
-            "phone_rssi_hold_threshold" to { value: Long -> espHoldRssiField.setText(value.toString()) },
-            "long_open_s" to { value: Long -> adminLongOpen.setText(value.toString()) },
             "timer_a_ms" to { value: Long -> adminTimerA.setText(value.toString()) },
             "timer_b_s" to { value: Long -> adminTimerB.setText(value.toString()) }
         )
@@ -1682,9 +1761,7 @@ class MainActivity : Activity() {
     private fun saveAdminConfig() {
         val values = listOf(
             espOpenRssiField.text.toString(), espHoldRssiField.text.toString(),
-            adminLongOpen.text.toString().toLongOrNull()
-                ?.coerceIn(1L, MAX_LONG_OPEN_SECONDS)
-                ?.toString() ?: "", adminTimerA.text.toString(),
+            "0", adminTimerA.text.toString(),
             adminTimerB.text.toString()
         )
         if (values.any { it.toLongOrNull() == null }) {
@@ -1977,7 +2054,10 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val MAX_LONG_OPEN_SECONDS = 3_600L
+        private const val KEY_RSSI_SCREEN_VISIBLE = "rssi_threshold_screen_visible"
+        private const val SCREEN_TRANSITION_DURATION_MS = 220L
+        private const val RSSI_THRESHOLD_MIN = -100
+        private const val RSSI_THRESHOLD_MAX = -30
         private const val REQUEST_BLE_PERMISSIONS = 100
         private const val REQUEST_HOTSPOT_PERMISSIONS = 101
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L

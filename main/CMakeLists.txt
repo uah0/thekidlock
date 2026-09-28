@@ -4,14 +4,17 @@ idf_component_register(
         "ap_mode.c"
         "app_config.c"
         "event_log.c"
+        "remote_log.c"
         "led.c"
         "lock_control.c"
         "ulp_controller.c"
         "ble_phone.c"
         "wifi_ota.c"
         "web_ui.c"
+        "lock_ai_adapter.c"
     INCLUDE_DIRS "." "ulp" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES
+        ai_agent
         bt
         nvs_flash
         esp_timer
@@ -32,6 +35,7 @@ idf_component_register(
         app_update
     EMBED_TXTFILES
         "web/index.html"
+        "web/calibration.html"
 )
 
 add_dependencies(${COMPONENT_LIB} app_build_number)

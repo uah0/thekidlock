@@ -1,0 +1,462 @@
+--------- beginning of main
+09-28 10:00:02.438 I/mtkpower@impl( 1221): [powerd_req] TIMER_MSG_PERF_LOCK_TIMEOUT hdl:410293
+09-28 10:00:02.439 I/libPowerHal( 1221): [perfLockRel] hdl:410293, idx:2
+09-28 10:00:02.439 I/libPowerHal( 1221): [PD] MTKPOWER_HINT_EXT_LAUNCH update cmd:2024000 param:0, pr:6
+09-28 10:00:02.439 I/libPowerHal( 1221): [PD] MTKPOWER_HINT_EXT_LAUNCH update cmd:1408300 param:0, pr:6
+09-28 10:00:02.441 I/libPowerHal( 1221): [PD] MTKPOWER_HINT_EXT_LAUNCH update cmd:1000000 param:-1 pr:6
+09-28 10:00:02.442 I/libPowerHal( 1221): [perfLockRel] Done for hdl : 410293
+09-28 10:00:02.450 I/com.blelock.app( 5751): Compiler allocated 6807KB to compile void android.view.ViewRootImpl.performTraversals()
+09-28 10:00:02.466 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: Call count 3 in 5.526s
+09-28 10:00:02.466 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: max latency = 0.000ms, max_ccci_ccb_poll_t = 2154.508ms@1790578802.265245, max_ccci_ccb_read_get_t = 0.000ms, max_ccb_read_done_t = 0.000ms
+09-28 10:00:02.711 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait cause a yield
+09-28 10:00:02.711 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:02.712 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:02.712 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait cause a yield, e_num:-1
+09-28 10:00:02.712 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:02.712 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:02.712 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:02.712 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:02.713 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:02.713 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:02.713 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:02.713 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:02.715 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:02.715 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:02.715 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:02.715 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:02.715 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:02.715 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:02.719 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:02.773 E/PowerInsightClientProxy( 1990): framework -1 misconfigured IRQ 308 scp_mboxdev suspendEnd 2321670894 suspendDuration -1
+09-28 10:00:02.776 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:02.930 D/JavaheapMonitor( 4656): Java heap used=4M max=256M, proc: com.xiaomi.touchservice
+09-28 10:00:02.931 V/JavaheapMonitor( 4656): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:03.135 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:03.135 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:03.135 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:03.135 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:03.135 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:03.136 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:03.137 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:03.137 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:03.139 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:03.139 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:03.139 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:03.139 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:03.142 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:03.205 E/PowerInsightClientProxy( 1990): framework -1 misconfigured IRQ 308 scp_mboxdev suspendEnd 2321671326 suspendDuration 0
+09-28 10:00:03.205 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+--------- beginning of system
+09-28 10:00:03.369 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@d04876b callingPid=13608
+09-28 10:00:03.374 D/BoundBrokerSvc(28117): onUnbind: Intent { act=com.google.android.gms.measurement.START xflg=0x4 pkg=com.google.android.gms }
+09-28 10:00:03.661 I/IPCThreadState( 8732): oneway function results for code 2 on binder at 0xb40000702ff0aec0 will be dropped but finished with status UNKNOWN_TRANSACTION
+09-28 10:00:04.617 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:04.617 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:04.617 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:04.617 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:04.619 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:04.619 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:04.619 I/ccci_mdinit( 1293): (1):is_delta_same delta t:2 delta b:2 delta:0
+09-28 10:00:04.619 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98730 ########
+09-28 10:00:04.619 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:04.620 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:04.621 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:04.621 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:04.623 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:04.623 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:04.623 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:04.626 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:04.634 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@bc632ac callingPid=8732
+09-28 10:00:04.636 I/SmartPower: com.google.android.googlequicksearchbox:googleapp/10168(3026)( 1990): idle->background(6992ms) R(service unbind com.google.android.googlequicksearchbox/com.google.frameworks.client.data.android.server.tiktok.search.GoogleappProcessEndpointService) adj=0.
+09-28 10:00:04.680 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321672802 suspendDuration 805
+09-28 10:00:04.681 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:06.461 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:06.462 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:06.462 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:06.462 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:06.463 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:06.463 I/ccci_mdinit( 1293): (1):is_delta_same delta t:2 delta b:2 delta:0
+09-28 10:00:06.463 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98731 ########
+09-28 10:00:06.464 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:06.464 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:06.464 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:06.465 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:06.465 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:06.466 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:06.469 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:06.469 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:06.470 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:06.470 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:06.471 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:06.474 I/NetworkBoostStatusManager( 1990): handle: 107
+09-28 10:00:06.523 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321674645 suspendDuration 1345
+09-28 10:00:06.524 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:06.675 D/JavaheapMonitor(25980): Java heap used=4M max=256M, proc: com.google.android.apps.messaging:rcs
+09-28 10:00:06.675 V/JavaheapMonitor(25980): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:09.944 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:09.944 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:09.944 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:09.945 I/ccci_mdinit( 1293): (1):is_delta_same delta t:3 delta b:4 delta:1
+09-28 10:00:09.946 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98732 ########
+09-28 10:00:09.946 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:09.946 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:09.946 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:09.947 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:09.947 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:09.948 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:09.948 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:09.948 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:09.948 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:09.948 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:09.949 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:09.952 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:09.955 D/PolicyMaker( 1990): uid =10158 pkg=com.android.vending reason=googleapp
+09-28 10:00:10.004 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321678126 suspendDuration 2962
+09-28 10:00:10.005 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:10.131 D/ProfileInstaller( 5751): Installing profile for com.blelock.app
+09-28 10:00:10.147 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: Call count 5 in 7.682s
+09-28 10:00:10.148 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: max latency = 0.000ms, max_ccci_ccb_poll_t = 3281.871ms@1790578809.947516, max_ccci_ccb_read_get_t = 0.000ms, max_ccb_read_done_t = 0.000ms
+09-28 10:00:10.153 W/FinalizerDaemon( 5751): type=1400 audit(0.0:944986): avc:  denied  { getopt } for  path="/dev/socket/usap_pool_primary" scontext=u:r:untrusted_app:s0:c171,c257,c512,c768 tcontext=u:r:zygote:s0 tclass=unix_stream_socket permissive=0 app=com.blelock.app
+09-28 10:00:13.731 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait cause a yield, e_num:-1
+09-28 10:00:13.731 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait cause a yield
+09-28 10:00:13.731 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:13.732 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:13.732 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:13.732 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:13.733 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:13.733 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:13.733 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:13.733 I/ccci_mdinit( 1293): (1):is_delta_same delta t:4 delta b:3 delta:1
+09-28 10:00:13.733 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98733 ########
+09-28 10:00:13.734 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:13.735 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:13.735 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:13.735 D/ULogGuard( 1468): Monitoring: 18 threads, 0 requests, 0 time-bombs; 3 guards. ResetFlags = 0x7
+09-28 10:00:13.736 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:13.736 I/ExtendedPerfBoost( 1221): [board_sensor_monitor] [board_sensor_monitor] new break temperature 27000
+09-28 10:00:13.737 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:13.737 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:13.738 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:13.738 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:13.738 I/adbd    ( 1341): adbd service requested 'shell,v2,TERM=dumb:export ANDROID_LOG_TAGS=''; exec logcat '-d' '-v' 'time''
+09-28 10:00:13.739 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:13.740 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:13.740 D/AurogonBandwidthController( 1990): skinTemperature:27.143
+09-28 10:00:13.808 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321681930 suspendDuration 3282
+09-28 10:00:13.808 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:14.096 E/frs     ( 3951): Failed to open /sys/kernel/thermal/frs_nl_id: No such file or directory
+09-28 10:00:14.096 I/frs     ( 3951): read netlink id fail, reason:No such file or directory
+09-28 10:00:14.103 D/ConnectivityService( 1990): Returning BLOCKED NetworkInfo to uid=10172
+09-28 10:00:14.242 D/ActivityThread( 5751): invoke error.
+09-28 10:00:14.250 I/DexOptHelperImpl( 1990): Skip dexopt, pkg is already speed-profile or run-from-apk
+09-28 10:00:16.189 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:16.189 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:16.189 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:16.190 I/ccci_mdinit( 1293): (1):is_delta_same delta t:3 delta b:3 delta:0
+09-28 10:00:16.190 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98734 ########
+09-28 10:00:16.191 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:16.191 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:16.191 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:16.191 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:16.191 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:16.192 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:16.192 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:16.192 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:16.193 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:16.193 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:16.196 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:16.196 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:16.196 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:16.202 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@4551cec callingPid=28117
+09-28 10:00:16.226 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@9ed96a7 callingPid=13375
+09-28 10:00:16.230 D/BoundBrokerSvc(28117): onUnbind: Intent { act=com.google.android.gms.time.trustedtime.singleuserapi.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentSingleUserInternalApiService }
+09-28 10:00:16.248 W/BpBinder(13375): PerfMonitor binderTransact: time=203ms interface=android.app.IActivityManager code=40
+09-28 10:00:16.250 D/BoundBrokerSvc(28117): onUnbind: Intent { act=com.google.android.gms.time.trustedtime.service.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentDirectBootAwareApiService }
+09-28 10:00:16.263 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321684385 suspendDuration 1747
+09-28 10:00:16.264 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:16.388 D/JavaheapMonitor( 5618): Java heap used=7M max=512M, proc: com.google.android.googlequicksearchbox:interactor
+09-28 10:00:16.388 V/JavaheapMonitor( 5618): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:16.392 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: Call count 2 in 6.245s
+09-28 10:00:16.392 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: max latency = 0.000ms, max_ccci_ccb_poll_t = 3587.579ms@1790578813.735814, max_ccci_ccb_read_get_t = 0.000ms, max_ccb_read_done_t = 0.000ms
+09-28 10:00:16.695 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:16.695 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:16.695 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:16.695 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:16.696 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:16.696 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:16.697 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:16.697 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:16.699 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:16.699 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:16.699 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:16.700 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:16.700 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:16.703 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:16.703 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:16.755 E/PowerInsightClientProxy( 1990): framework 344 spm-irq suspendEnd 2321684877 suspendDuration -1
+09-28 10:00:16.756 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:17.441 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:17.442 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:17.443 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:17.443 I/ccci_mdinit( 1293): (1):is_delta_same delta t:1 delta b:1 delta:0
+09-28 10:00:17.443 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98735 ########
+09-28 10:00:17.443 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:17.443 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:17.444 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:17.444 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:17.444 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:17.445 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:17.445 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:17.446 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:17.446 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:17.448 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:17.448 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:17.449 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:17.454 I/SmartPower: com.google.android.googlequicksearchbox:googleapp/10168(3026)( 1990): background->idle(3086ms) R(service unbind com.google.android.googlequicksearchbox/com.google.frameworks.client.data.android.server.tiktok.search.GoogleappProcessEndpointService) adj=800.
+09-28 10:00:17.458 D/JavaheapMonitor( 2610): Java heap used=5M max=256M, proc: com.android.networkstack.process
+09-28 10:00:17.458 V/JavaheapMonitor( 2610): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:17.503 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321685624 suspendDuration 396
+09-28 10:00:17.503 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:17.592 D/SLM-SRV-SLAService( 1990): checktemp temperature = 27143 temperature_average = 26786 isPerformanceMode = false thermal_enable_slm = true
+09-28 10:00:17.779 W/AString ( 1196): ctor got NULL, using empty string instead
+09-28 10:00:17.779 I/SensorSavedChannel( 1196): [-46,-57,-36,-1313,-3678,2044]==>gyro_temp.json
+09-28 10:00:17.779 W/AString ( 1196): ctor got NULL, using empty string instead
+09-28 10:00:17.780 I/SensorSavedChannel( 1196): [-2613,-5231,1047]==>gyro_bias.json
+09-28 10:00:17.784 I/MiuiNetworkPolicy( 1990): updateUidState uid = 10377, uidState = 19
+09-28 10:00:17.785 I/MiuiNetworkPolicy( 1990): updateUidState uid = 10158, uidState = 19
+09-28 10:00:17.796 D/JavaheapMonitor(22138): Java heap used=3M max=256M, proc: com.miui.analytics
+09-28 10:00:17.796 V/JavaheapMonitor(22138): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:20.388 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:20.388 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:20.389 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:20.389 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:20.390 I/ccci_mdinit( 1293): (1):is_delta_same delta t:3 delta b:3 delta:0
+09-28 10:00:20.390 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98736 ########
+09-28 10:00:20.390 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:20.390 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:20.391 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:20.391 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:20.393 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:20.393 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:20.393 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:20.393 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:20.393 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:20.393 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:20.395 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:20.397 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:20.448 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321688569 suspendDuration 2439
+09-28 10:00:20.448 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:20.451 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@108c2e5 callingPid=23287
+09-28 10:00:20.454 D/BoundBrokerSvc(28117): onUnbind: Intent { act=com.google.android.gms.safetynet.service.START xflg=0x4 pkg=com.google.android.gms }
+09-28 10:00:20.454 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@9be9718 callingPid=23287
+09-28 10:00:20.482 D/JavaheapMonitor(22516): Java heap used=4M max=256M, proc: com.google.android.as
+09-28 10:00:20.482 V/JavaheapMonitor(22516): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:20.499 I/BtGatt.ScanManager( 5127): msg.what = MSG_CHECK_SCAN_STATUS, msg.arg1 = CHECK_BACKGROUND_TIMEOUT
+09-28 10:00:21.516 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait cause a yield, e_num:-1
+09-28 10:00:21.517 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:21.517 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:21.516 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait cause a yield
+09-28 10:00:21.517 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:21.517 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:21.517 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:21.517 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:21.518 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:21.518 I/ccci_mdinit( 1293): (1):is_delta_same delta t:1 delta b:1 delta:0
+09-28 10:00:21.518 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98737 ########
+09-28 10:00:21.518 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:21.519 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:21.519 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:21.520 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:21.521 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:21.521 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:21.521 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:21.521 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:21.525 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:21.526 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:21.543 D/JavaheapMonitor( 5127): Java heap used=5M max=512M, proc: com.android.bluetooth
+09-28 10:00:21.543 V/JavaheapMonitor( 5127): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:21.544 D/JavaheapMonitor( 8691): Java heap used=4M max=256M, proc: com.lbe.security.miui
+09-28 10:00:21.547 V/JavaheapMonitor( 8691): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:21.578 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321689700 suspendDuration 602
+09-28 10:00:21.579 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:21.827 I/ezqq    ( 5618): (REDACTED) HDM. appOpsListener %s %s
+09-28 10:00:21.828 I/ezqq    ( 5618): (REDACTED) HDM. Ignoring irrelevant audio permission changes for package %s
+09-28 10:00:24.997 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:24.997 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:24.998 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:24.998 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:24.998 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:24.998 I/ccci_mdinit( 1293): (1):is_delta_same delta t:3 delta b:4 delta:1
+09-28 10:00:24.998 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98738 ########
+09-28 10:00:24.999 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:24.999 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:24.999 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:25.000 D/ULogGuard( 1468): Monitoring: 18 threads, 0 requests, 0 time-bombs; 3 guards. ResetFlags = 0x7
+09-28 10:00:25.000 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:25.001 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:25.001 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:25.001 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:25.002 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:25.003 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:25.005 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:25.059 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321693180 suspendDuration 2984
+09-28 10:00:25.059 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:25.110 D/JavaheapMonitor(23287): Java heap used=24M max=256M, proc: com.android.vending
+09-28 10:00:25.110 V/JavaheapMonitor(23287): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:25.203 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: Call count 4 in 8.811s
+09-28 10:00:25.204 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: max latency = 0.000ms, max_ccci_ccb_poll_t = 3279.182ms@1790578825.241, max_ccci_ccb_read_get_t = 0.000ms, max_ccb_read_done_t = 0.000ms
+09-28 10:00:25.206 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@9d2b912 callingPid=3026
+09-28 10:00:25.244 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@d4f83ed callingPid=3026
+09-28 10:00:26.838 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:26.838 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:26.838 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:26.839 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:26.839 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:26.840 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:26.840 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:26.840 D/touch_boost( 1327): TOUCH_BOOST_UNKNOWN cmd:-1
+09-28 10:00:26.840 I/ccci_mdinit( 1293): (1):is_delta_same delta t:2 delta b:1 delta:1
+09-28 10:00:26.840 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98739 ########
+09-28 10:00:26.840 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:26.841 I/FPSGO   ( 1320): FPSGO_SET_UNKNOWN cmd:-1
+09-28 10:00:26.842 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:26.842 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:26.843 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:26.843 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:26.843 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:26.844 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:26.845 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:26.847 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:26.896 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321695018 suspendDuration 1341
+09-28 10:00:26.896 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:28.376 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:28.376 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:28.376 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:28.377 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:28.377 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:28.377 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:28.378 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:28.378 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:28.378 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:28.379 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:28.383 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:28.391 I/ccci_mdinit( 1293): (1):is_delta_same delta t:2 delta b:2 delta:0
+09-28 10:00:28.391 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98740 ########
+09-28 10:00:28.392 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:28.392 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:28.392 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:28.393 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:28.399 D/JavaheapMonitor(25281): Java heap used=4M max=256M, proc: com.google.android.gms.unstable
+09-28 10:00:28.399 V/JavaheapMonitor(25281): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:28.411 I/PhenotypeProcessReaper(22692): Memory state is: 125
+09-28 10:00:28.436 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321696558 suspendDuration 1036
+09-28 10:00:28.437 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:30.218 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:30.218 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:30.218 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:30.219 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:30.219 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:30.219 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:30.219 I/ccci_mdinit( 1293): (1):is_delta_same delta t:2 delta b:2 delta:0
+09-28 10:00:30.219 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98741 ########
+09-28 10:00:30.220 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:30.220 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:30.221 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:30.221 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:30.222 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:30.223 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:30.223 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:30.225 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:30.225 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:30.245 D/JavaheapMonitor( 7091): Java heap used=7M max=256M, proc: com.xiaomi.xmsf
+09-28 10:00:30.245 V/JavaheapMonitor( 7091): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:30.273 D/JavaheapMonitor(30809): Java heap used=4M max=256M, proc: com.miui.securitycenter
+09-28 10:00:30.273 V/JavaheapMonitor(30809): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:30.280 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321698402 suspendDuration 1340
+09-28 10:00:30.281 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:31.448 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait cause a yield
+09-28 10:00:31.449 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait cause a yield, e_num:-1
+09-28 10:00:31.449 D/vendor.xiaomi.hardware.mimd2( 1147): TimerManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:31.449 D/vendor.xiaomi.hardware.mimd2( 1147): PsiMonitorManager::Polling: epoll_wait invalid return errno=4 Interrupted system call
+09-28 10:00:31.449 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:31.450 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:31.450 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:31.451 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:31.451 I/ccci_mdinit( 1293): (1):is_delta_same delta t:1 delta b:1 delta:0
+09-28 10:00:31.451 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98742 ########
+09-28 10:00:31.451 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:31.452 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:31.452 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:31.452 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:31.453 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:31.454 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:31.455 I/[BIP]   ( 1703):  [BIP AGENT] can not read data now, FD = (4), error number = (-282937510)
+09-28 10:00:31.456 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:31.456 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:31.456 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:31.456 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:31.458 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:31.507 D/ActionExecute( 1990): setPkgData uid = 10377 time=-2000
+09-28 10:00:31.508 D/PolicyMaker( 1990): uid =10377 pkg=com.google.android.verifier reason=importantapp
+09-28 10:00:31.511 D/JavaheapMonitor(22576): Java heap used=4M max=256M, proc: com.miui.misightservice
+09-28 10:00:31.511 V/JavaheapMonitor(22576): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:31.512 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321699633 suspendDuration 720
+09-28 10:00:31.513 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:31.563 D/FileUtils( 1990): Rounded bytes from 8029683712 to 16000000000
+09-28 10:00:31.606 V/ClearcutMetricXmitter(30416): Transmission is done.
+09-28 10:00:31.655 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: Call count 4 in 6.452s
+09-28 10:00:31.655 I/EMDLOGGER1( 1425): MAL_ccb_ReadFromLogPort: max latency = 0.000ms, max_ccci_ccb_poll_t = 1639.822ms@1790578830.220574, max_ccci_ccb_read_get_t = 0.000ms, max_ccb_read_done_t = 0.000ms
+09-28 10:00:31.704 E/frs     ( 3951): Failed to open /sys/kernel/thermal/frs_nl_id: No such file or directory
+09-28 10:00:31.704 I/frs     ( 3951): read netlink id fail, reason:No such file or directory
+09-28 10:00:31.722 D/JavaheapMonitor(26507): Java heap used=4M max=256M, proc: com.xiaomi.bluetooth
+09-28 10:00:31.722 V/JavaheapMonitor(26507): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:31.791 D/JavaheapMonitor(15993): Java heap used=18M max=512M, proc: com.miui.home
+09-28 10:00:31.792 V/JavaheapMonitor(15993): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:32.984 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:32.984 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:32.984 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:32.984 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:32.984 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:32.985 I/ccci_mdinit( 1293): (1):is_delta_same delta t:1 delta b:2 delta:1
+09-28 10:00:32.985 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98743 ########
+09-28 10:00:32.985 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:32.985 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:32.986 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:32.987 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:32.988 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:32.990 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:32.991 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:32.991 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:32.991 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:32.991 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:33.046 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321701167 suspendDuration 1010
+09-28 10:00:33.047 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:33.204 D/JavaheapMonitor(19212): Java heap used=26M max=256M, proc: com.google.android.apps.messaging
+09-28 10:00:33.204 V/JavaheapMonitor(19212): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:33.269 I/ActivityManager( 1990): unbindService com.android.server.am.ActiveServices@9a4f50d conn=android.os.BinderProxy@bbd758 callingPid=28117
+09-28 10:00:33.272 D/BoundBrokerSvc(28117): onUnbind: Intent { act=com.google.android.gms.auth.aang.events.services.START dat=chimera-action:/... xflg=0x4 cmp=com.google.android.gms/.chimera.PersistentApiService }
+09-28 10:00:33.351 D/JavaheapMonitor( 5057): Java heap used=2M max=256M, proc: com.android.keychain
+09-28 10:00:33.352 V/JavaheapMonitor( 5057): Check java heap usage finished! Next check delay: 300000
+09-28 10:00:36.054 D/MtkUiccSEHal( 1195): [se1]operator():1345: threadLoop, result = -1
+09-28 10:00:36.054 D/MtkUiccSEHal( 1195): [se2]operator():1345: threadLoop, result = -1
+09-28 10:00:36.055 I/ccci_mdinit( 1293): (1):is_delta_same delta t:4 delta b:3 delta:1
+09-28 10:00:36.055 I/libPerfCtl( 1213): xgfGetFPS pid:-1 fps:-1
+09-28 10:00:36.055 D/ccci_mdinit( 1293): (1):monitor_time_update_thread round:98744 ########
+09-28 10:00:36.055 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait thread while start
+09-28 10:00:36.056 I/ExtendedUtils( 1221): [timer_thread_start] epoll wait failed
+09-28 10:00:36.056 E/ccci_rpcd( 1294): Failed to read from RPC device (-1) !! errno = 4
+09-28 10:00:36.056 D/mpe     ( 1411): mpe_main_thread: wait 0
+09-28 10:00:36.056 D/gps_controlller( 1411): gps_control_thread: gps_control_thread wait
+09-28 10:00:36.057 D/ULogGuard( 1468): Monitoring: 18 threads, 0 requests, 0 time-bombs; 3 guards. ResetFlags = 0x7
+09-28 10:00:36.058 E/AALService( 1509): [CRTC_115] threadLoop: sendRequest fail(PowerMode:0, ret:-3)
+09-28 10:00:36.058 E/VoLTE IMSM( 1705): Interrupt happen Interrupted system call (4) (module/mdagent/volte_imsm_93/src/imsmmd.c:3012)
+09-28 10:00:36.058 I/libsensor-displayalgo( 1579): the value of sensorType: 33171111, brightness: 0 (clone: 0)
+09-28 10:00:36.059 I/adbd    ( 1341): adbd service requested 'shell,v2,TERM=dumb,raw:dumpsys activity services com.blelock.app'
+09-28 10:00:36.062 I/AidlSensorManager( 1990): aidl_ssvc_poll: spurious wake up, back to work
+09-28 10:00:36.060 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY, (ret=-1), (total_len=20), (remaining=21)
+09-28 10:00:36.062 E/VoLTE IMCB-CM( 1712): RECEIVE error code: EINTR, Need to retry #51
+09-28 10:00:36.062 I/[XCAP]  ( 1730):  [XCAP_AP_AGENT][FLOW] read from TTY fail, (strerror=Interrupted system call)
+09-28 10:00:36.107 E/PowerInsightClientProxy( 1990): framework 360 wlan0 suspendEnd 2321704229 suspendDuration 2585
+09-28 10:00:36.108 E/PowerInsightPolicy( 1990): sPowerInsightService null!
+09-28 10:00:36.148 W/dumpsys (13814): Thread Pool max thread count is 0. Cannot cache binder as linkToDeath cannot be implemented. serviceName: activity
+09-28 10:00:36.223 I/adbd    ( 1341): adbd service requested 'shell,v2,TERM=dumb:export ANDROID_LOG_TAGS=''; exec logcat '-d' '-v' 'time''

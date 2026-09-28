@@ -28,6 +28,7 @@ class BleLockService : Service(), BleRepository.Listener {
     private lateinit var repository: BleRepository
     private lateinit var settings: LockSettings
     private var openSentForPresence = false
+    private var autoOpenWritePending = false
     private var autoOffClosePending = false
     private var autoOffCloseWriteInFlight = false
     private var stopping = false
@@ -119,6 +120,10 @@ class BleLockService : Service(), BleRepository.Listener {
     }
     private val departureRecovery = Runnable {
         if (!stopping && mode == Mode.AUTO_OPEN && openSentForPresence) {
+            if (repository.hasNativeAutoConnectRequest) {
+                Log.i(TAG, "DEPARTURE_RECOVERY_SKIPPED: native auto-connect and presence guard remain active")
+                return@Runnable
+            }
             openSentForPresence = false
             repository.findAndConnect()
         }
@@ -177,7 +182,7 @@ class BleLockService : Service(), BleRepository.Listener {
             return START_STICKY
         }
         if (mode == Mode.AUTO_OPEN && repository.currentState == BleRepository.State.READY) {
-            repository.openNow()
+            repository.requestImmediateRssi()
         } else {
             scheduleSearch(0)
         }
@@ -216,6 +221,10 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onBind(intent: Intent?): IBinder = binder
 
     override fun onBleState(state: BleRepository.State, detail: String) {
+        if (state != repository.currentState) {
+            Log.d(TAG, "Ignoring stale BLE state callback: $state, current=${repository.currentState}")
+            return
+        }
         updateNotification(detail)
         // Зелёным считаем весь период реальной GATT-сессии: с момента успешной
         // проверки забонденного ключа (READY) и до фактического разрыва связи.
@@ -235,13 +244,15 @@ class BleLockService : Service(), BleRepository.Listener {
                 if (autoOffClosePending) {
                     trySendAutoOffClose()
                 } else if (mode == Mode.AUTO_OPEN) {
-                    if (!openSentForPresence) repository.openNow()
+                    repository.requestImmediateRssi()
                 }
             }
             BleRepository.State.OPEN_SENT -> {
+                autoOpenWritePending = false
                 openSentForPresence = true
             }
             BleRepository.State.IDLE, BleRepository.State.ERROR -> {
+                autoOpenWritePending = false
                 if (stopping) return
                 if (mode == Mode.OTA) {
                     handler.removeCallbacks(otaRecovery)
@@ -280,7 +291,11 @@ class BleLockService : Service(), BleRepository.Listener {
                 handler.removeCallbacks(departureRecovery)
                 openSentForPresence = false
                 if (mode == Mode.AUTO_OPEN || mode == Mode.ADMIN) {
-                    scheduleReconnect()
+                    if (repository.hasNativeAutoConnectRequest) {
+                        Log.i(TAG, "BLE departure confirmed; native auto-connect remains armed")
+                    } else {
+                        scheduleReconnect()
+                    }
                 }
             }
             else -> Unit
@@ -328,6 +343,27 @@ class BleLockService : Service(), BleRepository.Listener {
                 .putExtra(EXTRA_SIGNAL_RSSI, rssi ?: 0)
         )
         clients.toList().forEach { it.onSignalRssi(rssi) }
+    }
+
+    override fun onGattRssi(rssi: Int?) {
+        if (rssi == null || mode != Mode.AUTO_OPEN || !settings.autoOpenEnabled ||
+            autoOffClosePending || repository.currentState != BleRepository.State.READY) return
+
+        val nativeRequest = repository.hasNativeAutoConnectRequest
+        if (autoOpenWritePending || openSentForPresence ||
+            (nativeRequest && (repository.hasOpenBeenSentForAutoConnectPresence ||
+                repository.hasOpenPendingForAutoConnectPresence))) return
+
+        val threshold = settings.rssiThreshold
+        if (rssi < threshold) {
+            Log.i(TAG, "AUTO_OPEN_WAITING_FOR_RSSI: gattRssi=$rssi threshold=$threshold dBm")
+            BleEventTones.weakAdvertisement()
+            return
+        }
+
+        autoOpenWritePending = true
+        Log.i(TAG, "AUTO_OPEN_RSSI_THRESHOLD_REACHED: gattRssi=$rssi threshold=$threshold dBm")
+        repository.openNow()
     }
 
     override fun onConnectionLost() {
@@ -444,10 +480,11 @@ class BleLockService : Service(), BleRepository.Listener {
         mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
         broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         openSentForPresence = false
+        autoOpenWritePending = false
         repository.setControlOnly(true)
         if (mode == Mode.AUTO_OPEN) {
             if (repository.currentState == BleRepository.State.READY) {
-                repository.openNow()
+                repository.requestImmediateRssi()
             } else if (!repository.isConnectingOrConnected()) {
                 repository.findAndConnect()
             }
@@ -458,6 +495,7 @@ class BleLockService : Service(), BleRepository.Listener {
         if (stopping) return
         if (!enabled) {
             openSentForPresence = false
+            autoOpenWritePending = false
             handler.removeCallbacks(searchRunnable)
             handler.removeCallbacks(departureRecovery)
             broadcastAutomaticMode(false)
@@ -508,10 +546,11 @@ class BleLockService : Service(), BleRepository.Listener {
             repository.setControlOnly(true)
         }
         openSentForPresence = false
+        autoOpenWritePending = false
         startAsForeground(getString(R.string.service_starting))
         broadcastAutomaticMode(true)
         if (repository.currentState == BleRepository.State.READY) {
-            repository.openNow()
+            repository.requestImmediateRssi()
         } else {
             scheduleSearch(0)
         }
@@ -549,6 +588,7 @@ class BleLockService : Service(), BleRepository.Listener {
         // this first so that callback cannot start a stale departure scan which
         // would race the fresh repository created after Bluetooth STATE_ON.
         openSentForPresence = false
+        autoOpenWritePending = false
         if (repositoryActive) {
             repository.close()
             repositoryActive = false
@@ -566,6 +606,7 @@ class BleLockService : Service(), BleRepository.Listener {
         repository = BleRepository(this, this, controlOnly = mode != Mode.ADMIN)
         repositoryActive = true
         openSentForPresence = false
+        autoOpenWritePending = false
         broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         updateNotification(getString(R.string.service_bluetooth_restored))
         if (mode == Mode.OTA) {
@@ -690,6 +731,8 @@ class BleLockService : Service(), BleRepository.Listener {
         const val ACTION_START = "com.blelock.app.action.START"
         const val ACTION_STOP = "com.blelock.app.action.STOP"
         const val ACTION_ADMIN = "com.blelock.app.action.ADMIN"
+        const val ACTION_DEVICE_DETECTED = "com.blelock.app.action.DEVICE_DETECTED"
+        const val EXTRA_DETECTED_DEVICE = "detected_device"
         const val ACTION_SIGNAL_RSSI = "com.blelock.app.action.SIGNAL_RSSI"
         const val EXTRA_SIGNAL_VALID = "signal_valid"
         const val EXTRA_SIGNAL_RSSI = "signal_rssi"

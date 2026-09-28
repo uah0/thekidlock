@@ -55,11 +55,24 @@ class LockSettings(context: Context) {
             preferences.edit().putInt(KEY_WEB_UI_COUNTDOWN_SECONDS, value.coerceIn(1, 60)).commit()
         }
 
+    var rssiThreshold: Int
+        get() = preferences.getInt(KEY_RSSI_THRESHOLD, DEFAULT_RSSI_THRESHOLD)
+            .coerceIn(MIN_RSSI_THRESHOLD, MAX_RSSI_THRESHOLD)
+        set(value) {
+            preferences.edit()
+                .putInt(KEY_RSSI_THRESHOLD, value.coerceIn(MIN_RSSI_THRESHOLD, MAX_RSSI_THRESHOLD))
+                .commit()
+        }
+
     companion object {
         private const val KEY_AUTO_OPEN = "auto_open_enabled"
         private const val KEY_BATTERY_NOTICE_SHOWN = "battery_optimization_notice_shown"
         private const val KEY_AUTOSTART_NOTICE_SHOWN = "autostart_notice_shown"
         private const val KEY_LOCK_ADDRESS = "lock_address"
         private const val KEY_WEB_UI_COUNTDOWN_SECONDS = "web_ui_countdown_seconds"
+        private const val KEY_RSSI_THRESHOLD = "rssi_threshold"
+        private const val DEFAULT_RSSI_THRESHOLD = -75
+        private const val MIN_RSSI_THRESHOLD = -100
+        private const val MAX_RSSI_THRESHOLD = -30
     }
 }

@@ -28,6 +28,8 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
+        val buildNumber = rootProject.file("BUILD_NUMBER").readText().trim().toInt()
+        buildConfigField("int", "BUILD_NUMBER", buildNumber.toString())
         val buildTimestamp = LocalDateTime.now()
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         buildConfigField("String", "BUILD_TIMESTAMP", "\"$buildTimestamp\"")
@@ -64,4 +66,5 @@ android {
 dependencies {
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    testImplementation("junit:junit:4.13.2")
 }

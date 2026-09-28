@@ -46,6 +46,12 @@ button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
 .brand{display:flex;align-items:baseline;gap:10px}
 .brand h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.01em}
 .brand .meta{font-family:var(--mono);font-size:12px;color:var(--text-faint)}
+.versions{display:flex;flex-wrap:wrap;gap:14px 28px;padding:14px 16px;margin:0 0 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
+.version-item{flex:1;min-width:200px;display:flex;flex-direction:column;gap:5px}
+.version-item[hidden]{display:none}
+.version-label{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
+.version-value{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.version-date{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
 .tag{
   font-family:var(--mono);font-size:10px;font-weight:700;letter-spacing:.09em;
   color:var(--accent);background:var(--accent-dim);border:1px solid rgba(77,168,255,.25);
@@ -128,6 +134,7 @@ input[type=number],input[type=text],input[type=password],select{
   background:var(--surface-2);border:1px solid var(--border);color:var(--text);
   border-radius:7px;padding:9px 10px;width:100%;
 }
+#wssid{color:#000;-webkit-text-fill-color:#000}
 input:focus,select:focus{border-color:var(--accent)}
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .field label{font-size:12.5px;color:var(--text-dim)}
@@ -215,7 +222,14 @@ table.bonds td:first-child{font-family:var(--mono)}
 <div class="topbar">
   <div class="brand">
     <h1>BLE Lock</h1>
-    <span class="meta"><span id="verTxt">v—</span> · <span id="buildTxt">build —</span></span>
+  </div>
+</div>
+
+<div class="versions" aria-label="Версия устройства">
+  <div class="version-item">
+    <span class="version-label">Устройство · ESP32</span>
+    <span class="version-value" id="verTxt">Версия —</span>
+    <span class="version-date" id="buildTxt">Собрано: —</span>
   </div>
 </div>
 
@@ -235,6 +249,10 @@ table.bonds td:first-child{font-family:var(--mono)}
         <span class="state-text" id="stateText">—</span>
       </div>
       <div class="state-err" id="statusErr" style="display:none"></div>
+      <p class="panel-sub" id="calibrationWarning" role="status" hidden>
+        Требуется калибровка. Замок не сможет закрыться, пока она не сохранена.
+        <a href="/calibration">Пройти калибровку</a>
+      </p>
     </div>
     <div class="hero-metrics">
       <div class="metric">
@@ -266,10 +284,23 @@ table.bonds td:first-child{font-family:var(--mono)}
   </div>
   <table class="reg">
     <tr><td>Исходный уровень АЦП</td><td id="ubase">—</td></tr>
-    <tr><td>Питание, отсчёты АЦП</td><td id="uvbat">—</td></tr>
+    <tr><td>Аккумулятор (GPIO5)</td><td id="ubattery">—</td></tr>
+    <tr><td>GPIO5, отсчёты АЦП</td><td id="uvbat">—</td></tr>
     <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
     <tr><td>Разность измерений</td><td id="udelta">—</td></tr>
     <tr><td>Нормированный признак положения</td><td id="ufeature">—</td></tr>
+    <tr><td>Калибровка: полный контакт, Δ АЦП</td><td id="ucalcontact">—</td></tr>
+    <tr><td>Калибровка: один лист, Δ АЦП</td><td id="ucalpaper1">—</td></tr>
+    <tr><td>Расчёт: два листа, Δ АЦП</td><td id="ucalpaper2">—</td></tr>
+    <tr><td>Калибровка: дверь открыта, Δ АЦП</td><td id="ucalopen">—</td></tr>
+    <tr><td>Калибровка: контроль контакта, Δ АЦП</td><td id="ucalverify">—</td></tr>
+    <tr><td>Граница «зазора нет», Δ АЦП ≤</td><td id="ucontactraw">—</td></tr>
+    <tr><td>Порог «контакт», признак ≤</td><td id="uthcontact">—</td></tr>
+    <tr><td>Порог «зазор 1», признак ≤</td><td id="uthgap1">—</td></tr>
+    <tr><td>Порог «зазор 2», признак ≤</td><td id="uthgap2">—</td></tr>
+    <tr><td>Порог «зазор 3», признак ≤</td><td id="uthgap3">—</td></tr>
+    <tr><td>Порог «зазор 4», признак ≤</td><td id="uthgap4">—</td></tr>
+    <tr><td>Порог «зазор 5 / далеко», признак</td><td id="uthgap5">—</td></tr>
     <tr><td>Ошибки</td><td><span class="badge-hex" id="ufaults">—</span></td></tr>
     <tr><td>События</td><td><span class="badge-hex" id="uevents">—</span></td></tr>
     <tr><td>Измерительных циклов</td><td id="umeasurements">—</td></tr>
@@ -277,20 +308,13 @@ table.bonds td:first-child{font-family:var(--mono)}
   </table>
   <div class="seq-line" id="ulpStatus">Загрузка…</div>
   <p class="panel-sub">Данные обновляются раз в 500 мс. Ошибки и события приведены в виде битовой маски.</p>
+  <div class="hero-actions"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер настройки замка</button></div>
 </section>
 
 <div class="grid-2">
   <section class="panel">
     <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
 
-    <div class="field">
-      <label for="bc">RSSI для допуска BLE-подключения</label>
-      <div class="field-input"><input id="bc" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
-    </div>
-    <div class="field">
-      <label for="bd">RSSI для разрыва BLE-подключения</label>
-      <div class="field-input"><input id="bd" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
-    </div>
     <div class="field">
       <label for="bp">Мощность BLE-передатчика</label>
       <div class="field-input">
@@ -302,12 +326,14 @@ table.bonds td:first-child{font-family:var(--mono)}
       </div>
     </div>
     <div class="field">
-      <label for="pr">RSSI ESP32 для допуска открытия</label>
+      <label for="pr">Единый RSSI-порог зоны открытия (телефон → ESP32)</label>
       <div class="field-input"><input id="pr" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+      <small>Применяется только при контроле RSSI соединённого телефона: если сигнал ниже порога в течение выдержки, ESP32 разрывает BLE-соединение. Сам порог не блокирует команду OPEN.</small>
     </div>
     <div class="field">
-      <label for="prh">RSSI ESP32 для потери присутствия замка</label>
-      <div class="field-input"><input id="prh" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
+      <label for="zg">Выдержка слабого сигнала перед разрывом</label>
+      <div class="field-input"><input id="zg" type="number" min="0" max="10000" step="100"><span class="unit">мс</span></div>
+      <small>Сколько сигнал может быть ниже RSSI-порога до отключения телефона; 0 — отключить при первой проверке ниже порога.</small>
     </div>
     <div class="field-row">
       <div class="field" style="flex:1">
@@ -319,21 +345,6 @@ table.bonds td:first-child{font-family:var(--mono)}
         <div class="field-input"><input id="tb" type="number" min="0" max="3600"><span class="unit">с</span></div>
       </div>
     </div>
-    <div class="field">
-      <label for="lo">Долго открыт</label>
-      <div class="field-input"><input id="lo" type="number" min="1000"><span class="unit">мс</span></div>
-    </div>
-    <div class="field-row">
-      <div class="field" style="flex:1">
-        <label for="ol">Уровень GPIO замка при открытии</label>
-        <select id="ol"><option value="0">LOW</option><option value="1">HIGH</option></select>
-      </div>
-      <div class="field" style="flex:1">
-        <label for="lg">GPIO замка</label>
-        <select id="lg"></select>
-      </div>
-    </div>
-
     <div class="actions-row">
       <button class="btn-primary" onclick="saveConfig()">Сохранить</button>
       <span class="saved-msg" id="saved"></span>
@@ -342,7 +353,7 @@ table.bonds td:first-child{font-family:var(--mono)}
 
   <div>
     <section class="panel">
-      <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi и OTA</h2></div>
+      <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi</h2></div>
       <div class="field">
         <label for="wssid">SSID Wi-Fi</label>
         <input id="wssid" maxlength="32">
@@ -350,10 +361,6 @@ table.bonds td:first-child{font-family:var(--mono)}
       <div class="field">
         <label for="wpass">Пароль Wi-Fi</label>
         <input id="wpass" type="password" maxlength="64" placeholder="оставьте пустым, чтобы сохранить прежний">
-      </div>
-      <div class="field">
-        <label for="wurl">HTTPS-адрес прошивки</label>
-        <input id="wurl" maxlength="192" placeholder="https://...">
       </div>
       <div class="switch-row">
         <label class="switch">
@@ -369,11 +376,19 @@ table.bonds td:first-child{font-family:var(--mono)}
         <button id="restartButton" class="btn-danger" onclick="restartEsp()">Перезагрузить ESP32</button>
         <span class="saved-msg" id="wifiSaved"></span>
       </div>
-      <p class="footnote">RSSI-контроль выполняется ESP32 после установления защищённого BLE-соединения. При устойчиво слабом сигнале ESP32 разрывает соединение после защитной задержки.</p>
+      <p class="footnote">RSSI-порог действует только на контроль уже подключённого телефона: если его сигнал остаётся ниже порога дольше заданной выдержки, ESP32 разрывает BLE-соединение. Команда OPEN обрабатывается отдельно.</p>
     </section>
 
     <section class="panel">
       <div class="panel-head"><span class="tag">FW</span><h2>Обновление прошивки</h2></div>
+      <div class="switch-row" style="margin-bottom:14px">
+        <label class="switch">
+          <input id="wupdate" type="checkbox" onchange="saveAutoUpdate()">
+          <span class="track"><span class="thumb"></span></span>
+        </label>
+        <span>Автоматически обновлять прошивку при появлении новой версии</span>
+        <span class="saved-msg" id="updateSaved"></span>
+      </div>
       <div class="dropzone">
         <label class="file-label" for="fw">Выбрать файл .bin</label>
         <input id="fw" type="file" accept=".bin" style="display:none" onchange="fwName.textContent=fw.files[0]?fw.files[0].name:''">
@@ -396,10 +411,10 @@ table.bonds td:first-child{font-family:var(--mono)}
   <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
   <div class="actions-row" style="margin-bottom:2px">
     <button onclick="loadBonds()">Обновить</button>
-    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все bonds</button>
+    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все телефоны</button>
   </div>
   <table class="bonds">
-    <thead><tr><th>Identity address</th><th>Тип</th><th></th></tr></thead>
+    <thead><tr><th>Имя</th><th>Identity address</th><th>Тип</th><th></th></tr></thead>
     <tbody id="bonds"></tbody>
   </table>
 </section>
@@ -425,10 +440,11 @@ function setRssiBars(rssi){
 async function loadStatus(){
   try{
     let s=await j('/api/status');
-    verTxt.textContent='v'+s.version;
-    buildTxt.textContent='build '+s.build;
-    stateText.textContent=s.open?'OPEN':'LOCKED';
-    lockState.className='lock-state '+(s.open?'warn':'good');
+    verTxt.textContent='Версия '+s.version;
+    buildTxt.textContent='Собрано: '+s.build;
+    stateText.textContent=s.state==='CALIBRATION_REQUIRED'?'Калибровка':s.state||(s.open?'OPEN':'LOCKED');
+    calibrationWarning.hidden=!s.calibration_required;
+    lockState.className='lock-state '+(s.locked?'good':'warn');
     ledConn.classList.toggle('on',!!s.connected);
     ledEnc.classList.toggle('on',!!s.encrypted);
     ledBond.classList.toggle('on',!!s.bonded);
@@ -443,26 +459,26 @@ async function loadStatus(){
     statusErr.style.display='block';
   }
 }
-async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
-function populateGpioOptions(){let opts='';for(let i=0;i<=48;i++)opts+=`<option value='${i}'>GPIO${i}</option>`;lg.innerHTML=opts}
-async function loadConfig(){let c=await j('/api/config');bc.value=c.ble_connect_rssi_threshold;bd.value=c.ble_disconnect_rssi_threshold;bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;prh.value=c.phone_rssi_hold_threshold;lo.value=c.long_open_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s;ol.value=c.lock_open_level?1:0;lg.value=c.lock_gpio}
-async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wurl.value=c.url;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
-async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения'}}
-async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value,url:wurl.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
+async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ucalcontact.textContent=u.calibration_contact_raw;ucalpaper1.textContent=u.calibration_paper1_raw;ucalpaper2.textContent=u.calibration_paper2_raw;ucalopen.textContent=u.calibration_open_raw;ucalverify.textContent=u.calibration_verify_contact_raw;ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';uthcontact.textContent=u.feature_contact_max;uthgap1.textContent=u.feature_gap1_max;uthgap2.textContent=u.feature_gap2_max;uthgap3.textContent=u.feature_gap3_max;uthgap4.textContent=u.feature_gap4_max;uthgap5.textContent=u.feature_gap5_max+' / далеко от '+u.feature_gap5_max;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
+async function loadConfig(){let c=await j('/api/config');bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;zg.value=c.zone_exit_grace_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s}
+async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wupdate.checked=c.auto_update;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
+async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
+async function saveAutoUpdate(){try{let q=new URLSearchParams({enabled:wupdate.checked?'1':'0'});await j('/api/wifi/auto-update?'+q,{method:'POST'});updateSaved.textContent='Сохранено';setTimeout(()=>updateSaved.textContent='',2000)}catch(e){updateSaved.textContent='Ошибка сохранения';throw e}}
+async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}
-async function saveConfig(){let q=new URLSearchParams({ble_connect_rssi_threshold:bc.value,ble_disconnect_rssi_threshold:bd.value,ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,phone_rssi_hold_threshold:prh.value,long_open_ms:lo.value,timer_a_ms:ta.value,timer_b_s:tb.value,lock_gpio:lg.value,lock_open_level:ol.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',2500)}catch(e){saved.textContent=e}}
+async function saveConfig(){let q=new URLSearchParams({ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,zone_exit_grace_ms:zg.value,timer_a_ms:ta.value,timer_b_s:tb.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',2500)}catch(e){saved.textContent=e}}
 async function blePowerSave(){let q=new URLSearchParams({power_dbm:bp.value});await j('/api/ble/power?'+q,{method:'POST'})}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.className='pairing-state '+(p.allowed?'on':'off');pairing.textContent=p.allowed?`Регистрация разрешена: ${p.remaining_s} с`:'Регистрация запрещена'}catch(e){pairing.className='pairing-state off';pairing.textContent=e}}
 async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
-async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.address)}</td><td><span class="type-chip">${esc(b.type)}</span></td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
+async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><span class="type-chip">${esc(b.type)}</span></td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='4'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='4'>${esc(e)}</td></tr>`}}
 async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
-async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все bonds» ещё раз',async()=>{try{await j('/api/ble/bonds',{method:'DELETE'});await loadBonds();showNotice('Все bonds удалены')}catch(e){showNotice(String(e),true)}})}
+async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все телефоны» ещё раз',async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice('Все телефоны удалены')}catch(e){showNotice(String(e),true)}})}
 async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите файл .bin',true);return}ota.textContent='Загрузка…';try{let r=await fetch('/api/ota',{method:'POST',body:f});ota.textContent=await r.text()}catch(e){ota.textContent=e}}
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
-async function initPage(){populateGpioOptions();await loadConfig();await loadWifi();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000)}
+async function initPage(){await loadConfig();await loadWifi();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000)}
 initPage()
 </script>
 </body>

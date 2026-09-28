@@ -9,11 +9,74 @@
 #include "hal/adc_ll.h"
 #include "ulp_main.h"
 #include "ulp_riscv.h"
+#include "nvs.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+#include "event_log.h"
 
 extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
 extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
 
 static bool s_initialized;
+static volatile uint32_t s_command_overlap_counter;
+static portMUX_TYPE s_command_lock = portMUX_INITIALIZER_UNLOCKED;
+static SemaphoreHandle_t s_calibration_mutex;
+static esp_timer_handle_t s_calibration_timer;
+static int64_t s_calibration_deadline_us;
+static uint32_t s_calibration_timeout_count;
+
+/* Caller owns calibration mutex. This does not write the command mailbox. */
+static void calibration_end(void)
+{
+    ulp_calibration_verify_request = 0;
+    ulp_close_reject_latched = 0;
+    ulp_calibration_mode = 0;
+    s_calibration_deadline_us = 0;
+}
+
+static bool calibration_expire(void)
+{
+    if (ulp_calibration_mode && esp_timer_get_time() >= s_calibration_deadline_us) {
+        calibration_end();
+        s_calibration_timeout_count++;
+        event_log_add("ULP: калибровка отменена по таймауту 120 с");
+        return true;
+    }
+    return false;
+}
+
+static void calibration_timeout(void *arg)
+{
+    (void)arg;
+    /* Never block the shared esp_timer task behind an NVS save. */
+    if (xSemaphoreTake(s_calibration_mutex, 0) != pdTRUE) return;
+    calibration_expire();
+    xSemaphoreGive(s_calibration_mutex);
+}
+
+#define ULP_CAL_NS "ulp_cal"
+
+static void load_calibration(void)
+{
+    nvs_handle_t nvs = 0;
+    if (nvs_open(ULP_CAL_NS, NVS_READONLY, &nvs) != ESP_OK) return;
+    int32_t contact = -1, paper1 = -1, paper2 = -1, open = -1, verify = -1;
+    if (nvs_get_i32(nvs, "contact", &contact) == ESP_OK &&
+        nvs_get_i32(nvs, "paper1", &paper1) == ESP_OK &&
+        nvs_get_i32(nvs, "paper2", &paper2) == ESP_OK &&
+        nvs_get_i32(nvs, "open", &open) == ESP_OK &&
+        nvs_get_i32(nvs, "verify", &verify) == ESP_OK &&
+        ulp_calibration_values_valid(contact, paper1, paper2, open, verify)) {
+        ulp_calibration_contact_raw = contact;
+        ulp_calibration_paper1_raw = paper1;
+        ulp_calibration_paper2_raw = paper2;
+        ulp_calibration_open_raw = open;
+        ulp_calibration_verify_contact_raw = verify;
+    }
+    nvs_close(nvs);
+}
 
 static esp_err_t init_gate(void)
 {
@@ -84,15 +147,43 @@ esp_err_t ulp_controller_init(void)
     ulp_command_sequence = 0;
     ulp_command = ULP_CMD_UNLOCK;
     ulp_command_ack_sequence = 0;
+    s_command_overlap_counter = 0;
     ulp_lock_state = LOCK_STATE_STARTING;
     ulp_event_sequence = 0;
     ulp_event_flags = ULP_EVENT_NONE;
     ulp_fsm_state = LOCK_FSM_UNLOCKED_SCAN;
     ulp_coil_current_raw = 0;
+    ulp_gate_level = 0;
+    ulp_gate_high_counter = 0;
+    ulp_gate_low_counter = 0;
     ulp_close_verify_state = PLATE_UNKNOWN;
+    ulp_close_detected_state = PLATE_UNKNOWN;
     ulp_close_verify_feature = 0;
     ulp_close_verify_delta_raw = -1;
     ulp_close_attempt_counter = 0;
+    ulp_close_reject_counter = 0;
+    ulp_close_reject_latched = 0;
+    ulp_calibration_mode = 0;
+    ulp_fault_retry_count = 0;
+    ulp_calibration_contact_raw = -1;
+    ulp_calibration_paper1_raw = -1;
+    ulp_calibration_paper2_raw = -1;
+    ulp_calibration_open_raw = -1;
+    ulp_calibration_verify_contact_raw = -1;
+    ulp_calibration_verify_request = 0;
+    ulp_calibration_verify_counter = 0;
+    ulp_calibration_verify_raw = -1;
+    load_calibration();
+
+    s_calibration_mutex = xSemaphoreCreateMutex();
+    if (!s_calibration_mutex) return ESP_ERR_NO_MEM;
+    const esp_timer_create_args_t timeout_args = {
+        .callback = calibration_timeout, .name = "ulp_cal_timeout",
+    };
+    err = esp_timer_create(&timeout_args, &s_calibration_timer);
+    if (err != ESP_OK) return err;
+    err = esp_timer_start_periodic(s_calibration_timer, 100000);
+    if (err != ESP_OK) return err;
 
     err = ulp_set_wakeup_period(0, ULP_MEASURE_PERIOD_US);
     if (err != ESP_OK) return err;
@@ -102,14 +193,127 @@ esp_err_t ulp_controller_init(void)
     return ESP_OK;
 }
 
-void ulp_controller_request(ulp_command_t requested)
+esp_err_t ulp_controller_calibration_start(void)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+    calibration_expire();
+    if (ulp_calibration_mode) {
+        xSemaphoreGive(s_calibration_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_calibration_deadline_us = esp_timer_get_time() + ULP_CALIBRATION_TIMEOUT_US;
+    ulp_close_reject_latched = 0;
+    ulp_calibration_mode = 1;
+    xSemaphoreGive(s_calibration_mutex);
+    event_log_add("ULP: калибровка включена на 120 с, замок отпущен");
+    return ESP_OK;
+}
+
+void ulp_controller_calibration_cancel(void)
 {
     if (!s_initialized) return;
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+    calibration_end();
+    xSemaphoreGive(s_calibration_mutex);
+}
+
+esp_err_t ulp_controller_calibration_verify(void)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+    calibration_expire();
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (ulp_calibration_mode && !ulp_calibration_verify_request) {
+        ulp_calibration_verify_request = 1;
+        err = ESP_OK;
+    }
+    xSemaphoreGive(s_calibration_mutex);
+    return err;
+}
+
+esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
+                                          int32_t paper1_raw,
+                                          int32_t open_raw,
+                                          int32_t verify_contact_raw)
+{
+    const int64_t paper2_calculated =
+        (int64_t)paper1_raw + ((int64_t)paper1_raw - contact_raw);
+    if (!s_initialized || contact_raw < 0 || paper1_raw <= contact_raw ||
+        paper2_calculated > 4095 || open_raw <= paper2_calculated || open_raw > 4095 ||
+        verify_contact_raw < 0 || verify_contact_raw > 4095) return ESP_ERR_INVALID_ARG;
+    const int32_t paper2_raw = (int32_t)paper2_calculated;
+    xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+    calibration_expire();
+    if (!ulp_calibration_mode) {
+        xSemaphoreGive(s_calibration_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
+    nvs_handle_t nvs = 0;
+    esp_err_t err = nvs_open(ULP_CAL_NS, NVS_READWRITE, &nvs);
+    if (err == ESP_OK) err = nvs_set_i32(nvs, "contact", contact_raw);
+    if (err == ESP_OK) err = nvs_set_i32(nvs, "paper1", paper1_raw);
+    if (err == ESP_OK) err = nvs_set_i32(nvs, "paper2", paper2_raw);
+    if (err == ESP_OK) err = nvs_set_i32(nvs, "open", open_raw);
+    if (err == ESP_OK) err = nvs_set_i32(nvs, "verify", verify_contact_raw);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    if (nvs) nvs_close(nvs);
+    if (err != ESP_OK) {
+        xSemaphoreGive(s_calibration_mutex);
+        return err;
+    }
+    ulp_calibration_contact_raw = contact_raw;
+    ulp_calibration_paper1_raw = paper1_raw;
+    ulp_calibration_paper2_raw = paper2_raw;
+    ulp_calibration_open_raw = open_raw;
+    ulp_calibration_verify_contact_raw = verify_contact_raw;
+    calibration_end();
+    xSemaphoreGive(s_calibration_mutex);
+    return ESP_OK;
+}
+
+static esp_err_t request_command(ulp_command_t requested, uint32_t *issued)
+{
+    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (requested != ULP_CMD_LOCK && requested != ULP_CMD_UNLOCK &&
+        requested != ULP_CMD_HOLD_OPEN) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&s_command_lock);
+    if (ulp_command_sequence != ulp_command_ack_sequence ||
+        ulp_close_reject_latched) {
+        s_command_overlap_counter++;
+    }
     uint32_t sequence = ulp_command_sequence;
     if (sequence & 1u) sequence++;
     ulp_command_sequence = sequence + 1u;
+    __sync_synchronize();
     ulp_command = (uint32_t)requested;
+    __sync_synchronize();
     ulp_command_sequence = sequence + 2u;
+    if (issued) *issued = sequence + 2u;
+    portEXIT_CRITICAL(&s_command_lock);
+    return ESP_OK;
+}
+
+esp_err_t ulp_controller_request(ulp_command_t requested)
+{
+    return request_command(requested, NULL);
+}
+
+esp_err_t ulp_controller_request_wait(ulp_command_t requested)
+{
+    if (ulp_calibration_mode) return ESP_ERR_INVALID_STATE;
+    uint32_t issued;
+    esp_err_t err = request_command(requested, &issued);
+    if (err != ESP_OK) return err;
+    const int64_t deadline = esp_timer_get_time() + 750000;
+    do {
+        __sync_synchronize();
+        if (ulp_command_sequence != issued) return ESP_ERR_INVALID_STATE;
+        if (ulp_command_ack_sequence == issued) return ESP_OK;
+        vTaskDelay(pdMS_TO_TICKS(10));
+    } while (esp_timer_get_time() < deadline);
+    /* Timeout is not cancellation: the mailbox may be consumed later. */
+    return ESP_ERR_TIMEOUT;
 }
 
 bool ulp_controller_read_state(lock_state_t *state, uint32_t *faults,
@@ -119,9 +323,11 @@ bool ulp_controller_read_state(lock_state_t *state, uint32_t *faults,
     for (int tries = 0; tries < 4; tries++) {
         uint32_t before = ulp_sequence;
         if (before & 1u) continue;
+        __sync_synchronize();
         lock_state_t current_state = (lock_state_t)ulp_lock_state;
         uint32_t current_faults = ulp_fault_flags;
         uint32_t current_events = ulp_event_flags;
+        __sync_synchronize();
         uint32_t after = ulp_sequence;
         if (before == after && !(after & 1u)) {
             *state = current_state;
@@ -139,6 +345,7 @@ bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
     for (int tries = 0; tries < 4; tries++) {
         uint32_t before = ulp_sequence;
         if (before & 1u) continue;
+        __sync_synchronize();
         ulp_diagnostics_t snapshot = {
             .lock_state = (lock_state_t)ulp_lock_state,
             .fsm_state = (lock_fsm_state_t)ulp_fsm_state,
@@ -151,15 +358,38 @@ bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
             .delta_raw = ulp_delta_raw,
             .normalized_feature = ulp_normalized_feature,
             .coil_current_raw = ulp_coil_current_raw,
+            .gate_level = ulp_gate_level,
+            .gate_high_counter = ulp_gate_high_counter,
+            .gate_low_counter = ulp_gate_low_counter,
+            .requested_command = ulp_command,
+            .calibration_mode = ulp_calibration_mode,
+            .calibration_valid = ulp_calibration_values_valid(ulp_calibration_contact_raw,
+                ulp_calibration_paper1_raw, ulp_calibration_paper2_raw,
+                ulp_calibration_open_raw, ulp_calibration_verify_contact_raw),
+            .calibration_timeout_count = s_calibration_timeout_count,
+            .fault_retry_count = ulp_fault_retry_count,
+            .calibration_verify_counter = ulp_calibration_verify_counter,
+            .calibration_verify_raw = ulp_calibration_verify_raw,
+            .calibration_contact_raw = ulp_calibration_contact_raw,
+            .calibration_paper1_raw = ulp_calibration_paper1_raw,
+            .calibration_paper2_raw = ulp_calibration_paper2_raw,
+            .calibration_open_raw = ulp_calibration_open_raw,
+            .calibration_verify_contact_raw = ulp_calibration_verify_contact_raw,
             .measurement_counter = ulp_measurement_counter,
             .pulse_actual_us = ulp_pulse_actual_us,
             .close_verify_state = ulp_close_verify_state,
+            .close_detected_state = ulp_close_detected_state,
             .close_verify_feature = ulp_close_verify_feature,
             .close_verify_delta_raw = ulp_close_verify_delta_raw,
             .close_attempt_counter = ulp_close_attempt_counter,
+            .close_reject_counter = ulp_close_reject_counter,
+            .close_reject_latched = ulp_close_reject_latched,
             .command_ack_sequence = ulp_command_ack_sequence,
+            .command_sequence = ulp_command_sequence,
+            .command_overlap_counter = s_command_overlap_counter,
             .event_sequence = ulp_event_sequence,
         };
+        __sync_synchronize();
         uint32_t after = ulp_sequence;
         if (before == after && !(after & 1u)) {
             *out = snapshot;

@@ -9,6 +9,7 @@
 .android/
 .android-codex/
 .eim-codex/
+.device-agent/
 _codex_setup_backup_*/
 
 # Build results

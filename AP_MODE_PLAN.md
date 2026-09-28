@@ -16,7 +16,7 @@ modified by this plan.
 ## Configuration AP
 
 - SSID: `lock`
-- Password: `123456798` (WPA2-PSK)
+- Password: `[пароль удалён]` (WPA2-PSK)
 - Use the existing RGB LED for mode indication. The exact configuration-mode
   color will be assigned without changing the existing lock colors.
 
@@ -36,7 +36,7 @@ modified by this plan.
 
 ## Confirmed configuration
 
-- WPA2-PSK AP SSID: `lock`, password: `123456798`.
+- WPA2-PSK AP SSID: `lock`, password: `[пароль удалён]`.
 - Configuration indication: blue RGB LED on GPIO48.
 - Long press on GPIO0 (3 seconds): erase all bonds without switching mode.
 - Configuration mode never survives reboot or power loss.

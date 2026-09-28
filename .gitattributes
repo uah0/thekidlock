@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+sdkconfig export-ignore
+sdkconfig.old export-ignore
+**/sdkconfig export-ignore
+**/sdkconfig.old export-ignore

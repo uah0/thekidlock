@@ -1,6 +1,8 @@
 #pragma once
 
-// Change only this value for the next timing experiment.
+// Active timing profile for the current hardware: 8.
+// Historical profiles are retained for controlled bench comparison.
+// This is not a production-qualification flag; do not change without GPIO/ADC measurements.
 // 0: known conservative baseline, 500 ms between ULP wakeups
 // 1: 200 ms timer period
 // 2: 100 ms timer period

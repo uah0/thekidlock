@@ -19,6 +19,7 @@ static const led_color_t COLOR_UNLOCKED    = {0, 200, 0};    /* зелёный, 
 static const led_color_t COLOR_LOCKED_BLOCKED = {200, 120, 0}; /* жёлтый - заперт и заблокирован */
 static const led_color_t COLOR_OTA         = {0, 90, 255};   /* синий */
 static const led_color_t COLOR_CONFIGURATION = {0, 0, 200};  /* синий, режим настройки */
+static const led_color_t COLOR_FAULT = {180, 0, 180};
 
 static SemaphoreHandle_t s_mutex;
 static led_strip_handle_t s_strip;
@@ -42,6 +43,7 @@ static const led_color_t *color_for_state(led_state_t state)
         case LED_STATE_LOCKED_BLOCKED: return &COLOR_LOCKED_BLOCKED;
         case LED_STATE_OTA:         return &COLOR_OTA;
         case LED_STATE_CONFIGURATION: return &COLOR_CONFIGURATION;
+        case LED_STATE_FAULT:       return &COLOR_FAULT;
         case LED_STATE_BOOT:
         default:                    return &COLOR_BOOT;
     }
@@ -49,7 +51,7 @@ static const led_color_t *color_for_state(led_state_t state)
 
 static void apply_display_state(void)
 {
-    apply_color(color_for_state(s_configuration && s_state != LED_STATE_OTA
+    apply_color(color_for_state(s_configuration && s_state != LED_STATE_OTA && s_state != LED_STATE_FAULT
                                     ? LED_STATE_CONFIGURATION : s_state));
 }
 

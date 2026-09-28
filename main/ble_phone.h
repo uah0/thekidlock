@@ -1,4 +1,5 @@
 #pragma once
+unsigned ble_phone_stack_free(void);
 
 #include <stdbool.h>
 #include <stdint.h>
