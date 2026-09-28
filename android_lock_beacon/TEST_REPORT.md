@@ -1,5 +1,93 @@
 # Отчёт о проверках Android-приложения
 
+## Закрытие замка при отключении Always Open — 28.09.2026
+
+- Android baseline `build-android.ps1` до изменения — PASS (`assembleDebug`).
+- Baseline ESP build перед изменениями — PASS (build 225); по проектному
+  правилу загружен на текущий замок. Возврат подтверждён, версия `10.0.225`,
+  read-only статус `LOCKED`, `fault_flags=0`.
+- Добавлен reducer test на команду выхода из Always Open. Итоговые Android
+  `build-android.ps1` — PASS; `gradlew --no-daemon test` — PASS, debug/release;
+  `WorkingModeReducerTest` 14/14.
+- После уточнения same-button toggle итоговый APK пересобран как build 106,
+  тесты повторены: 26 debug unit tests, 0 failures/errors (release task тоже
+  прошёл). Build 106 установлен на Xiaomi; ориентация `0/0` восстановлена и
+  проверена.
+- Интерактивный прогон build 106: AUTO был selected; нажатие Always Open дало
+  `OPEN_HOLD` и выделение Always Open. Повторное нажатие отправило
+  `AUTO_OFF_CLOSE`; ESP подтвердил `LOCKED`, обе кнопки стали невыбранными.
+  При повторном AUTO обнаружен старый native presence latch (`nativeOpenSent`),
+  поэтому добавлена его очистка после подтверждённого закрытия.
+- После этого build 107 собран и установлен; тесты повторены (26 debug tests,
+  0 failures/errors; release task прошёл). Перед установкой настройки экрана
+  сохранены, после установки восстановлены и проверены `0/0`.
+- После восстановления Wi-Fi ADB интерактивный прогон build 107 завершён:
+  AUTO отправил `OPEN`, ESP и ULP подтвердили `OPEN`; выделилась кнопка AUTO.
+  Always Open подтвердился как `OPEN_HOLD` и выделилась только соответствующая
+  кнопка. Повторное нажатие отправило `AUTO_OFF_CLOSE`, ESP подтвердил `LOCKED`,
+  обе кнопки сняли выделение. Повторное включение AUTO после сброса presence
+  latch снова открыло замок (`OPEN`); выключение AUTO отправило
+  `AUTO_OFF_CLOSE`, ESP подтвердил `LOCKED`. Обе кнопки стали невыбраны; замок
+  оставался `LOCKED`, `hold_open=false`, при RSSI телефона `-38 dBm`.
+
+## Повторное автооткрытие при непрерывном присутствии — 28.09.2026
+
+- До изменения baseline `build-android.ps1` завершился успешно (`assembleDebug`).
+- `gradlew --no-daemon test` — PASS: debug и release unit tests; новый
+  `AutoOpenPresenceGateTest` — 4/4, `WorkingModeReducerTest` — 13/13.
+- `build-android.ps1` (`assembleDebug`) — PASS; APK build number 103 собран и
+  установлен на Xiaomi 2510DRA23E через Wi-Fi ADB (`Success`). Пакет сообщает
+  `versionName=1.0.0`, `versionCode=1`.
+- До установки сохранены `accelerometer_rotation=0` и `user_rotation=0`;
+  после установки оба значения восстановлены и прочитаны как `0/0`. Снимок
+  сохранён в `.device-agent/auto-open-fix-orientation.json`.
+- После обновления read-only статус ESP показал `OPEN`, без ошибок, encrypted и
+  bonded BLE связь активна, RSSI `-41 dBm`. Физический повторный цикл
+  в течение установки не наблюдался, но live logcat после установки зафиксировал
+  `AUTO_OPEN_REARMED` (сервис получил `OPEN` и последующий `LOCKED`), а затем
+  новый `AUTO_OPEN_RSSI_THRESHOLD_REACHED` при всё ещё близком телефоне. При
+  коротком опросе ESP lock оставался `OPEN`; ошибок AndroidRuntime нет.
+
+## Диагностика автооткрытия — 28.09.2026
+
+- На телефоне GATT соединение с замком стало `READY`, encrypted status read
+  прошёл. При `gattRssi=-59 dBm` и локальном пороге `-62 dBm` AUTO отправил
+  `OPEN`; ESP приняла encrypted/bonded команду, ULP подтвердил `OPEN`, status
+  ответил `open=true`, `locked=false`.
+- Последующие RSSI `-52…-56 dBm` подавлялись с
+  `nativeOpenSent=true`; повторного `OPEN` в том же присутствии сервис не
+  отправляет. Позднее устройство получило `AUTO_OFF_CLOSE` и подтвердило
+  `LOCKED`.
+- `AUTO` на главном экране является toggle. При активном AUTO повторное
+  нажатие выключает сервис и отправляет `AUTO_OFF_CLOSE`; для открытия по
+  присутствию режим AUTO должен оставаться активным.
+- Добавлен диагностический лог причины блокировки, ограниченный одним сообщением
+  за 5 секунд. `gradlew test` — PASS; `build-android.ps1` (`assembleDebug`) —
+  PASS. Сборка 101 установлена на Xiaomi 2510DRA23E через Wi-Fi ADB — `Success`.
+- Перед установкой сохранены `accelerometer_rotation=0`, `user_rotation=0`;
+  после установки восстановлены и проверены `0/0`. Снимок сохранён в
+  `.device-agent/android-rssi-diagnosis-install-orientation.json`.
+- На момент последней проверки замок отвечает `LOCKED`, соединение encrypted,
+  RSSI выше порога; новая команда подавлена latch-ом присутствия. Ручной OPEN
+  во время диагностики не отправлялся.
+
+## Подтверждённые режимы главного экрана — 28.09.2026
+
+- Baseline `build-android.ps1` до изменения — PASS (`assembleDebug`).
+- `gradlew test` после изменения — PASS; debug и release unit test tasks
+  выполнены успешно, включая переписанный `WorkingModeReducerTest`.
+- Итоговый `build-android.ps1` — PASS (`assembleDebug`), debug APK создан.
+- Добавлены проверки unknown/READY, AUTO ↔ Always Open с раздельным
+  подтверждением замка и сервиса, выключения AUTO, отказа записи, timeout,
+  disconnect, несовместимых out-of-order status, повторных событий и
+  просроченного timeout.
+- Debug APK установлен на Xiaomi 2510DRA23E через ADB Wi-Fi: `Success`;
+  установленный пакет сообщает `versionName=1.0.0`, `versionCode=1`.
+- Перед установкой сохранены `accelerometer_rotation=0` и `user_rotation=0`;
+  после установки оба значения восстановлены и повторно прочитаны как `0/0`.
+- Снимок исходной ориентации сохранён в
+  `.device-agent/android-working-mode-install-orientation.json`.
+
 ## Удаление настройки «Долго открыт» — 28.09.2026
 
 - `build-android.ps1`: PASS (`assembleDebug`). APK установлен на Xiaomi

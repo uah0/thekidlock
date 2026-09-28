@@ -111,12 +111,8 @@ class MainActivity : Activity() {
     private var keepOpenCommandPending = false
     private var keepOpenStatusExpected = false
     private var manualCommandWaitingForReady = false
-    private var pendingWorkingMode: Boolean? = null
-    private var resumeAutoAfterModeSync = false
-    private var lastWorkingModeAlwaysOpen = false
-    private var workingModeKnown = false
-    private var workingModeCommandPending = false
-    private var automaticModeActive = BleLockService.lastAutomaticMode
+    private var workingModeState = WorkingModeState()
+    private var workingModeTimeout: Runnable? = null
     private var hotspotCredentialWriteInFlight = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
@@ -181,11 +177,11 @@ class MainActivity : Activity() {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
                 }
                 BleLockService.ACTION_AUTOMATIC_MODE -> {
-                    automaticModeActive = intent.getBooleanExtra(
-                        BleLockService.EXTRA_AUTOMATIC_MODE,
-                        BleLockService.lastAutomaticMode
+                    dispatchWorkingModeEvent(
+                        WorkingModeEvent.AutomaticModeConfirmed(
+                            intent.getBooleanExtra(BleLockService.EXTRA_AUTOMATIC_MODE, false)
+                        )
                     )
-                    updateWorkingModeButtons()
                 }
             }
         }
@@ -196,11 +192,15 @@ class MainActivity : Activity() {
         bleListener = object : BleRepository.Listener {
             override fun onBleState(state: BleRepository.State, detail: String) {
                 lastBleState = state
+                if (state == BleRepository.State.ERROR && detail.startsWith("ESP32 отклони")) {
+                    dispatchWorkingModeEvent(WorkingModeEvent.WorkingModeCommandFailed)
+                } else {
+                    dispatchWorkingModeEvent(WorkingModeEvent.BleStateSynced(state))
+                }
                 when (state) {
                     BleRepository.State.OPEN_SENT -> {
                         if (manualOpenCommandPending) {
                             manualOpenCommandPending = false
-                            showOpenCommandAccepted()
                         }
                         if (keepOpenCommandPending) keepOpenStatusExpected = true
                     }
@@ -210,17 +210,11 @@ class MainActivity : Activity() {
                         keepOpenStatusExpected = false
                         manualCommandWaitingForReady = false
                         hotspotCredentialWriteInFlight = false
-                        workingModeCommandPending = false
-                        workingModeKnown = false
                         resetManualButtonStates()
                     }
                     else -> Unit
                 }
                 if (state == BleRepository.State.READY) {
-                    pendingWorkingMode?.let { alwaysOpen ->
-                        pendingWorkingMode = null
-                        repository.setWorkingMode(alwaysOpen)
-                    }
                     trySendPendingHotspotCredentials()
                     if (manualCommandWaitingForReady &&
                         (manualOpenCommandPending || keepOpenCommandPending)) {
@@ -263,8 +257,7 @@ class MainActivity : Activity() {
                 keepOpenCommandPending = false
                 keepOpenStatusExpected = false
                 manualCommandWaitingForReady = false
-                workingModeCommandPending = false
-                workingModeKnown = false
+                dispatchWorkingModeEvent(WorkingModeEvent.ConnectionLost)
                 resetManualButtonStates()
                 updateAdminEntryState()
                 updateMainControlsEnabled()
@@ -304,23 +297,10 @@ class MainActivity : Activity() {
             }
 
             override fun onLockData(info: String?, status: String?) {
-                // Fault/transition statuses describe hardware, not a change to AUTO mode.
-                val modeKnownFromStatus = status != null &&
-                    listOf("OPEN", "LOCKED", "OPEN_HOLD").any { status.trim().equals(it, ignoreCase = true) }
-                if (::manualKeepOpenButton.isInitialized && modeKnownFromStatus && !status.isNullOrBlank() &&
-                    (keepOpenStatusExpected || !keepOpenCommandPending)) {
-                    val alwaysOpen = status.trim().equals("OPEN_HOLD", ignoreCase = true)
-                    lastWorkingModeAlwaysOpen = alwaysOpen
-                    workingModeKnown = true
-                    workingModeCommandPending = false
-                    updateWorkingModeButtons()
-                    updateMainControlsEnabled()
-                    if (resumeAutoAfterModeSync && !webUiRequestPending) {
-                        resumeAutoAfterModeSync = false
-                        boundService?.resumeAutomaticMode()
-                    }
-                    if (keepOpenStatusExpected) keepOpenStatusExpected = false
+                if (!status.isNullOrBlank()) {
+                    dispatchWorkingModeEvent(WorkingModeEvent.LockStatusReported(status))
                 }
+                if (!status.isNullOrBlank() && keepOpenStatusExpected) keepOpenStatusExpected = false
             }
 
             override fun onAdminConfig(value: String) {
@@ -1223,7 +1203,6 @@ class MainActivity : Activity() {
         permissionButton.visibility = if (permissionsGranted) View.GONE else View.VISIBLE
         hotspotOpenButton.visibility = if (permissionsGranted) View.VISIBLE else View.GONE
         updateAdminEntryState()
-        updateWorkingModeButtons()
         updateMainControlsEnabled()
         updateAdminButtonsEnabled()
     }
@@ -1256,13 +1235,7 @@ class MainActivity : Activity() {
 
     private fun updateMainControlsEnabled() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
-        val permissionsGranted = hasBlePermissions()
-        val connected = lastBleState == BleRepository.State.READY
-        val modeSelectionEnabled = connected && !workingModeCommandPending
-        manualOpenButton.isEnabled = modeSelectionEnabled
-        manualKeepOpenButton.isEnabled = modeSelectionEnabled
-        manualOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
-        manualKeepOpenButton.alpha = if (modeSelectionEnabled) 1f else 0.38f
+        renderWorkingMode()
         if (::hotspotOpenButton.isInitialized) {
             val settingsEnabled = hasBlePermissions()
             hotspotOpenButton.isEnabled = settingsEnabled
@@ -1471,33 +1444,8 @@ class MainActivity : Activity() {
             requestMissingPermissions()
             return
         }
-        if (!serviceBound || repository.currentState != BleRepository.State.READY ||
-            workingModeCommandPending) return
-        val currentlyEnabled = settings.autoOpenEnabled &&
-            workingModeKnown && !lastWorkingModeAlwaysOpen
-        if (currentlyEnabled) {
-            settings.autoOpenEnabled = false
-            automaticModeActive = false
-            resumeAutoAfterModeSync = false
-            workingModeCommandPending = true
-            android.util.Log.d("BleLockUi", "Запрошено выключение режима AUTO")
-            boundService?.setAutomaticMode(false)
-            updateWorkingModeButtons()
-            updateMainControlsEnabled()
-            return
-        }
-        settings.autoOpenEnabled = true
-        automaticModeActive = false
-        if (workingModeKnown && lastWorkingModeAlwaysOpen) {
-            workingModeCommandPending = true
-            resumeAutoAfterModeSync = true
-            pendingWorkingMode = null
-            android.util.Log.d("BleLockUi", "Запрошен режим AUTO")
-            repository.setWorkingMode(false)
-        } else {
-            boundService?.setAutomaticMode(true)
-        }
-        updateMainControlsEnabled()
+        if (!serviceBound) return
+        dispatchWorkingModeEvent(WorkingModeEvent.UserToggledAuto)
     }
 
     private fun toggleKeepOpenMode() {
@@ -1505,38 +1453,68 @@ class MainActivity : Activity() {
             requestMissingPermissions()
             return
         }
-        if (!serviceBound || repository.currentState != BleRepository.State.READY ||
-            workingModeCommandPending) return
-        pendingWorkingMode = null
-        val requestedAlwaysOpen = !(workingModeKnown && lastWorkingModeAlwaysOpen)
-        resumeAutoAfterModeSync = !requestedAlwaysOpen && settings.autoOpenEnabled
-        workingModeCommandPending = true
-        repository.setWorkingMode(requestedAlwaysOpen)
-        updateMainControlsEnabled()
+        if (!serviceBound) return
+        dispatchWorkingModeEvent(WorkingModeEvent.UserToggledAlwaysOpen)
     }
 
-    private fun showOpenCommandAccepted() {
-        setManualButtonBlue(manualOpenButton, true)
-        signalHandler.postDelayed({ setManualButtonBlue(manualOpenButton, false) }, 700L)
+    private fun dispatchWorkingModeEvent(event: WorkingModeEvent) {
+        val result = WorkingModeReducer.reduce(
+            workingModeState,
+            event,
+            SystemClock.elapsedRealtime(),
+            settings.autoOpenEnabled
+        )
+        workingModeState = result.state
+        renderWorkingMode()
+        result.effects.forEach(::executeWorkingModeEffect)
     }
 
-    private fun resetManualButtonStates() {
-        updateWorkingModeButtons()
+    private fun executeWorkingModeEffect(effect: WorkingModeEffect) {
+        when (effect) {
+            is WorkingModeEffect.SendSetAutomaticMode -> boundService?.setAutomaticMode(effect.enabled)
+            is WorkingModeEffect.SendSetWorkingMode -> repository.setWorkingMode(
+                effect.alwaysOpen,
+                effect.closeWhenDisablingAlwaysOpen
+            )
+            WorkingModeEffect.ResumeAutomaticMode -> boundService?.resumeAutomaticMode()
+            is WorkingModeEffect.PersistAutoOpen -> settings.autoOpenEnabled = effect.enabled
+            is WorkingModeEffect.ScheduleTimeout -> {
+                workingModeTimeout?.let(signalHandler::removeCallbacks)
+                val timeout = Runnable {
+                    dispatchWorkingModeEvent(WorkingModeEvent.TransitionTimedOut(effect.requestId))
+                }
+                workingModeTimeout = timeout
+                signalHandler.postDelayed(
+                    timeout,
+                    (effect.atMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+                )
+            }
+            WorkingModeEffect.CancelTimeout -> {
+                workingModeTimeout?.let(signalHandler::removeCallbacks)
+                workingModeTimeout = null
+            }
+            WorkingModeEffect.RequestStatusRefresh -> {
+                if (::repository.isInitialized) repository.requestLockStatusRefresh()
+            }
+        }
     }
 
-    private fun updateWorkingModeButtons() {
+    private fun resetManualButtonStates() = renderWorkingMode()
+
+    private fun renderWorkingMode() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
-        setManualButtonBlue(
-            manualOpenButton,
-            automaticModeActive && workingModeKnown && !lastWorkingModeAlwaysOpen
-        )
-        setManualButtonBlue(
-            manualKeepOpenButton,
-            workingModeKnown && lastWorkingModeAlwaysOpen
-        )
+        val ui = WorkingModeUi.compute(workingModeState)
+        setManualButtonBlue(manualOpenButton, ui.autoSelected)
+        setManualButtonBlue(manualKeepOpenButton, ui.alwaysOpenSelected)
+        manualOpenButton.isEnabled = ui.enabled
+        manualKeepOpenButton.isEnabled = ui.enabled
+        val alpha = if (ui.enabled) 1f else 0.38f
+        manualOpenButton.alpha = alpha
+        manualKeepOpenButton.alpha = alpha
     }
 
     private fun setManualButtonBlue(button: Button, blue: Boolean) {
+        button.isSelected = blue
         button.background = getDrawable(
             if (blue) R.drawable.bg_button_filled else R.drawable.bg_button_outline
         )
@@ -1575,14 +1553,18 @@ class MainActivity : Activity() {
             boundService = binder
             repository = binder
             serviceBound = true
-            automaticModeActive = BleLockService.lastAutomaticMode
             binder.registerClient(bleListener)
+            dispatchWorkingModeEvent(
+                WorkingModeEvent.AutomaticModeConfirmed(binder.automaticModeActive)
+            )
+            dispatchWorkingModeEvent(WorkingModeEvent.BleStateSynced(binder.currentState))
             refreshState()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
             boundService = null
+            dispatchWorkingModeEvent(WorkingModeEvent.AutomaticServiceUnavailable)
             adminModeAvailable = false
             updateAdminEntryState()
             setAdminPanelVisible(false)
@@ -1826,7 +1808,6 @@ class MainActivity : Activity() {
     }
 
     private fun openEspWebUi() {
-        resumeAutoAfterModeSync = false
         webUiStartedAtMs = SystemClock.elapsedRealtime()
         webUiCountdownStartSeconds = settings.webUiCountdownSeconds
         setWebUiConnectionState(WebUiConnectionState.WAITING_WEBUI_ADDRESS)

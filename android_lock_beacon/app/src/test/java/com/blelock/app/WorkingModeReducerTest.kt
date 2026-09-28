@@ -1,330 +1,265 @@
 package com.blelock.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WorkingModeReducerTest {
-    private val ready = WorkingModeUiState(bleState = BleRepository.State.READY)
+    private val readyUnknown = WorkingModeState(bleState = BleRepository.State.READY)
+
+    private fun reduce(
+        state: WorkingModeState,
+        event: WorkingModeEvent,
+        time: Long = 1L,
+        autoOpenEnabled: Boolean = false
+    ) = WorkingModeReducer.reduce(state, event, time, autoOpenEnabled)
+
+    private fun withLockStatus(state: WorkingModeState, status: String) =
+        reduce(state, WorkingModeEvent.LockStatusReported(status)).state
 
     @Test
-    fun initialStateDisablesBothButtonsWithoutHighlights() {
-        val buttons = WorkingModeUi.compute(WorkingModeUiState())
+    fun initialAndReadyWithoutStatusAreUnknownAndUnselected() {
+        val initialUi = WorkingModeUi.compute(WorkingModeState())
+        assertFalse(initialUi.autoSelected)
+        assertFalse(initialUi.alwaysOpenSelected)
 
-        assertEquals(false, buttons.autoEnabled)
-        assertEquals(false, buttons.keepOpenEnabled)
-        assertEquals(false, buttons.autoHighlighted)
-        assertEquals(false, buttons.keepOpenHighlighted)
+        val ready = reduce(WorkingModeState(), WorkingModeEvent.BleStateSynced(BleRepository.State.READY)).state
+        val readyUi = WorkingModeUi.compute(ready)
+        assertEquals(ConfirmedLockMode.UNKNOWN, ready.confirmedLockMode)
+        assertFalse(readyUi.autoSelected)
+        assertFalse(readyUi.alwaysOpenSelected)
     }
 
     @Test
-    fun readyEnablesBothButtons() {
-        val result = WorkingModeReducer.reduce(
-            WorkingModeUiState(),
-            WorkingModeEvent.BleStateSynced(BleRepository.State.READY),
-            1L
-        )
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertEquals(true, buttons.autoEnabled)
-        assertEquals(true, buttons.keepOpenEnabled)
-    }
-
-    @Test
-    fun lockedStatusReportsAutoModeWithoutEffects() {
-        val result = WorkingModeReducer.reduce(
-            ready,
-            WorkingModeEvent.LockStatusReported("LOCKED"),
-            1L
-        )
-
-        assertEquals(KnownWorkingMode.AUTO, result.state.knownMode)
-        assertTrue(result.effects.isEmpty())
-    }
-
-    @Test
-    fun automaticModeBroadcastHighlightsAutoOnly() {
-        val withStatus = WorkingModeReducer.reduce(
-            ready,
-            WorkingModeEvent.LockStatusReported("LOCKED"),
-            1L
-        ).state
-        val result = WorkingModeReducer.reduce(
-            withStatus,
-            WorkingModeEvent.AutomaticModeBroadcastReceived(true),
-            2L
-        )
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertEquals(true, buttons.autoHighlighted)
-        assertEquals(false, buttons.keepOpenHighlighted)
-    }
-
-    @Test
-    fun autoToggleIsIgnoredWhenBleIsNotReady() {
-        val initial = WorkingModeUiState()
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.UserToggledAuto, 1L)
-
-        assertEquals(initial, result.state)
-        assertTrue(result.effects.isEmpty())
-    }
-
-    @Test
-    fun autoToggleIsIgnoredWhileAnotherCommandIsPending() {
-        val initial = ready.copy(
-            pending = WorkingModePendingCommand.SwitchingToAlwaysOpen(1L)
-        )
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.UserToggledAuto, 2L)
-
-        assertEquals(initial, result.state)
-        assertTrue(result.effects.isEmpty())
-    }
-
-    @Test
-    fun autoFromAlwaysOpenSchedulesModeChangeAndLocksButtons() {
-        val initial = ready.copy(knownMode = KnownWorkingMode.ALWAYS_OPEN)
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.UserToggledAuto, 7L)
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertTrue(result.state.pending is WorkingModePendingCommand.SwitchingToAuto)
-        assertEquals(
-            true,
-            (result.state.pending as WorkingModePendingCommand.SwitchingToAuto).resumeAfterConfirm
-        )
-        assertTrue(result.effects.contains(
-            WorkingModeEffect.SendSetWorkingMode(alwaysOpen = false, persistAutoOpen = true)
-        ))
-        assertTrue(result.effects.contains(WorkingModeEffect.ScheduleTimeout(7L + WorkingModeReducer.COMMAND_TIMEOUT_MS)))
-        assertEquals(false, buttons.autoEnabled)
-        assertEquals(false, buttons.autoHighlighted)
-        assertEquals(false, buttons.keepOpenHighlighted)
-    }
-
-    @Test
-    fun confirmedAutoAfterAlwaysOpenCancelsTimeoutAndResumesAuto() {
-        val pending = WorkingModeReducer.reduce(
-            ready.copy(knownMode = KnownWorkingMode.ALWAYS_OPEN),
-            WorkingModeEvent.UserToggledAuto,
-            7L
-        )
-        val result = WorkingModeReducer.reduce(
-            pending.state,
-            WorkingModeEvent.LockStatusReported("LOCKED"),
-            8L
-        )
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertEquals(WorkingModePendingCommand.None, result.state.pending)
-        assertTrue(result.effects.contains(WorkingModeEffect.CancelTimeout))
-        assertTrue(result.effects.contains(WorkingModeEffect.ResumeAutomaticMode))
-        assertEquals(true, buttons.autoEnabled)
-    }
-
-    @Test
-    fun autoToggleWhenAlreadyAutoStartsTurningAutoOff() {
-        val initial = ready.copy(
-            knownMode = KnownWorkingMode.AUTO,
-            automaticModeActive = true
-        )
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.UserToggledAuto, 3L)
-
-        assertTrue(result.state.pending is WorkingModePendingCommand.TurningAutoOff)
-        assertTrue(result.effects.contains(WorkingModeEffect.SendSetAutomaticMode(false)))
-    }
-
-    @Test
-    fun keepOpenToggleFromAutoSendsAlwaysOpen() {
-        val initial = ready.copy(knownMode = KnownWorkingMode.AUTO)
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.UserToggledKeepOpen, 4L)
-
-        assertTrue(result.state.pending is WorkingModePendingCommand.SwitchingToAlwaysOpen)
-        assertTrue(result.effects.contains(WorkingModeEffect.SendSetWorkingMode(true)))
-    }
-
-    @Test
-    fun leavingAlwaysOpenResumesPersistedAutomaticModeAfterConfirmation() {
-        val initial = ready.copy(knownMode = KnownWorkingMode.ALWAYS_OPEN)
-        val result = WorkingModeReducer.reduce(
-            initial, WorkingModeEvent.UserToggledKeepOpen, 4L, autoOpenEnabled = true
-        )
-        val pending = result.state.pending as WorkingModePendingCommand.SwitchingToAlwaysOpen
-
-        assertEquals(true, pending.resumeAfterConfirm)
-        assertTrue(result.effects.contains(
-            WorkingModeEffect.SendSetWorkingMode(alwaysOpen = false, persistAutoOpen = true)
-        ))
-        val confirmed = WorkingModeReducer.reduce(
-            result.state, WorkingModeEvent.LockStatusReported("LOCKED"), 5L, true
-        )
-        assertTrue(confirmed.effects.contains(WorkingModeEffect.ResumeAutomaticMode))
-    }
-
-    @Test
-    fun openHoldConfirmationHighlightsKeepOpenOnly() {
-        val pending = WorkingModeReducer.reduce(
-            ready.copy(knownMode = KnownWorkingMode.AUTO),
-            WorkingModeEvent.UserToggledKeepOpen,
-            4L
-        )
-        val activeWhilePending = WorkingModeReducer.reduce(
-            pending.state,
-            WorkingModeEvent.AutomaticModeBroadcastReceived(true),
-            5L
-        )
-        val result = WorkingModeReducer.reduce(
-            activeWhilePending.state,
-            WorkingModeEvent.LockStatusReported("OPEN_HOLD"),
-            6L
-        )
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertEquals(KnownWorkingMode.ALWAYS_OPEN, result.state.knownMode)
-        assertEquals(true, buttons.keepOpenHighlighted)
-        assertEquals(false, buttons.autoHighlighted)
-    }
-
-    @Test
-    fun connectionLossClearsAutoSwitchPendingCommand() {
-        val initial = ready.copy(
-            pending = WorkingModePendingCommand.SwitchingToAuto(1L, resumeAfterConfirm = false)
-        )
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.ConnectionLost, 2L)
-
-        assertEquals(WorkingModePendingCommand.None, result.state.pending)
-        assertTrue(result.effects.contains(WorkingModeEffect.CancelTimeout))
-    }
-
-    @Test
-    fun errorStateClearsAlwaysOpenPendingCommand() {
-        val initial = ready.copy(
-            pending = WorkingModePendingCommand.SwitchingToAlwaysOpen(1L)
-        )
-        val result = WorkingModeReducer.reduce(
-            initial,
-            WorkingModeEvent.BleStateSynced(BleRepository.State.ERROR),
-            2L
-        )
-
-        assertEquals(WorkingModePendingCommand.None, result.state.pending)
-        assertTrue(result.effects.contains(WorkingModeEffect.CancelTimeout))
-    }
-
-    @Test
-    fun pendingCommandTimeoutClearsPending() {
-        val initial = ready.copy(
-            knownMode = KnownWorkingMode.AUTO,
-            automaticModeActive = true,
-            pending = WorkingModePendingCommand.TurningAutoOff(
-                1L, previousAutomaticModeActive = true, previousKnownMode = KnownWorkingMode.AUTO
-            )
-        )
-        val result = WorkingModeReducer.reduce(initial, WorkingModeEvent.PendingCommandTimedOut, 2L)
-
-        assertEquals(WorkingModePendingCommand.None, result.state.pending)
-        assertEquals(true, result.state.automaticModeActive)
-        assertEquals(KnownWorkingMode.AUTO, result.state.knownMode)
+    fun requestedOrCachedModeDoesNotBecomeConfirmedWithoutLockStatus() {
+        val state = readyUnknown.copy(confirmedAutomaticServiceActive = true)
+        assertFalse(WorkingModeUi.compute(state).autoSelected)
+        val result = reduce(state, WorkingModeEvent.UserToggledAlwaysOpen)
+        assertNull(result.state.transition)
         assertTrue(result.effects.contains(WorkingModeEffect.RequestStatusRefresh))
+        assertFalse(WorkingModeUi.compute(result.state).alwaysOpenSelected)
     }
 
     @Test
-    fun timedOutModeChangeRestoresPriorModeSnapshot() {
-        val initial = ready.copy(
-            knownMode = KnownWorkingMode.ALWAYS_OPEN,
-            automaticModeActive = true,
-            pending = WorkingModePendingCommand.SwitchingToAuto(
-                10L, true, previousAutomaticModeActive = true,
-                previousKnownMode = KnownWorkingMode.ALWAYS_OPEN
-            )
+    fun autoToAlwaysOpenKeepsConfirmedAutoUntilOpenHold() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.AUTO,
+            confirmedAutomaticServiceActive = true
         )
-        val timedOut = WorkingModeReducer.reduce(initial, WorkingModeEvent.PendingCommandTimedOut, 20L)
+        val request = reduce(initial, WorkingModeEvent.UserToggledAlwaysOpen, 10L)
+        val requestedUi = WorkingModeUi.compute(request.state)
+        assertTrue(request.state.transition is WorkingModeTransition.ToAlwaysOpen)
+        assertTrue(request.effects.contains(WorkingModeEffect.SendSetWorkingMode(true)))
+        assertTrue(requestedUi.autoSelected)
+        assertFalse(requestedUi.alwaysOpenSelected)
 
-        assertEquals(KnownWorkingMode.ALWAYS_OPEN, timedOut.state.knownMode)
-        assertEquals(true, timedOut.state.automaticModeActive)
-        assertEquals(false, WorkingModeUi.compute(timedOut.state).autoHighlighted)
-        assertEquals(true, WorkingModeUi.compute(timedOut.state).keepOpenHighlighted)
+        // A successful GATT write is not a state event.
+        assertTrue(WorkingModeUi.compute(request.state).autoSelected)
+        assertFalse(WorkingModeUi.compute(request.state).alwaysOpenSelected)
+
+        val staleStatus = reduce(request.state, WorkingModeEvent.LockStatusReported("LOCKED"), 11L)
+        assertTrue(staleStatus.state.transition is WorkingModeTransition.ToAlwaysOpen)
+        assertEquals(ConfirmedLockMode.AUTO, staleStatus.state.confirmedLockMode)
+
+        val confirmed = reduce(staleStatus.state, WorkingModeEvent.LockStatusReported("OPEN_HOLD"), 12L)
+        val buttons = WorkingModeUi.compute(confirmed.state)
+        assertNull(confirmed.state.transition)
+        assertEquals(ConfirmedLockMode.ALWAYS_OPEN, confirmed.state.confirmedLockMode)
+        assertTrue(buttons.alwaysOpenSelected)
+        assertFalse(buttons.autoSelected)
     }
 
     @Test
-    fun timeoutWithoutPendingCommandIsNoOp() {
-        val result = WorkingModeReducer.reduce(
-            ready,
-            WorkingModeEvent.PendingCommandTimedOut,
-            2L
+    fun alwaysOpenToAutoWaitsForLockThenAutomaticServiceConfirmation() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.ALWAYS_OPEN,
+            confirmedAutomaticServiceActive = false
+        )
+        val request = reduce(initial, WorkingModeEvent.UserToggledAuto, 20L)
+        assertEquals(ConfirmedLockMode.ALWAYS_OPEN, request.state.confirmedLockMode)
+        assertTrue(WorkingModeUi.compute(request.state).alwaysOpenSelected)
+        assertFalse(WorkingModeUi.compute(request.state).autoSelected)
+
+        val lockConfirmed = reduce(request.state, WorkingModeEvent.LockStatusReported("LOCKED"), 21L)
+        assertEquals(ConfirmedLockMode.AUTO, lockConfirmed.state.confirmedLockMode)
+        assertTrue(lockConfirmed.state.transition is WorkingModeTransition.ToAuto)
+        assertTrue(lockConfirmed.effects.contains(WorkingModeEffect.ResumeAutomaticMode))
+        assertFalse(WorkingModeUi.compute(lockConfirmed.state).autoSelected)
+
+        val serviceConfirmed = reduce(
+            lockConfirmed.state,
+            WorkingModeEvent.AutomaticModeConfirmed(true),
+            22L
+        )
+        assertNull(serviceConfirmed.state.transition)
+        assertTrue(WorkingModeUi.compute(serviceConfirmed.state).autoSelected)
+        assertFalse(WorkingModeUi.compute(serviceConfirmed.state).alwaysOpenSelected)
+    }
+
+    @Test
+    fun leavingAlwaysOpenWithEitherModeButtonRequestsImmediateClose() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.ALWAYS_OPEN,
+            confirmedAutomaticServiceActive = false
         )
 
-        assertEquals(ready, result.state)
-        assertTrue(result.effects.isEmpty())
+        val byAlwaysOpen = reduce(initial, WorkingModeEvent.UserToggledAlwaysOpen, 25L)
+        val byAuto = reduce(initial, WorkingModeEvent.UserToggledAuto, 26L)
+        val disableEffect = byAlwaysOpen.effects
+            .filterIsInstance<WorkingModeEffect.SendSetWorkingMode>()
+            .single()
+        assertFalse(disableEffect.alwaysOpen)
+        assertTrue(disableEffect.closeWhenDisablingAlwaysOpen)
+        assertTrue(byAlwaysOpen.effects.contains(WorkingModeEffect.PersistAutoOpen(false)))
+        assertTrue(byAlwaysOpen.effects.contains(WorkingModeEffect.SendSetAutomaticMode(false)))
+        assertFalse((byAlwaysOpen.state.transition as WorkingModeTransition.ToAuto).activateAutomaticService)
+
+        val enableEffect = byAuto.effects
+            .filterIsInstance<WorkingModeEffect.SendSetWorkingMode>()
+            .single()
+        assertFalse(enableEffect.alwaysOpen)
+        assertTrue(enableEffect.closeWhenDisablingAlwaysOpen)
+        assertTrue((byAuto.state.transition as WorkingModeTransition.ToAuto).activateAutomaticService)
     }
 
     @Test
-    fun syncingReadyWhenAlreadyReadyIsIdempotent() {
-        val result = WorkingModeReducer.reduce(
-            ready,
-            WorkingModeEvent.BleStateSynced(BleRepository.State.READY),
-            2L
-        )
-
-        assertEquals(ready, result.state)
-        assertTrue(result.effects.isEmpty())
-    }
-
-    @Test
-    fun repeatedAutoToggleWhilePendingSendsOnlyOneCommand() {
-        val first = WorkingModeReducer.reduce(
-            ready.copy(knownMode = KnownWorkingMode.AUTO, automaticModeActive = true),
+    fun automaticServiceSnapshotBeforeLockConfirmationCannotCompleteAutoTransition() {
+        val request = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.ALWAYS_OPEN),
             WorkingModeEvent.UserToggledAuto,
-            1L
+            30L
         )
-        val second = WorkingModeReducer.reduce(
-            first.state,
-            WorkingModeEvent.UserToggledAuto,
-            2L
-        )
-        val sentCommands = (first.effects + second.effects)
-            .count { it is WorkingModeEffect.SendSetAutomaticMode }
+        val serviceFirst = reduce(request.state, WorkingModeEvent.AutomaticModeConfirmed(true), 31L)
+        assertTrue(serviceFirst.state.transition is WorkingModeTransition.ToAuto)
+        assertFalse(WorkingModeUi.compute(serviceFirst.state).autoSelected)
+        val complete = reduce(serviceFirst.state, WorkingModeEvent.LockStatusReported("OPEN"), 32L)
+        assertNull(complete.state.transition)
+        assertTrue(WorkingModeUi.compute(complete.state).autoSelected)
+    }
 
+    @Test
+    fun automaticOffIsConfirmedOnlyByInactiveServiceSnapshot() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.AUTO,
+            confirmedAutomaticServiceActive = true
+        )
+        val requested = reduce(initial, WorkingModeEvent.UserToggledAuto, 40L)
+        assertTrue(WorkingModeUi.compute(requested.state).autoSelected)
+        assertTrue(requested.state.transition is WorkingModeTransition.AutomaticServiceToInactive)
+        assertTrue(requested.effects.contains(WorkingModeEffect.SendSetAutomaticMode(false)))
+
+        val confirmed = reduce(requested.state, WorkingModeEvent.AutomaticModeConfirmed(false), 41L)
+        assertNull(confirmed.state.transition)
+        assertFalse(WorkingModeUi.compute(confirmed.state).autoSelected)
+        assertEquals(ConfirmedLockMode.AUTO, confirmed.state.confirmedLockMode)
+    }
+
+    @Test
+    fun failedWriteKeepsPreviousConfirmedModeAndClearsRequest() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.AUTO,
+            confirmedAutomaticServiceActive = true
+        )
+        val requested = reduce(initial, WorkingModeEvent.UserToggledAlwaysOpen, 50L)
+        val failed = reduce(requested.state, WorkingModeEvent.WorkingModeCommandFailed, 51L)
+
+        assertNull(failed.state.transition)
+        assertEquals(ConfirmedLockMode.AUTO, failed.state.confirmedLockMode)
+        assertTrue(WorkingModeUi.compute(failed.state).autoSelected)
+        assertFalse(WorkingModeUi.compute(failed.state).alwaysOpenSelected)
+    }
+
+    @Test
+    fun timeoutClearsPendingWithoutChangingConfirmedModeAndRequestsRefresh() {
+        val initial = readyUnknown.copy(
+            confirmedLockMode = ConfirmedLockMode.AUTO,
+            confirmedAutomaticServiceActive = true
+        )
+        val requested = reduce(initial, WorkingModeEvent.UserToggledAlwaysOpen, 60L)
+        val timedOut = reduce(
+            requested.state,
+            WorkingModeEvent.TransitionTimedOut(60L),
+            12_060L
+        )
+
+        assertNull(timedOut.state.transition)
+        assertEquals(ConfirmedLockMode.AUTO, timedOut.state.confirmedLockMode)
+        assertTrue(WorkingModeUi.compute(timedOut.state).autoSelected)
+        assertFalse(WorkingModeUi.compute(timedOut.state).alwaysOpenSelected)
+        assertTrue(timedOut.effects.contains(WorkingModeEffect.RequestStatusRefresh))
+    }
+
+    @Test
+    fun disconnectDuringTransitionClearsPendingAndMakesLockUnknown() {
+        val requested = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.AUTO),
+            WorkingModeEvent.UserToggledAlwaysOpen,
+            70L
+        )
+        val lost = reduce(requested.state, WorkingModeEvent.ConnectionLost, 71L)
+
+        assertNull(lost.state.transition)
+        assertEquals(ConfirmedLockMode.UNKNOWN, lost.state.confirmedLockMode)
+        assertFalse(WorkingModeUi.compute(lost.state).alwaysOpenSelected)
+        assertTrue(lost.effects.contains(WorkingModeEffect.CancelTimeout))
+    }
+
+    @Test
+    fun toAlwaysOpenIgnoresStaleAutoStatusAndToAutoIgnoresOpenHold() {
+        val toAlways = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.AUTO),
+            WorkingModeEvent.UserToggledAlwaysOpen,
+            80L
+        )
+        val autoStatus = reduce(toAlways.state, WorkingModeEvent.LockStatusReported("OPEN"), 81L)
+        assertTrue(autoStatus.state.transition is WorkingModeTransition.ToAlwaysOpen)
+
+        val toAuto = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.ALWAYS_OPEN),
+            WorkingModeEvent.UserToggledAuto,
+            82L
+        )
+        val holdStatus = reduce(toAuto.state, WorkingModeEvent.LockStatusReported("OPEN_HOLD"), 83L)
+        assertTrue(holdStatus.state.transition is WorkingModeTransition.ToAuto)
+        assertFalse(holdStatus.effects.contains(WorkingModeEffect.ResumeAutomaticMode))
+    }
+
+    @Test
+    fun duplicateStatusAndServiceEventsAreIdempotent() {
+        val firstStatus = withLockStatus(readyUnknown, "LOCKED")
+        assertEquals(firstStatus, withLockStatus(firstStatus, "LOCKED"))
+        val firstService = reduce(firstStatus, WorkingModeEvent.AutomaticModeConfirmed(true)).state
+        assertEquals(
+            firstService,
+            reduce(firstService, WorkingModeEvent.AutomaticModeConfirmed(true)).state
+        )
+    }
+
+    @Test
+    fun lateTimeoutAfterConfirmationDoesNotChangeState() {
+        val request = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.AUTO),
+            WorkingModeEvent.UserToggledAlwaysOpen,
+            90L
+        )
+        val confirmed = reduce(request.state, WorkingModeEvent.LockStatusReported("OPEN_HOLD"), 91L)
+        val lateTimeout = reduce(confirmed.state, WorkingModeEvent.TransitionTimedOut(90L), 20_000L)
+
+        assertEquals(confirmed.state, lateTimeout.state)
+        assertTrue(lateTimeout.effects.isEmpty())
+    }
+
+    @Test
+    fun repeatedClickWhilePendingDoesNotSendAnotherCommand() {
+        val first = reduce(
+            readyUnknown.copy(confirmedLockMode = ConfirmedLockMode.AUTO),
+            WorkingModeEvent.UserToggledAlwaysOpen,
+            100L
+        )
+        val second = reduce(first.state, WorkingModeEvent.UserToggledAlwaysOpen, 101L)
         assertEquals(first.state, second.state)
-        assertEquals(1, sentCommands)
-    }
-
-    @Test
-    fun unrecognizedLockStatusDoesNotChangeModeOrPending() {
-        val result = WorkingModeReducer.reduce(
-            ready,
-            WorkingModeEvent.LockStatusReported("ERROR_WIFI"),
-            2L
-        )
-
-        assertEquals(ready.knownMode, result.state.knownMode)
-        assertEquals(ready.pending, result.state.pending)
-    }
-
-    @Test
-    fun autoBroadcastDoesNotUnlockButtonsWhileCommandPending() {
-        val initial = ready.copy(
-            pending = WorkingModePendingCommand.SwitchingToAlwaysOpen(1L)
-        )
-        val result = WorkingModeReducer.reduce(
-            initial,
-            WorkingModeEvent.AutomaticModeBroadcastReceived(true),
-            2L
-        )
-        val buttons = WorkingModeUi.compute(result.state)
-
-        assertEquals(true, result.state.automaticModeActive)
-        assertEquals(false, buttons.keepOpenEnabled)
-    }
-
-    @Test
-    fun firstReadySyncEnablesButtonsForPreviouslyReadyService() {
-        val activityState = WorkingModeReducer.reduce(
-            WorkingModeUiState(),
-            WorkingModeEvent.BleStateSynced(BleRepository.State.READY),
-            1L
-        ).state
-        val buttons = WorkingModeUi.compute(activityState)
-
-        assertEquals(true, buttons.autoEnabled)
-        assertEquals(true, buttons.keepOpenEnabled)
+        assertTrue(second.effects.isEmpty())
     }
 }

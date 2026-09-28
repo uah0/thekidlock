@@ -1,5 +1,29 @@
 # Отчёт о проверках
 
+## Android: закрытие при выходе из Always Open — 28.09.2026
+
+- ESP baseline `build-esp32.ps1` до изменений кода — PASS, build 225; прошивка
+  загружена на текущий замок, устройство вернулось как `10.0.225`, статус
+  `LOCKED`, `fault_flags=0`.
+- Android baseline и итоговый `build-android.ps1` — PASS (`assembleDebug`).
+- `gradlew --no-daemon test` — PASS, debug/release; 26 debug unit tests,
+  failures/errors `0` (включая 14 reducer tests и 4 теста presence gate).
+- На телефоне подтверждено переключение Always Open → `OPEN_HOLD` →
+  `AUTO_OFF_CLOSE` → `LOCKED`; обе кнопки сняли выделение.
+- После обнаружения native presence latch собран и установлен Android build 107.
+  `gradlew --no-daemon test` повторно прошёл (26 debug tests, 0 failures/errors;
+  release task прошёл). Ориентация до/после установки `0/0`.
+- После восстановления Wi-Fi ADB полный интерактивный прогон build 107 завершён:
+  AUTO подтвердился через `OPEN`, Always Open — через `OPEN_HOLD`, сброс — через
+  `LOCKED`. Повторное включение AUTO снова открыло замок; выключение AUTO
+  подтвердилось `AUTO_OFF_CLOSE` и `LOCKED`. Итог: `LOCKED`, `hold_open=false`,
+  телефон рядом (`RSSI=-38 dBm`), обе кнопки не выбраны.
+- Предыдущий Android build 106 установлен на Xiaomi 2510DRA23E. Перед установкой сохранены
+  `accelerometer_rotation=0`, `user_rotation=0`; после установки оба значения
+  восстановлены и прочитаны как `0/0`.
+- `gradlew --no-daemon test` — PASS, debug/release; всего 26 debug unit tests,
+  failures/errors `0`.
+
 ## RSSI-контроль и удаление «Долго открыт» — 28.09.2026
 
 - Baseline ESP `build-esp32.ps1` до изменений: PASS, firmware build 223.

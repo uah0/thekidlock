@@ -28,9 +28,12 @@ class BleLockService : Service(), BleRepository.Listener {
     private lateinit var repository: BleRepository
     private lateinit var settings: LockSettings
     private var openSentForPresence = false
+    private val autoOpenPresenceGate = AutoOpenPresenceGate()
     private var autoOpenWritePending = false
+    private var lastAutoOpenSuppressionLogMs = 0L
     private var autoOffClosePending = false
     private var autoOffCloseWriteInFlight = false
+    private var workingModeClosePending = false
     private var stopping = false
     private var repositoryActive = false
     private var bluetoothAvailable = false
@@ -46,7 +49,9 @@ class BleLockService : Service(), BleRepository.Listener {
             clients.add(client)
             val cachedInfo = lastLockInfo
             val cachedStatus = lastLockStatus
-            if (!cachedInfo.isNullOrBlank() || !cachedStatus.isNullOrBlank()) {
+            if (repository.currentState == BleRepository.State.READY &&
+                (!cachedInfo.isNullOrBlank() || !cachedStatus.isNullOrBlank())
+            ) {
                 handler.post { client.onLockData(cachedInfo, cachedStatus) }
             }
         }
@@ -65,7 +70,12 @@ class BleLockService : Service(), BleRepository.Listener {
         override val currentState: BleRepository.State
             get() = repository.currentState
 
+        /** Read-only snapshot of the service's current operating mode. */
+        val automaticModeActive: Boolean
+            get() = mode == Mode.AUTO_OPEN
+
         override fun findAndConnect() = repository.findAndConnect()
+        override fun requestLockStatusRefresh() = repository.requestLockStatusRefresh()
         override fun pollAdminState() = repository.pollAdminState()
         override fun retryAdminProbe() = repository.retryAdminProbe()
         override fun readAdminConfig() = repository.readAdminConfig()
@@ -95,7 +105,13 @@ class BleLockService : Service(), BleRepository.Listener {
         override fun openNow() = repository.openNow()
         override fun forceOpenNow() = repository.forceOpenNow()
         override fun toggleKeepOpen() = repository.toggleKeepOpen()
-        override fun setWorkingMode(alwaysOpen: Boolean) = repository.setWorkingMode(alwaysOpen)
+        override fun setWorkingMode(
+            alwaysOpen: Boolean,
+            closeWhenDisablingAlwaysOpen: Boolean
+        ) {
+            if (closeWhenDisablingAlwaysOpen) workingModeClosePending = true
+            repository.setWorkingMode(alwaysOpen, closeWhenDisablingAlwaysOpen)
+        }
         override fun close() = Unit
 
         fun requestAdminConnection() = requestAdminConnectionInternal()
@@ -249,10 +265,14 @@ class BleLockService : Service(), BleRepository.Listener {
             }
             BleRepository.State.OPEN_SENT -> {
                 autoOpenWritePending = false
-                openSentForPresence = true
+                if (detail == "Команда OPEN передана замку") {
+                    openSentForPresence = true
+                    autoOpenPresenceGate.onOpenCommandAccepted()
+                }
             }
             BleRepository.State.IDLE, BleRepository.State.ERROR -> {
                 autoOpenWritePending = false
+                workingModeClosePending = false
                 if (stopping) return
                 if (mode == Mode.OTA) {
                     handler.removeCallbacks(otaRecovery)
@@ -305,6 +325,17 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onLockData(info: String?, status: String?) {
         if (!info.isNullOrBlank()) lastLockInfo = info
         if (!status.isNullOrBlank()) lastLockStatus = status
+        if (workingModeClosePending && status?.trim()?.equals("LOCKED", ignoreCase = true) == true) {
+            workingModeClosePending = false
+            openSentForPresence = false
+            repository.clearAutoConnectOpenSentForPresence()
+            Log.i(TAG, "Always Open reset confirmed LOCKED; native presence guard cleared")
+        }
+        if (autoOpenPresenceGate.onLockStatus(status)) {
+            openSentForPresence = false
+            repository.clearAutoConnectOpenSentForPresence()
+            Log.i(TAG, "AUTO_OPEN_REARMED: lock confirmed OPEN then LOCKED")
+        }
         if (autoOffClosePending && autoOffCloseWriteInFlight &&
             status?.trim()?.equals("LOCKED", ignoreCase = true) == true) {
             autoOffClosePending = false
@@ -346,15 +377,36 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     override fun onGattRssi(rssi: Int?) {
-        if (rssi == null || mode != Mode.AUTO_OPEN || !settings.autoOpenEnabled ||
-            autoOffClosePending || repository.currentState != BleRepository.State.READY) return
-
-        val nativeRequest = repository.hasNativeAutoConnectRequest
-        if (autoOpenWritePending || openSentForPresence ||
-            (nativeRequest && (repository.hasOpenBeenSentForAutoConnectPresence ||
-                repository.hasOpenPendingForAutoConnectPresence))) return
-
+        if (rssi == null) return
         val threshold = settings.rssiThreshold
+        val nativeRequest = repository.hasNativeAutoConnectRequest
+        val nativeOpenSent = nativeRequest && repository.hasOpenBeenSentForAutoConnectPresence
+        val nativeOpenPending = nativeRequest && repository.hasOpenPendingForAutoConnectPresence
+        val suppressionReason = when {
+            mode != Mode.AUTO_OPEN -> "mode=$mode"
+            !settings.autoOpenEnabled -> "autoOpenEnabled=false"
+            autoOffClosePending -> "autoOffClosePending=true"
+            repository.currentState != BleRepository.State.READY -> "state=${repository.currentState}"
+            autoOpenWritePending -> "autoOpenWritePending=true"
+            openSentForPresence -> "openSentForPresence=true"
+            nativeOpenSent -> "nativeOpenSent=true"
+            nativeOpenPending -> "nativeOpenPending=true"
+            else -> null
+        }
+        if (suppressionReason != null) {
+            val now = SystemClock.elapsedRealtime()
+            if (rssi >= threshold && now - lastAutoOpenSuppressionLogMs >= 5_000L) {
+                lastAutoOpenSuppressionLogMs = now
+                Log.w(
+                    TAG,
+                    "AUTO_OPEN_SUPPRESSED: rssi=$rssi threshold=$threshold reason=$suppressionReason " +
+                        "autoOpenWritePending=$autoOpenWritePending openSentForPresence=$openSentForPresence " +
+                        "nativeRequest=$nativeRequest nativeOpenSent=$nativeOpenSent nativeOpenPending=$nativeOpenPending"
+                )
+            }
+            return
+        }
+
         if (rssi < threshold) {
             Log.i(TAG, "AUTO_OPEN_WAITING_FOR_RSSI: gattRssi=$rssi threshold=$threshold dBm")
             BleEventTones.weakAdvertisement()

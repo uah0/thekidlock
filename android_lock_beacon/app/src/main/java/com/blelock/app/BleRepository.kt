@@ -73,6 +73,14 @@ class BleRepository(
     /** Текущее состояние подключения, доступное снаружи без изменения его. */
     override val currentState: State get() = state
 
+    override fun requestLockStatusRefresh(): Boolean {
+        if (state != State.READY) return false
+        val characteristic = lockService?.getCharacteristic(BleProtocol.STATUS_UUID) ?: return false
+        return enqueueGattOperation("LOCK_STATUS_REFRESH") {
+            gatt?.readCharacteristic(characteristic) == true
+        }
+    }
+
     fun setControlOnly(value: Boolean) {
         controlOnly = value
     }
@@ -101,6 +109,13 @@ class BleRepository(
         get() = autoConnectGattActive && autoConnectOpenSentForPresence
     val hasOpenPendingForAutoConnectPresence: Boolean
         get() = autoConnectGattActive && autoConnectOpenWritePending
+
+    fun clearAutoConnectOpenSentForPresence() {
+        if (autoConnectGattActive) {
+            autoConnectOpenSentForPresence = false
+            autoConnectOpenWritePending = false
+        }
+    }
     private var departureMode = false
     private var departureScanActive = false
     private var autoConnectOpenSentForPresence = false
@@ -728,15 +743,23 @@ class BleRepository(
         }
     }
 
-    override fun setWorkingMode(alwaysOpen: Boolean) {
+    override fun setWorkingMode(alwaysOpen: Boolean, closeWhenDisablingAlwaysOpen: Boolean) {
         val characteristic = lockService?.getCharacteristic(BleProtocol.COMMAND_UUID)
         val currentGatt = gatt
         if (state != State.READY || characteristic == null || currentGatt == null) {
             fail("Сначала подключитесь к зарегистрированному замку")
             return
         }
-        pendingLockCommand = if (alwaysOpen) "MODE_ALWAYS" else "MODE_AUTO"
-        val command = if (alwaysOpen) BleProtocol.MODE_ALWAYS_COMMAND else BleProtocol.MODE_AUTO_COMMAND
+        pendingLockCommand = when {
+            alwaysOpen -> "MODE_ALWAYS"
+            closeWhenDisablingAlwaysOpen -> "AUTO_OFF_CLOSE"
+            else -> "MODE_AUTO"
+        }
+        val command = when {
+            alwaysOpen -> BleProtocol.MODE_ALWAYS_COMMAND
+            closeWhenDisablingAlwaysOpen -> BleProtocol.AUTO_OFF_CLOSE_COMMAND
+            else -> BleProtocol.MODE_AUTO_COMMAND
+        }
         if (!write(characteristic, command, currentGatt)) {
             fail("Не удалось запустить запись $pendingLockCommand")
         }

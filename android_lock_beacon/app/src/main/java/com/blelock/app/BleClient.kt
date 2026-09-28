@@ -3,6 +3,7 @@ package com.blelock.app
 /** Commands exposed by the single BLE owner to the UI. */
 interface BleClient {
     val currentState: BleRepository.State
+    fun requestLockStatusRefresh(): Boolean
     fun findAndConnect()
     fun pollAdminState()
     fun retryAdminProbe()
@@ -22,6 +23,6 @@ interface BleClient {
     fun openNow()
     fun forceOpenNow()
     fun toggleKeepOpen()
-    fun setWorkingMode(alwaysOpen: Boolean)
+    fun setWorkingMode(alwaysOpen: Boolean, closeWhenDisablingAlwaysOpen: Boolean = false)
     fun close()
 }

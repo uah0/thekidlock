@@ -1,5 +1,91 @@
 # Аудит Android-приложения TheKidLock
 
+## Немедленное закрытие при выходе из Always Open — 28.09.2026
+
+- Android посылал `MODE_AUTO` при снятии Always Open. В `lock_control.c` эта
+  команда снимала hold, но намеренно сохраняла физический запрос OPEN и вызывала
+  `apply_state(true)`, поэтому статус возвращался обычный `OPEN`, а замок не
+  закрывался.
+- Для возврата из Always Open приложение теперь выбирает существующий
+  `AUTO_OFF_CLOSE`, который очищает hold и ставит физический запрос закрытия.
+  Другие переходы на `MODE_AUTO` оставлены без изменения.
+- Повторное нажатие самой кнопки Always Open также выключает и сохраняет
+  выключенное автооткрытие, чтобы близкий телефон не отменил закрытие. Переход
+  через кнопку AUTO закрывает замок, затем возобновляет автооткрытие после
+  подтверждения статуса замка.
+- Проверка на устройстве выявила оставшийся native presence latch после явного
+  `AUTO_OFF_CLOSE`. При подтверждённом `LOCKED` после сброса Always Open сервис
+  теперь очищает этот latch, чтобы последующее включение AUTO могло снова
+  отправить OPEN при близком телефоне.
+- На build 107 завершён полный прогон AUTO (`OPEN`) → Always Open (`OPEN_HOLD`)
+  → сброс (`LOCKED`) → AUTO (`OPEN`) → AUTO off (`LOCKED`). После выключения
+  автооткрытия замок остался `LOCKED`, `hold_open=false` при RSSI `-38 dBm`.
+
+## Диагностика автооткрытия — 28.09.2026
+
+- На Xiaomi `2510DRA23E` BLE GATT и encrypted/bonded соединение успешны; ESP
+  отвечает на `LOCK_STATUS`. Порог телефона — `-62 dBm`, RSSI соединения в
+  наблюдаемом интервале был примерно `-59…-52 dBm`.
+- После перезапуска сервиса приложение зарегистрировало
+  `AUTO_OPEN_RSSI_THRESHOLD_REACHED` при `-59 dBm`, отправило `OPEN`; ESP
+  записала `BLE OPEN принят`, ULP подтвердил OPEN, а read-only status показал
+  `open=true`, `locked=false`. Радио, bonding и передача команды работают.
+- Дальше сервис регулярно фиксировал `AUTO_OPEN_SUPPRESSED` при RSSI выше
+  порога с причиной `nativeOpenSent=true`. Это ограничение «один OPEN за
+  присутствие»: после одной отправки native auto-connect не посылает повторный
+  OPEN, пока его логика не подтвердит departure/re-arm. Поэтому при текущем
+  присутствии замок остаётся без новой команды открытия.
+- Логи ESP дополнительно зафиксировали `AUTO_OFF_CLOSE`, после которого замок
+  стал `LOCKED`. Кнопка AUTO — переключатель режима: повторное нажатие активной
+  AUTO вызывает `setAutomaticMode(false)` и отправляет `AUTO_OFF_CLOSE`; это не
+  кнопка разового открытия.
+- Для наблюдения за причиной добавлен редкий (не чаще раза в 5 секунд) лог
+  `AUTO_OPEN_SUPPRESSED` с конкретным блокирующим флагом. Финальная диагностика
+  не меняла BLE/lock алгоритм. `gradlew test` и `build-android.ps1` прошли;
+  диагностическая сборка 101 установлена, ориентация экрана восстановлена `0/0`.
+- Исправление: сервис помечает присутствие обработанным только при успешной
+  записи конкретной команды `OPEN`; успешные GATT writes режимных команд и
+  `AUTO_OFF_CLOSE` больше не устанавливают этот флаг. Повторный цикл разрешается
+  после реальной последовательности `LOCK_STATUS=OPEN`, затем `LOCKED`; один
+  старый `LOCKED` не сбрасывает guard. При подтверждённом цикле сбрасывается
+  также native auto-connect latch репозитория. Добавлены unit tests gate-а.
+  Проверки `gradlew test` (debug/release) и `build-android.ps1` успешны; сборка
+  103 установлена на Xiaomi, настройки ориентации восстановлены `0/0`. Live
+  logcat после установки подтвердил `AUTO_OPEN_REARMED`, затем новый
+  `AUTO_OPEN_RSSI_THRESHOLD_REACHED`; read-only status в коротком окне оставался
+  `OPEN`, ошибок AndroidRuntime не обнаружено.
+
+## Подтверждённое состояние двух mode-кнопок — 28.09.2026
+
+- Baseline `build-android.ps1` до изменения прошёл (`assembleDebug`). До
+  переработки `MainActivity` параллельно reducer-у хранила шесть mutable-флагов;
+  `onLockData()` завершал любой pending по любому известному статусу, click
+  handler менял локальный state AUTO, а GATT write переводил repository в
+  `OPEN_SENT` до последующего чтения `LOCK_STATUS`.
+- Теперь единственный state кнопок — `WorkingModeState` в reducer-е:
+  `confirmedLockMode` меняется только по `LOCK_STATUS` (`OPEN_HOLD` →
+  `ALWAYS_OPEN`; `OPEN`/`LOCKED` → `AUTO`), состояние автоматического сервиса
+  отдельно подтверждается binder snapshot или `ACTION_AUTOMATIC_MODE`, а
+  пользовательский запрос хранится как `transition`.
+- `AUTO` selected вычисляется из подтверждённых `AUTO` + service active;
+  `Always Open` selected — только из подтверждённого `OPEN_HOLD`. Pending не
+  скрывает последнее подтверждённое выделение и блокирует повторные клики.
+  GATT success и `OPEN_SENT` сами по себе reducer-у подтверждение не дают.
+- Переход в Always Open завершается только `OPEN_HOLD`; переход в AUTO — только
+  `OPEN`/`LOCKED`, затем при необходимости ожидается фактический запуск сервиса.
+  Неподходящий или неизвестный статус не завершает переход. Timeout очищает
+  только pending и запрашивает status; disconnect очищает pending и переводит
+  режим замка в `UNKNOWN`. Ошибка записи сохраняет последнюю подтверждённую
+  индикацию.
+- Bind синхронизирует состояние из `LocalBinder.automaticModeActive`; кэш
+  статуса замка выдаётся Activity только при активном `READY` GATT-соединении.
+- Добавлены reducer-тесты для unknown/READY, обеих последовательностей
+  переключения, отключения AUTO, отказа записи, timeout, disconnect,
+  несовместимых stale status, повторных событий и позднего timeout.
+- Проверки после изменения: `gradlew test` — PASS; `build-android.ps1`
+  (`assembleDebug`) — PASS. Debug APK установлен на Xiaomi 2510DRA23E;
+  `accelerometer_rotation` и `user_rotation` до/после установки — `0/0`.
+
 ## Непрерывный активный scan до обнаружения замка — 28.09.2026
 
 - Baseline `build-android.ps1` до изменения прошёл (`assembleDebug`).
