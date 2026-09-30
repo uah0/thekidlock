@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 #include "esp_timer.h"
 #include "event_log.h"
+#include "app_config.h"
 
 extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
 extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
@@ -26,6 +27,22 @@ static SemaphoreHandle_t s_calibration_mutex;
 static esp_timer_handle_t s_calibration_timer;
 static int64_t s_calibration_deadline_us;
 static uint32_t s_calibration_timeout_count;
+static uint8_t s_sense_gpio = APP_DEFAULT_SHUNT_GPIO;
+static adc_channel_t s_sense_adc_channel = ADC_SENSE_CHANNEL_DEFAULT;
+
+static bool shunt_gpio_to_adc_channel(uint8_t gpio, adc_channel_t *channel)
+{
+    if (!channel) return false;
+    switch (gpio) {
+        case 1: *channel = ADC_CHANNEL_0; return true;
+        case 2: *channel = ADC_CHANNEL_1; return true;
+        case 4: *channel = ADC_CHANNEL_3; return true;
+        case 6: *channel = ADC_CHANNEL_5; return true;
+        case 7: *channel = ADC_CHANNEL_6; return true;
+        case 10: *channel = ADC_CHANNEL_9; return true;
+        default: return false;
+    }
+}
 
 /* Caller owns calibration mutex. This does not write the command mailbox. */
 static void calibration_end(void)
@@ -63,7 +80,13 @@ static void load_calibration(void)
     nvs_handle_t nvs = 0;
     if (nvs_open(ULP_CAL_NS, NVS_READONLY, &nvs) != ESP_OK) return;
     int32_t contact = -1, paper1 = -1, paper2 = -1, open = -1, verify = -1;
-    if (nvs_get_i32(nvs, "contact", &contact) == ESP_OK &&
+    uint8_t calibration_gpio = APP_DEFAULT_SHUNT_GPIO;
+    const esp_err_t gpio_err = nvs_get_u8(nvs, "gpio", &calibration_gpio);
+    const bool calibration_matches_gpio = gpio_err == ESP_OK
+        ? calibration_gpio == s_sense_gpio
+        : s_sense_gpio == APP_DEFAULT_SHUNT_GPIO;
+    if (calibration_matches_gpio &&
+        nvs_get_i32(nvs, "contact", &contact) == ESP_OK &&
         nvs_get_i32(nvs, "paper1", &paper1) == ESP_OK &&
         nvs_get_i32(nvs, "paper2", &paper2) == ESP_OK &&
         nvs_get_i32(nvs, "open", &open) == ESP_OK &&
@@ -94,6 +117,19 @@ static esp_err_t init_gate(void)
 
 static esp_err_t init_adc(void)
 {
+    app_config_t app_cfg;
+    app_config_get(&app_cfg);
+    adc_channel_t sense_channel;
+    if (!app_config_shunt_gpio_valid(app_cfg.shunt_gpio) ||
+        !shunt_gpio_to_adc_channel(app_cfg.shunt_gpio, &sense_channel)) {
+        app_cfg.shunt_gpio = APP_DEFAULT_SHUNT_GPIO;
+        if (!shunt_gpio_to_adc_channel(app_cfg.shunt_gpio, &sense_channel)) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    s_sense_gpio = app_cfg.shunt_gpio;
+    s_sense_adc_channel = sense_channel;
+
     adc_oneshot_unit_handle_t adc;
     adc_oneshot_unit_init_cfg_t unit_cfg = {
         .unit_id = ADC_UNIT_1,
@@ -106,12 +142,12 @@ static esp_err_t init_adc(void)
         .atten = ADC_ATTEN_DB_12,
         .bitwidth = ADC_BITWIDTH_DEFAULT,
     };
-    err = adc_oneshot_config_channel(adc, ADC_SENSE_CHANNEL, &cfg);
+    err = adc_oneshot_config_channel(adc, s_sense_adc_channel, &cfg);
     if (err != ESP_OK) return err;
     err = adc_oneshot_config_channel(adc, ADC_VBAT_CHANNEL, &cfg);
     if (err != ESP_OK) return err;
 
-    adc_oneshot_ll_set_atten(ADC_UNIT_1, ADC_SENSE_CHANNEL, ADC_ATTEN_DB_12);
+    adc_oneshot_ll_set_atten(ADC_UNIT_1, s_sense_adc_channel, ADC_ATTEN_DB_12);
     adc_oneshot_ll_set_atten(ADC_UNIT_1, ADC_VBAT_CHANNEL, ADC_ATTEN_DB_12);
     adc_set_hw_calibration_code(ADC_UNIT_1, ADC_ATTEN_DB_12);
     return ESP_OK;
@@ -133,6 +169,8 @@ esp_err_t ulp_controller_init(void)
     err = ulp_riscv_load_binary(ulp_main_bin_start,
                                 ulp_main_bin_end - ulp_main_bin_start);
     if (err != ESP_OK) return err;
+
+    ulp_sense_adc_channel = s_sense_adc_channel;
 
     ulp_sequence = 0;
     ulp_baseline_raw = -1;
@@ -200,6 +238,7 @@ esp_err_t ulp_controller_calibration_start(void)
     calibration_expire();
     if (ulp_calibration_mode) {
         xSemaphoreGive(s_calibration_mutex);
+        event_log_add("CAL start rejected: already active");
         return ESP_ERR_INVALID_STATE;
     }
     s_calibration_deadline_us = esp_timer_get_time() + ULP_CALIBRATION_TIMEOUT_US;
@@ -214,8 +253,10 @@ void ulp_controller_calibration_cancel(void)
 {
     if (!s_initialized) return;
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
+    const bool was_active = ulp_calibration_mode != 0;
     calibration_end();
     xSemaphoreGive(s_calibration_mutex);
+    event_log_add("CAL session ended active=%u", (unsigned)was_active);
 }
 
 esp_err_t ulp_controller_calibration_verify(void)
@@ -228,7 +269,11 @@ esp_err_t ulp_controller_calibration_verify(void)
         ulp_calibration_verify_request = 1;
         err = ESP_OK;
     }
+    const unsigned active = (unsigned)ulp_calibration_mode;
+    const unsigned busy = (unsigned)ulp_calibration_verify_request;
     xSemaphoreGive(s_calibration_mutex);
+    event_log_add("CAL verify request result=%s active=%u busy=%u",
+                  esp_err_to_name(err), active, busy);
     return err;
 }
 
@@ -241,12 +286,18 @@ esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
         (int64_t)paper1_raw + ((int64_t)paper1_raw - contact_raw);
     if (!s_initialized || contact_raw < 0 || paper1_raw <= contact_raw ||
         paper2_calculated > 4095 || open_raw <= paper2_calculated || open_raw > 4095 ||
-        verify_contact_raw < 0 || verify_contact_raw > 4095) return ESP_ERR_INVALID_ARG;
+        verify_contact_raw < 0 || verify_contact_raw > 4095) {
+        event_log_add("CAL save rejected contact=%ld paper=%ld open=%ld verify=%ld",
+                      (long)contact_raw, (long)paper1_raw, (long)open_raw,
+                      (long)verify_contact_raw);
+        return ESP_ERR_INVALID_ARG;
+    }
     const int32_t paper2_raw = (int32_t)paper2_calculated;
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
     calibration_expire();
     if (!ulp_calibration_mode) {
         xSemaphoreGive(s_calibration_mutex);
+        event_log_add("CAL save rejected: session inactive");
         return ESP_ERR_INVALID_STATE;
     }
     nvs_handle_t nvs = 0;
@@ -256,10 +307,12 @@ esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
     if (err == ESP_OK) err = nvs_set_i32(nvs, "paper2", paper2_raw);
     if (err == ESP_OK) err = nvs_set_i32(nvs, "open", open_raw);
     if (err == ESP_OK) err = nvs_set_i32(nvs, "verify", verify_contact_raw);
+    if (err == ESP_OK) err = nvs_set_u8(nvs, "gpio", s_sense_gpio);
     if (err == ESP_OK) err = nvs_commit(nvs);
     if (nvs) nvs_close(nvs);
     if (err != ESP_OK) {
         xSemaphoreGive(s_calibration_mutex);
+        event_log_add("CAL save failed: %s", esp_err_to_name(err));
         return err;
     }
     ulp_calibration_contact_raw = contact_raw;
@@ -269,6 +322,9 @@ esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
     ulp_calibration_verify_contact_raw = verify_contact_raw;
     calibration_end();
     xSemaphoreGive(s_calibration_mutex);
+    event_log_add("CAL saved contact=%ld paper=%ld open=%ld verify=%ld",
+                  (long)contact_raw, (long)paper1_raw, (long)open_raw,
+                  (long)verify_contact_raw);
     return ESP_OK;
 }
 
@@ -276,7 +332,8 @@ static esp_err_t request_command(ulp_command_t requested, uint32_t *issued)
 {
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     if (requested != ULP_CMD_LOCK && requested != ULP_CMD_UNLOCK &&
-        requested != ULP_CMD_HOLD_OPEN) return ESP_ERR_INVALID_ARG;
+        requested != ULP_CMD_HOLD_OPEN && requested != ULP_CMD_GATE_TEST)
+        return ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&s_command_lock);
     if (ulp_command_sequence != ulp_command_ack_sequence ||
         ulp_close_reject_latched) {
@@ -302,6 +359,11 @@ esp_err_t ulp_controller_request(ulp_command_t requested)
 esp_err_t ulp_controller_request_wait(ulp_command_t requested)
 {
     if (ulp_calibration_mode) return ESP_ERR_INVALID_STATE;
+    if (requested == ULP_CMD_GATE_TEST &&
+        (ulp_lock_state != LOCK_STATE_UNLOCKED ||
+         ulp_fsm_state != LOCK_FSM_OPEN_HOLD || ulp_gate_level)) {
+        return ESP_ERR_INVALID_STATE;
+    }
     uint32_t issued;
     esp_err_t err = request_command(requested, &issued);
     if (err != ESP_OK) return err;

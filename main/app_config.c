@@ -21,6 +21,7 @@ static void set_defaults(void)
     s_cfg.timer_a_ms = APP_DEFAULT_TIMER_A_MS;
     s_cfg.timer_b_s = APP_DEFAULT_TIMER_B_S;
     s_cfg.zone_exit_grace_ms = APP_DEFAULT_ZONE_EXIT_GRACE_MS;
+    s_cfg.shunt_gpio = APP_DEFAULT_SHUNT_GPIO;
     s_cfg.configuration_mode = false;
 }
 
@@ -47,11 +48,13 @@ esp_err_t app_config_init(void)
     uint32_t timer_a_ms = s_cfg.timer_a_ms;
     uint32_t timer_b_s = s_cfg.timer_b_s;
     uint32_t zone_exit_grace_ms = s_cfg.zone_exit_grace_ms;
+    uint8_t shunt_gpio = s_cfg.shunt_gpio;
     nvs_get_i8(h, "phone_rssi", &phone_rssi);
     nvs_get_i8(h, "ble_tx_power", &ble_tx_power_dbm);
     nvs_get_u32(h, "timer_a_ms", &timer_a_ms);
     nvs_get_u32(h, "timer_b_s", &timer_b_s);
     nvs_get_u32(h, "zone_exit_ms", &zone_exit_grace_ms);
+    nvs_get_u8(h, "shunt_gpio", &shunt_gpio);
     nvs_close(h);
 
     nvs_handle_t cleanup;
@@ -81,6 +84,7 @@ esp_err_t app_config_init(void)
             s_cfg.zone_exit_grace_ms = zone_exit_grace_ms;
         }
     }
+    if (app_config_shunt_gpio_valid(shunt_gpio)) s_cfg.shunt_gpio = shunt_gpio;
     return ESP_OK;
 }
 
@@ -172,6 +176,27 @@ esp_err_t app_config_set_zone_exit_grace_ms(uint32_t grace_ms)
     if (err == ESP_OK) err = nvs_commit(h);
     if (h) nvs_close(h);
     if (err == ESP_OK) s_cfg.zone_exit_grace_ms = grace_ms;
+    xSemaphoreGive(s_config_mutex);
+    return err;
+}
+
+bool app_config_shunt_gpio_valid(uint32_t gpio)
+{
+    return gpio == 1 || gpio == 2 || gpio == 4 || gpio == 6 ||
+           gpio == 7 || gpio == 10;
+}
+
+esp_err_t app_config_set_shunt_gpio(uint8_t gpio)
+{
+    if (!app_config_shunt_gpio_valid(gpio)) return ESP_ERR_INVALID_ARG;
+    if (!s_config_mutex) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_config_mutex, portMAX_DELAY);
+    nvs_handle_t h = 0;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) err = nvs_set_u8(h, "shunt_gpio", gpio);
+    if (err == ESP_OK) err = nvs_commit(h);
+    if (h) nvs_close(h);
+    if (err == ESP_OK) s_cfg.shunt_gpio = gpio;
     xSemaphoreGive(s_config_mutex);
     return err;
 }

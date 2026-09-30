@@ -6,7 +6,7 @@
 
 // Existing hardware mapping; these are RTC-capable on ESP32-S3.
 #define LOCK_GATE_GPIO       9
-#define ADC_SENSE_CHANNEL    6  // GPIO7 -> ADC1_CH6
+#define ADC_SENSE_CHANNEL_DEFAULT 6  // GPIO7 -> ADC1_CH6
 #define ADC_VBAT_CHANNEL     4  // GPIO5 -> ADC1_CH4
 
 #define ULP_MEASURE_PERIOD_US ULP_EXPERIMENT_PERIOD_US
@@ -17,6 +17,9 @@
 #define ULP_ADC_SETTLE_US     100U
 #define ULP_CLOSE_VERIFY_OFF_GUARD_US 100000U
 #define ULP_CLOSE_ENERGIZE_US 300000U
+#define ULP_GATE_TEST_DURATION_US 5000000U
+#define ULP_GATE_TEST_TICKS \
+    ((ULP_GATE_TEST_DURATION_US + ULP_MEASURE_PERIOD_US - 1U) / ULP_MEASURE_PERIOD_US)
 #define ULP_COIL_OFF_MAX_RAW 80U
 #define ULP_DIAG_MIN_DELTA_RAW 40U
 #define ULP_FAULT_RETRY_LIMIT 3U
@@ -82,6 +85,7 @@ typedef enum {
     ULP_CMD_UNLOCK = 0,
     ULP_CMD_LOCK = 1,
     ULP_CMD_HOLD_OPEN = 2,
+    ULP_CMD_GATE_TEST = 3,
 } ulp_command_t;
 
 #define ULP_CMD_OPEN  ULP_CMD_UNLOCK
@@ -104,6 +108,7 @@ typedef enum {
     LOCK_FSM_OPEN_VERIFY_CURRENT_OFF = 6,
     LOCK_FSM_FAULT = 7,
     LOCK_FSM_OPEN_HOLD = 8,
+    LOCK_FSM_GATE_TEST = 9,
 } lock_fsm_state_t;
 
 enum {
@@ -132,6 +137,7 @@ extern volatile uint32_t sequence;
 extern volatile int32_t baseline_raw;
 extern volatile int32_t vbat_raw;
 extern volatile int32_t sense_raw;
+extern volatile uint32_t sense_adc_channel;
 extern volatile int32_t delta_raw;
 extern volatile uint32_t normalized_feature;
 extern volatile uint32_t plate_state;

@@ -10,6 +10,7 @@ volatile uint32_t sequence = 0;
 volatile int32_t baseline_raw = -1;
 volatile int32_t vbat_raw = -1;
 volatile int32_t sense_raw = -1;
+volatile uint32_t sense_adc_channel = ADC_SENSE_CHANNEL_DEFAULT;
 volatile int32_t delta_raw = -1;
 volatile uint32_t normalized_feature = 0;
 volatile uint32_t plate_state = PLATE_UNKNOWN;
@@ -52,6 +53,14 @@ static uint32_t accepted_command_sequence = 0;
 static uint32_t active_command = ULP_CMD_UNLOCK;
 static uint8_t close_verify_mode = 0;
 static uint32_t fault_retry_wait_us;
+static uint32_t gate_test_ticks;
+static uint32_t active_sense_adc_channel = ADC_SENSE_CHANNEL_DEFAULT;
+
+static bool sense_adc_channel_valid(uint32_t channel)
+{
+    return channel == 0 || channel == 1 || channel == 3 ||
+           channel == 5 || channel == 6 || channel == 9;
+}
 
 static int32_t adc_read_channel(int channel)
 {
@@ -176,6 +185,9 @@ static uint32_t read_command(void)
         active_command = requested;
         fault_retry_count = 0;
         fault_retry_wait_us = 0;
+        if (requested == ULP_CMD_GATE_TEST) {
+            gate_test_ticks = ULP_GATE_TEST_TICKS;
+        }
         command_ack_sequence = before;
         if (requested != ULP_CMD_LOCK && lock_state == LOCK_STATE_FAULT) {
             fault_flags = 0;
@@ -198,7 +210,7 @@ static uint32_t measure_plate(void)
         ? ULP_CLOSE_VERIFY_OFF_GUARD_US : ULP_OFF_GUARD_US;
     ulp_riscv_delay_cycles(off_guard_us * ULP_RISCV_CYCLES_PER_US);
 
-    int32_t local_baseline = adc_average(ADC_SENSE_CHANNEL, ULP_BASELINE_SAMPLES);
+    int32_t local_baseline = adc_average((int)active_sense_adc_channel, ULP_BASELINE_SAMPLES);
     ulp_riscv_delay_cycles(ULP_ADC_SETTLE_US * ULP_RISCV_CYCLES_PER_US);
     (void)adc_read_channel(ADC_VBAT_CHANNEL);
     int32_t local_vbat = adc_average(ADC_VBAT_CHANNEL, ULP_VBAT_SAMPLES);
@@ -206,7 +218,7 @@ static uint32_t measure_plate(void)
     if (local_baseline < 0) faults |= ULP_FAULT_ADC_INVALID;
 
     ulp_riscv_delay_cycles(ULP_ADC_SETTLE_US * ULP_RISCV_CYCLES_PER_US);
-    if (adc_read_channel(ADC_SENSE_CHANNEL) < 0) faults |= ULP_FAULT_SENSE_INVALID;
+    if (adc_read_channel((int)active_sense_adc_channel) < 0) faults |= ULP_FAULT_SENSE_INVALID;
 
     int32_t local_sense = -1;
     int32_t local_delta = -1;
@@ -215,7 +227,7 @@ static uint32_t measure_plate(void)
     if (faults == 0) {
         gate_high();
         ulp_riscv_delay_cycles(ULP_PULSE_US * ULP_RISCV_CYCLES_PER_US);
-        local_sense = adc_read_channel(ADC_SENSE_CHANNEL);
+        local_sense = adc_read_channel((int)active_sense_adc_channel);
         gate_low();
         if (local_sense < 0) {
             faults |= ULP_FAULT_SENSE_INVALID;
@@ -341,7 +353,7 @@ static void open_from_locked(bool scan_after_open)
     gate_low();
     ulp_riscv_delay_cycles(ULP_OFF_GUARD_US * ULP_RISCV_CYCLES_PER_US);
     fsm_state = LOCK_FSM_OPEN_VERIFY_CURRENT_OFF;
-    const int32_t residual = adc_average(ADC_SENSE_CHANNEL, ULP_BASELINE_SAMPLES);
+    const int32_t residual = adc_average((int)active_sense_adc_channel, ULP_BASELINE_SAMPLES);
     coil_current_raw = residual < 0 ? 0 : (uint32_t)residual;
     if (residual < 0 || (uint32_t)residual > ULP_COIL_OFF_MAX_RAW) {
         enter_fault(ULP_FAULT_COIL_SHORT, ULP_EVENT_OPEN_FAILED);
@@ -379,6 +391,40 @@ static int run_iteration(void)
         return 0;
     }
     const uint32_t requested_command = read_command();
+
+    if (requested_command == ULP_CMD_GATE_TEST && gate_test_ticks > 0) {
+        gate_high();
+        lock_state = LOCK_STATE_UNLOCKED;
+        fsm_state = LOCK_FSM_GATE_TEST;
+        plate_state = PLATE_UNKNOWN;
+        normalized_feature = 0;
+        pulse_actual_us = 0;
+        ulp_riscv_delay_cycles(ULP_ADC_SETTLE_US * ULP_RISCV_CYCLES_PER_US);
+        const int32_t first_sample = adc_read_channel((int)active_sense_adc_channel);
+        int32_t sum = 0;
+        bool burst_valid = first_sample >= 0;
+        for (uint32_t i = 0; i < 8; i++) {
+            ulp_riscv_delay_cycles(ULP_ADC_SETTLE_US * ULP_RISCV_CYCLES_PER_US);
+            const int32_t sample = adc_read_channel((int)active_sense_adc_channel);
+            if (sample < 0) {
+                burst_valid = false;
+                break;
+            }
+            sum += sample;
+        }
+        baseline_raw = first_sample;
+        sense_raw = burst_valid ? sum / 8 : -1;
+        delta_raw = burst_valid ? sense_raw - first_sample : -1;
+        measurement_counter++;
+        gate_test_ticks--;
+        if (gate_test_ticks == 0) {
+            gate_low();
+            active_command = ULP_CMD_HOLD_OPEN;
+            lock_state = LOCK_STATE_UNLOCKED;
+            fsm_state = LOCK_FSM_OPEN_HOLD;
+        }
+        return 0;
+    }
 
     if (requested_command == ULP_CMD_LOCK) {
         if (lock_state == LOCK_STATE_FAULT) {
@@ -460,6 +506,13 @@ int main(void)
 {
     sequence++;
     __sync_synchronize();
+    const uint32_t requested_sense_channel = sense_adc_channel;
+    if (sense_adc_channel_valid(requested_sense_channel)) {
+        if (active_sense_adc_channel != requested_sense_channel) {
+            active_sense_adc_channel = requested_sense_channel;
+            last_state = PLATE_UNKNOWN;
+        }
+    }
     int result = run_iteration();
     __sync_synchronize();
     sequence++;

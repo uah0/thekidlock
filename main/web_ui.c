@@ -68,7 +68,7 @@ static esp_err_t calibration_get(httpd_req_t *req)
 
 static esp_err_t ulp_calibration_post(httpd_req_t *req)
 {
-    char query[192] = {0}, action[16] = {0};
+    char query[256] = {0}, action[16] = {0};
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "action", action, sizeof(action)) != ESP_OK) {
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing action");
@@ -79,7 +79,25 @@ static esp_err_t ulp_calibration_post(httpd_req_t *req)
                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     }
     if (strcmp(action, "cancel") == 0) {
+        char source[16] = "unknown";
+        (void)httpd_query_key_value(query, "source", source, sizeof(source));
+        event_log_add("CAL cancel source=%s", source);
         ulp_controller_calibration_cancel();
+        return send_json(req, "{\"ok\":true}");
+    }
+    if (strcmp(action, "trace") == 0) {
+        char step[12] = {0}, event[20] = {0}, data[48] = {0};
+        if (httpd_query_key_value(query, "step", step, sizeof(step)) != ESP_OK ||
+            httpd_query_key_value(query, "event", event, sizeof(event)) != ESP_OK) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing trace fields");
+        }
+        (void)httpd_query_key_value(query, "data", data, sizeof(data));
+        if (strspn(step, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != strlen(step) ||
+            strspn(event, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != strlen(event) ||
+            strspn(data, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-=,. ") != strlen(data)) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid trace characters");
+        }
+        event_log_add("CAL step=%s event=%s %s", step, event, data);
         return send_json(req, "{\"ok\":true}");
     }
     if (strcmp(action, "verify") == 0) {
@@ -93,6 +111,7 @@ static esp_err_t ulp_calibration_post(httpd_req_t *req)
             httpd_query_key_value(query, "paper1", paper1, sizeof(paper1)) != ESP_OK ||
             httpd_query_key_value(query, "open", open, sizeof(open)) != ESP_OK ||
             httpd_query_key_value(query, "verify", verify, sizeof(verify)) != ESP_OK) {
+            event_log_add("CAL save rejected: missing points");
             return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing calibration points");
         }
         const char *points[] = {contact, paper1, open, verify};
@@ -101,8 +120,10 @@ static esp_err_t ulp_calibration_post(httpd_req_t *req)
             char *end;
             errno = 0;
             long value = strtol(points[i], &end, 10);
-            if (errno || end == points[i] || *end || value < 0 || value > 4095)
+            if (errno || end == points[i] || *end || value < 0 || value > 4095) {
+                event_log_add("CAL save rejected: invalid point index=%d", i);
                 return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ADC points must be 0..4095");
+            }
             raw[i] = (int32_t)value;
         }
         esp_err_t err = ulp_controller_calibration_save(raw[0], raw[1], raw[2], raw[3]);
@@ -120,10 +141,12 @@ static esp_err_t config_get(httpd_req_t *req)
     snprintf(json, sizeof(json),
              "{\"phone_rssi_threshold\":%d,"
              "\"ble_tx_power_dbm\":%d,"
+             "\"shunt_gpio\":%u,"
              "\"timer_a_ms\":%lu,\"timer_b_s\":%lu,"
              "\"zone_exit_grace_ms\":%lu}",
              cfg.phone_rssi_threshold,
              cfg.ble_tx_power_dbm,
+             cfg.shunt_gpio,
              (unsigned long)cfg.timer_a_ms, (unsigned long)cfg.timer_b_s,
              (unsigned long)cfg.zone_exit_grace_ms);
     return send_json(req, json);
@@ -131,7 +154,7 @@ static esp_err_t config_get(httpd_req_t *req)
 
 static esp_err_t config_post(httpd_req_t *req)
 {
-    char query[500], rssi[16], timer_a[16], timer_b[16], grace[16];
+    char query[500], rssi[16], timer_a[16], timer_b[16], grace[16], shunt[8];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "phone_rssi_threshold", rssi, sizeof(rssi)) != ESP_OK ||
         httpd_query_key_value(query, "timer_a_ms", timer_a, sizeof(timer_a)) != ESP_OK ||
@@ -142,6 +165,15 @@ static esp_err_t config_post(httpd_req_t *req)
     app_config_t current;
     app_config_get(&current);
     uint32_t grace_ms = current.zone_exit_grace_ms;
+    uint32_t shunt_gpio = current.shunt_gpio;
+    if (httpd_query_key_value(query, "shunt_gpio", shunt, sizeof(shunt)) == ESP_OK) {
+        char *end = NULL;
+        unsigned long parsed = strtoul(shunt, &end, 10);
+        if (end == shunt || *end != '\0' || !app_config_shunt_gpio_valid(parsed)) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid shunt_gpio");
+        }
+        shunt_gpio = (uint32_t)parsed;
+    }
     if (httpd_query_key_value(query, "zone_exit_grace_ms", grace, sizeof(grace)) == ESP_OK) {
         char *end = NULL;
         unsigned long parsed = strtoul(grace, &end, 10);
@@ -150,8 +182,8 @@ static esp_err_t config_post(httpd_req_t *req)
         }
         grace_ms = (uint32_t)parsed;
     }
-    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s exit_grace_ms=%lu A=%s B=%s",
-             rssi, (unsigned long)grace_ms, timer_a, timer_b);
+    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s exit_grace_ms=%lu shunt_gpio=%lu A=%s B=%s",
+             rssi, (unsigned long)grace_ms, (unsigned long)shunt_gpio, timer_a, timer_b);
     esp_err_t err = app_config_set_logic(atoi(rssi),
                                          strtoul(timer_a, NULL, 10),
                                          strtoul(timer_b, NULL, 10));
@@ -162,6 +194,11 @@ static esp_err_t config_post(httpd_req_t *req)
     err = app_config_set_zone_exit_grace_ms(grace_ms);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: не удалось сохранить zone_exit_grace_ms: %s", esp_err_to_name(err));
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
+    }
+    err = app_config_set_shunt_gpio((uint8_t)shunt_gpio);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Настройки замка: не удалось сохранить shunt_gpio: %s", esp_err_to_name(err));
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
     }
     ESP_LOGI(TAG, "Настройки замка: NVS запись успешна, HTTP 200");

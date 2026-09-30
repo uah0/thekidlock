@@ -1,5 +1,34 @@
 # Отчёт о проверках
 
+## Диагностика GPIO7 при включённом MOSFET — 30.09.2026
+
+- Baseline до правок прошёл (`build-esp32.ps1`, build 235); baseline образ не
+  загружался. Первая итоговая сборка 235 выявила только избыточно строгую
+  проверку исходного уровня GPIO9 до включения. После её исправления повторная
+  сборка `build-esp32.ps1` — PASS, build 236, image 0x1472e0,
+  32% OTA app partition свободно.
+- Добавлен ограниченный 5-секундный тест GPIO9/GPIO7 с raw-сэмплом каждые
+  40 мс и автоматическим выключением. Первая команда с 10.0.235 безопасно
+  отклонилась при проверке исходного уровня GPIO9; после исправления guard
+  финальная версия 10.0.236 успешно установлена OTA. Agent подтвердил тот же
+  device_id `a0:f2:62:f1:14:b8`, переход firmware `10.0.235 → 10.0.236` и
+  новый boot_id.
+- Из `OPEN_HOLD` диагностическая команда принята. ULP показал FSM
+  `Диагностика GPIO7: MOSFET включён`, обновил 19 raw-сэмплов за время захвата;
+  GPIO7: min=55, max=68, среднее=59.7. По истечении 5 секунд FSM вернулся в
+  `OPEN_HOLD`; после теста lock status остался `CALIBRATION_REQUIRED`,
+  `fault_flags=0`. Захват: `artifacts/gpio7-gate-test-20260930.jsonl`.
+- Пользователь подтвердил измерение 2.08 В щупом непосредственно на GPIO7
+  относительно общего GND ESP32. Сборка 10.0.237 прошла (`build-esp32.ps1`,
+  image 0x147340, 32% OTA-раздела свободно); OTA с 10.0.236 подтверждён на
+  том же device_id `a0:f2:62:f1:14:b8`.
+- Во время активного FSM `GATE_TEST` burst дал первое чтение GPIO7 56–63 raw,
+  среднее восьми чтений через 100 мкс — 22–34 raw, разность от -24 до -40.
+  Значит, многократное чтение не поднимает результат к ожидаемому для 2.08 В
+  уровню. Тест завершился автоматическим возвратом в `OPEN_HOLD`; версия
+  `10.0.237`, `fault_flags=0`, lock остался открыт. Данные захвата:
+  `artifacts/gpio7-gate-burst-20260930.json`.
+
 ## Android: закрытие при выходе из Always Open — 28.09.2026
 
 - ESP baseline `build-esp32.ps1` до изменений кода — PASS, build 225; прошивка
@@ -4384,3 +4413,120 @@ SC-only=1. Телефон несколько раз подключался ка�
 - Базовая сборка до изменений: PASS. Итоговая `build-android.ps1`: PASS.
 - Кнопка «Настройки» отображается/активируется при наличии разрешений по проверенной логике кода.
 - Установить APK и проверить UI на телефоне не удалось: ADB-устройство `192.168.1.65:41865` отключилось и стало offline. Установочная команда прервана; параметры ориентации не изменены.
+
+# 2026-09-28 — кнопка владельца и звук рекламного пакета
+
+- Baseline `build-android.ps1` до правок: PASS.
+- На телефоне `owner_access_confirmed=true`, AUTO selected, mode buttons enabled, Settings отсутствовали; это подтвердило ошибку условий видимости.
+- Изменены условия рендера кнопки Settings и добавлен однократный тон на первый BLE advertising-пакет в departure scan.
+- После изменений сборка и установка ещё не выполнены.
+- Итоговая `build-android.ps1`: PASS (`assembleDebug`). Один промежуточный запуск завершился ошибкой из-за локального UUID-фильтра, ошибочно удалённого у отдельного RSSI scan; фильтр восстановлен, итоговая сборка успешна.
+- APK установлен на подключённый Xiaomi; ориентация до/после `accelerometer_rotation=1`, `user_rotation=0` совпадает.
+- Телефон был на экране блокировки: визуально проверить кнопку после установки не удалось. `owner_access_confirmed=true`; журнал после установки показывает старт native auto-connect.
+- Сценарий реального выхода из зоны и звук физически не проверялись. Код принимает departure advertisements без аппаратного UUID-фильтра, проверяет UUID в callback и подаёт один звук на первый пакет каждого цикла.
+## 2026-09-28 — фоновый BLE сигнал
+
+Baseline build-android.ps1 до изменений: PASS. Итоговая build-android.ps1: PASS (assembleDebug).
+Телефон продолжал получать BLE advertisement callbacks при погашенном экране. Установка нового APK и физическая проверка слышимости ещё не выполнены.
+
+Дополнение к проверке: после первой установки тестовый экран был переведён в Dozing. В последующем интервале видны повторяющиеся native GATT connect/disconnect, но новый BLE advertisement scan callback отсутствовал; ранее зарегистрированный ToneGenerator стартовал только при screenOn=true. Добавлен единоразовый tone на первый native GATT_CONNECTED за присутствие. Итоговая сборка после этого изменения: PASS; повторная установка выполняется.
+
+## 2026-09-28 — итог screen-off теста
+
+Финальная сборка `build-android.ps1`: PASS; APK установлен на телефон. Ориентация до/после: `accelerometer_rotation=0`, `user_rotation=0`.
+При `mWakefulness=Dozing` журнал зафиксировал native auto-connect, `Advertisement tone started=true screenOn=false`, затем своевременное ACQ/REL для `BleLock:AdvertisementTone`. Значит приложение успешно передало тон на воспроизведение при выключенном экране. Физически услышать звук через ADB невозможно.
+## 2026-09-29 — причина отсутствия звука
+
+На телефоне DND выключен, громкость ring/notification/alarm = 8/15, streams не muted. Журнал показывает GATT churn с `status=19`, но не показывает scan callback или запрос воспроизведения тона.
+Сверка SHA-256 подтвердила, что установленный APK был идентичен обычной старой сборке и не содержал кода из папки v2. APK из v2 исходников пересобран успешно (`assembleDebug`, SHA-256 `986B5530…907306`).
+Повторная установка/проверка на телефоне не состоялась: телефон исчез из `adb devices`, mDNS не обнаружил его, ping `192.168.1.65` не прошёл.
+
+## 2026-09-29 — фактическая проверка звука при блокировке Xiaomi
+- Проверяется android_lock_beacon_fixed_ble_tone_v2. После исправления повторных регистраций сканера сборка debug и Gradle test успешны: 29 тестов на вариант debug/release, 58 выполнений, без ошибок.
+- APK установлен через ADB; accelerometer_rotation/user_rotation сохранены и восстановлены 0/0. Пользователь подтвердил слышимость при включённом экране и отсутствие звука при выключенном.
+- В 01:49:06 системный BtGatt.ScanManager при SCREEN_OFF приостановил сканер com.blelock.app. До этого получены реальные advertising callbacks и AudioTrack playState=3. После блокировки продолжаются GATT RSSI callbacks, рекламные callbacks прекращаются.
+- Фильтры UUID и адреса действительно переданы: это зафиксировано ScanController. Проверка Bluetooth.apk с текущего телефона показала дополнительную политику Xiaomi handleScreenOff: при включённой cloud scan policy приостанавливаются сторонние сканеры независимо от наличия фильтров. В Deep Doze отдельный запрет также блокирует сканирование; журнал: "is Deep Doze, non-system software won't start scan!". Приложение уже присутствует в deviceidle whitelist.
+- Артефакты: artifacts/ble-tone-20260929/system-current.log, after.log, after-screen-off.log, XiaomiScanManager.java, deviceidle.txt. Декомпиляция использована только для диагностики, системное приложение не изменялось.
+- Работа звука с выключенным экраном НЕ подтверждена. Запрошено решение пользователя о резервном источнике — свежем RSSI защищённого GATT-соединения вместо реально полученной рекламы при её системной блокировке. Такой источник пока не добавлен; алгоритм открытия не менялся.
+
+### Согласованный резервный источник звука
+Пользователь разрешил резерв по действующему BLE-соединению. В ветку ожидания AUTO порога RSSI добавлен вызов звука с отдельной диагностикой source=GATT_FALLBACK: только свежий успешный RSSI, READY, действующее соединение, выключенный экран и отсутствие рекламы минимум 3 секунды. Существующие service guards запрещают этот путь при AUTO OFF, pending OPEN и после OPEN. Общий rate limit не допускает наложения advertisement/GATT сигналов. Добавлена повторная проверка актуальности GATT callback после переноса на main thread. Порог, алгоритм OPEN и firmware не изменены.
+Добавлены три unit test для screen state/threshold, отсутствия свежей рекламы, общего rate limit и reset.
+
+## 2026-09-29 — итог сборки звука и установка указанного приложения
+- Изменённая версия android_lock_beacon_fixed_ble_tone_v2: `assembleDebug` PASS и `test` PASS. Добавлены три теста резервного GATT-сигнала; всего теперь 32 теста на debug и 32 на release, ошибок 0.
+- По последнему указанию отдельно собран и установлен APK из `android_lock_beacon` (не v2): `build-android.ps1 -ProjectName android_lock_beacon` PASS, ADB install Success, установленная версия 1.0.0 / versionCode 1.
+- До установки ориентация была `accelerometer_rotation=0`, `user_rotation=0`; оба значения восстановлены и перечитаны после установки: `0/0`. Снимок сохранён в `artifacts/ble-tone-20260929/orientation-main-app-install.json`.
+- На телефон установлена именно базовая папка `android_lock_beacon`. Изменённая v2 с резервным звуковым источником в этой установке не проверялась.
+
+## 2026-09-29 — ESP32-S3 OTA firmware 10.0.226
+- `build-esp32.ps1` успешно собрал текущий проект через ESP-IDF v5.4.4; результат `build/ble_lock_stage1_s3.bin`, размер 1,336,704 байта. Build number 226.
+- Перед OTA device-agent сообщил для TheKidLock (device_id `a0:f2:62:f1:14:b8`) firmware 10.0.225. OTA через `device-agent.ps1 flash` завершён; ESP32 перезапустилась и вернулась по HTTP на `192.168.1.54` с новым boot_id.
+- Повторная проверка `device-agent snapshot` подтвердила `firmware_version=10.0.226`, `status.version=10.0.226`, BLE connected/encrypted/bonded. Снимок сохранён в `artifacts/esp32-ota-20260929.json`.
+- После прошивки датчик сообщает lock state `FAULT`, `fault_flags=0x10` (plate state unknown). Это уже состояние устройства после загрузки; дополнительных команд управления замком не отправлял.
+
+## 2026-09-29 — запрос закрытия после OTA
+Через device-agent отправлена стандартная команда `close`; HTTP Agent сообщил `accepted=true`. Проверка status после команды показывает, что фактическое состояние не изменилось: firmware 10.0.226, `FAULT`, `locked=false`, `fault_flags=16`, `close_attempt_counter=0`, `command_sequence=2`. В `main/ulp/shared_state.h` бит 0x10 соответствует `ULP_FAULT_COIL_OPEN`. Низкоуровневая прямая команда ULP_LOCK не отправлялась: при неисправности цепи катушки это обошло бы штатную защиту.
+
+## 2026-09-29 — повторная установка по COM7 и обнаруженный сбой загрузки
+Пользователь сообщил порт COM7. `Win32_SerialPort` подтвердил USB VID_303A/PID_1001, esptool распознал ESP32-S3 MAC `a0:f2:62:f1:14:b8`; полный flash по COM7 записан и SHA проверены. Сборка текущего исходного кода прошла на IDF v5.4.4 как firmware build 10.0.227.
+После hard reset UART monitor выявил повторяющийся `A stack overflow in task sys_evt` сразу после запуска WiFi; device-agent не вернулся в сети за 45 секунд. Следовательно, запись флеша прошла, но загрузка нерабочая. Аудит пути: `wifi_ota_init -> esp_event_loop_create_default -> wifi_event_handler`; текущий `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=2304`, задаваемый настройкой event loop IDF. Следующий минимальный шаг — поднять только стек system event task в профиле ESP32-S3, пересобрать, записать и проверить UART загрузку и device-agent. Не запускать direct ULP lock при fault coil.
+
+Уточнение по попытке recovery: значение 4096 было добавлено только в `sdkconfig.defaults.esp32s3`, но существующий `sdkconfig` сохранил явное `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=2304`; проверка `build/config/sdkconfig.h` подтвердила, что бинарник 10.0.228 фактически остался с 2304. Ошибка повторилась. Перед следующей сборкой необходимо согласованно изменить активный sdkconfig и defaults; после сборки сверить `build/config/sdkconfig.h` до прошивки.
+
+## 2026-09-29 — восстановление загрузки и установка ESP32 firmware 10.0.229
+- После установки build 10.0.227 COM7 журнал показал повторное переполнение sys_evt при Wi-Fi startup. Первое изменение только defaults не попало в активную конфигурацию; это было выявлено проверкой generated sdkconfig.h.
+- В `sdkconfig` и `sdkconfig.defaults.esp32s3` размер `CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE` согласованно изменён с 2304 на 4096 байт. Полная сборка ESP-IDF v5.4.4 завершилась успешно; `build/config/sdkconfig.h` подтверждает 4096; firmware build number 229.
+- Образ 10.0.229 записан на ESP32-S3 по COM7; MAC `a0:f2:62:f1:14:b8`, esptool SHA verification для bootloader/app/partition table/otadata — OK, hard reset выполнен. UART журнал `artifacts/esp32-com7-229-boot.txt` показывает старт без sys_evt stack overflow и состояние ULP `LOCKED fault=0x0`.
+- Сетевой Agent API после загрузки не восстановился: журнал показывает соединение с сохранённой сетью `Cisco` с ошибками `NO_AP_FOUND` и `AUTH_EXPIRE`. Поэтому возврат по IP и `firmware_version` непосредственно по Agent API подтвердить не удалось; версия 10.0.229 подтверждена по номеру успешно записанного текущего build, не сетевым ответом устройства.
+- До этого на COM7 был записан build 10.0.228, который повторял сбой 10.0.227, поскольку активный sdkconfig оставался на 2304 байта. Финальная проверка выполнялась уже на 10.0.229.
+
+## 2026-09-29 — сборка и установка ESP32 firmware 10.0.230
+- Проверка COM7 через esptool подтвердила ESP32-S3 MAC `a0:f2:62:f1:14:b8`.
+- `build-esp32.ps1 -Action build`: PASS, ESP-IDF v5.4.4, firmware build 230, бинарный размер 1,336,704 байта.
+- `build-esp32.ps1 -Action flash -Port COM7`: PASS; SHA verification для всех записанных областей — OK; hard reset выполнен.
+- `device-agent.ps1 info -Device http://192.168.1.54`: FAIL, Agent API не отвечает. Прямое чтение `firmware_version` после прошивки не подтверждено; записанный образ и его хеши соответствуют build 10.0.230.
+- COM7 после проверки освобождён.
+
+## 2026-09-29 — установка ESP32 firmware 10.0.231
+- Сборка проектным скриптом: PASS (ESP-IDF v5.4.4), build 231, app image 1,336,704 байта; остаток app partition 32%.
+- Полная прошивка основной платы на COM7: PASS. Идентификатор ESP32-S3 MAC `a0:f2:62:f1:14:b8`; esptool SHA verification прошёл для bootloader, app, partition table и otadata; выполнен hard reset.
+- Проверка возврата через `device-agent.ps1 info -Device http://192.168.1.54`: FAIL, Agent API не ответил. Точную `firmware_version` и запуск приложения по сети подтвердить не удалось.
+- COM7 освобождён после завершения операции.
+
+## 2026-09-30 — мастер калибровки, инструментирование
+- Исходная проверка до правок: `build-esp32.ps1` PASS, ESP-IDF v5.4.4; app image 1,336,704 bytes, 32% partition free. Скрипт поднял номер до 232.
+- До изменений просмотрены ULP/raw ADC telemetry, текущая страница мастера, HTTP action handler, timeout/cancel/save controller и event log. Код изменения выполняется только после исходной успешной сборки.
+- После сборки новой версии здесь будут указаны compile/flash/API results; наличие новых trace-событий на устройстве проверяется по IP monitor.
+
+- Итоговая сборка после изменений: PASS, ESP-IDF v5.4.4, firmware 10.0.233, app image 1,339,664 bytes; 32% app partition free.
+- OTA: PASS. Device Agent подтвердил устройство `a0:f2:62:f1:14:b8`, предыдущую версию 10.0.231 и текущую 10.0.233; плата вернулась в сеть.
+- Проверка новой страницы `/calibration` подтвердила включённый trace-клиент. POST trace smoke прошёл, строка `CAL step=paper event=smoke build233` получена через `/api/agent/monitor`.
+- Реальные этапы нового сеанса ещё не проверены: после OTA `calibration_mode=0`, `calibration_valid=false`. Live monitor запущен; файл захвата `artifacts/calibration-20260930-233-live.log`.
+
+### Поправка и проверка trace-формата 10.0.234
+- По живому сеансу 10.0.233 обнаружен URL encoding mismatch. В firmware ESP-IDF `httpd_query_key_value` не выполняет декодирование значений, trace handler справедливо отвергал `+` и `%3D`.
+- Формат клиента исправлен на короткие ASCII токены без пробелов/равно. Сборка PASS (ESP-IDF v5.4.4), firmware 10.0.234, app image 1,339,632 bytes, 32% partition free.
+- OTA PASS; Agent подтвердил возврат основной платы и версию 10.0.234 вместо 10.0.233.
+- POST `step=open,event=sample,data=n20-med51-min50-max52` вернул ok и появился в `/api/agent/events`.
+- Старый сеанс калибровки прерван OTA. Live capture нового firmware: `artifacts/calibration-20260930-234-live.log`; ожидается повторный запуск мастера для полной проверки всех шагов.
+
+### Живой калибровочный сеанс 10.0.234
+- Шаг «Один лист»: 20 стабильных выборок, median 43, min 39, max 46; принят.
+- Шаг «Дверь открыта»: повторы median 48–50; отказ с точным условием `med49-paper43-need53`. Следовательно, открытая дверь увеличивала raw delta примерно на 5–7 пунктов при требуемом превышении более чем на 10.
+- До стабильных окон логировались range 14–30 при лимите 12. Периодически ULP устанавливал `fault=0x10` на низких delta (примерно 18–39), затем возвращался в CALIBRATING.
+- Пользователь остановил мастер кнопкой Отмена; timeout не произошёл. Шаг контакта не был достигнут. После отмены calibration_mode=0; calibration_valid=false.
+- Log: `artifacts/calibration-20260930-234-live.log`.
+# Выбор GPIO входа тока шунта — 01.10.2026
+
+- Baseline перед кодом: `build-esp32.ps1` — PASS, ESP-IDF 5.4.4, build 238,
+  app image `0x147340`, свободно 32% OTA-раздела.
+- Добавлен allowlist GPIO1/2/4/6/7/10 и mapping к ADC1_CH0/1/3/5/6/9;
+  default для старых NVS-конфигураций — GPIO7.
+- Итоговая `build-esp32.ps1` — PASS, firmware 10.0.240/build 240, image
+  `0x147aa0`, свободно 32% OTA-раздела.
+- OTA устройства `a0:f2:62:f1:14:b8` прошёл: 10.0.239 → 10.0.240;
+  устройство вернулось с `boot_id=fcc53dc54445b01c`. Статус: `LOCKED`,
+  `fault_flags=0`, `calibration_valid=true`.
+- GET `/api/config` вернул `shunt_gpio=7`; проверено сохранённое значение
+  по умолчанию. Переключение на другой GPIO и повторная калибровка не выполнялись.

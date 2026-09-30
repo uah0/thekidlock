@@ -331,6 +331,17 @@ table.bonds td:first-child{font-family:var(--mono)}
       <small>Применяется только при контроле RSSI соединённого телефона: если сигнал ниже порога в течение выдержки, ESP32 разрывает BLE-соединение. Сам порог не блокирует команду OPEN.</small>
     </div>
     <div class="field">
+      <label for="sg">GPIO входа тока шунта</label>
+      <div class="field-input">
+        <select id="sg">
+          <option value="1">GPIO1</option><option value="2">GPIO2</option>
+          <option value="4">GPIO4</option><option value="6">GPIO6</option>
+          <option value="7">GPIO7</option><option value="10">GPIO10</option>
+        </select>
+      </div>
+      <small>Вход ADC1. После смены GPIO перезапустите ESP32 и заново выполните калибровку замка.</small>
+    </div>
+    <div class="field">
       <label for="zg">Выдержка слабого сигнала перед разрывом</label>
       <div class="field-input"><input id="zg" type="number" min="0" max="10000" step="100"><span class="unit">мс</span></div>
       <small>Сколько сигнал может быть ниже RSSI-порога до отключения телефона; 0 — отключить при первой проверке ниже порога.</small>
@@ -460,13 +471,14 @@ async function loadStatus(){
   }
 }
 async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ucalcontact.textContent=u.calibration_contact_raw;ucalpaper1.textContent=u.calibration_paper1_raw;ucalpaper2.textContent=u.calibration_paper2_raw;ucalopen.textContent=u.calibration_open_raw;ucalverify.textContent=u.calibration_verify_contact_raw;ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';uthcontact.textContent=u.feature_contact_max;uthgap1.textContent=u.feature_gap1_max;uthgap2.textContent=u.feature_gap2_max;uthgap3.textContent=u.feature_gap3_max;uthgap4.textContent=u.feature_gap4_max;uthgap5.textContent=u.feature_gap5_max+' / далеко от '+u.feature_gap5_max;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
-async function loadConfig(){let c=await j('/api/config');bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;zg.value=c.zone_exit_grace_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s}
+let loadedShuntGpio=null;
+async function loadConfig(){let c=await j('/api/config');bp.value=c.ble_tx_power_dbm;pr.value=c.phone_rssi_threshold;zg.value=c.zone_exit_grace_ms;ta.value=c.timer_a_ms;tb.value=c.timer_b_s;sg.value=c.shunt_gpio;loadedShuntGpio=Number(c.shunt_gpio)}
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wupdate.checked=c.auto_update;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
 async function saveAutoUpdate(){try{let q=new URLSearchParams({enabled:wupdate.checked?'1':'0'});await j('/api/wifi/auto-update?'+q,{method:'POST'});updateSaved.textContent='Сохранено';setTimeout(()=>updateSaved.textContent='',2000)}catch(e){updateSaved.textContent='Ошибка сохранения';throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}
-async function saveConfig(){let q=new URLSearchParams({ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,zone_exit_grace_ms:zg.value,timer_a_ms:ta.value,timer_b_s:tb.value});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',2500)}catch(e){saved.textContent=e}}
+async function saveConfig(){let shuntGpio=Number(sg.value);let shuntChanged=loadedShuntGpio!==shuntGpio;let q=new URLSearchParams({ble_tx_power_dbm:bp.value,phone_rssi_threshold:pr.value,zone_exit_grace_ms:zg.value,timer_a_ms:ta.value,timer_b_s:tb.value,shunt_gpio:String(shuntGpio)});try{await j('/api/config?'+q,{method:'POST'});await blePowerSave();loadedShuntGpio=shuntGpio;saved.textContent=shuntChanged?'Сохранено. Перезапустите ESP32 и выполните калибровку.':'Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
 async function blePowerSave(){let q=new URLSearchParams({power_dbm:bp.value});await j('/api/ble/power?'+q,{method:'POST'})}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.className='pairing-state '+(p.allowed?'on':'off');pairing.textContent=p.allowed?`Регистрация разрешена: ${p.remaining_s} с`:'Регистрация запрещена'}catch(e){pairing.className='pairing-state off';pairing.textContent=e}}
