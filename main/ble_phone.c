@@ -95,7 +95,6 @@ typedef struct {
     bool bonded;
     bool peer_was_bonded;
     bool peer_registration_candidate;
-    int64_t weak_signal_since_ms;
     int64_t link_probe_failure_since_ms;
     int64_t link_terminate_retry_ms;
 } ble_slot_t;
@@ -756,12 +755,12 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
             app_config_t cfg;
             char value[96];
             app_config_get(&cfg);
-            /* Keep the legacy five-field wire layout; field 2 is reserved. */
+            /* Keep the legacy five-field wire layout; fields 2 and 4 are reserved. */
             int len = snprintf(value, sizeof(value), "%d,%d,0,%lu,%lu",
                                cfg.phone_rssi_threshold,
                                cfg.phone_rssi_threshold,
                                (unsigned long)cfg.timer_a_ms,
-                               (unsigned long)cfg.timer_b_s);
+                               0UL);
             return append_value(ctxt->om, value, (size_t)len);
         }
         if (characteristic == CHR_ADMIN_CONFIG && ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
@@ -796,8 +795,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
             }
             if (field_count != 5 && field_count != 6) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
             esp_err_t err = app_config_set_logic((int)fields[0],
-                                                  (uint32_t)fields[3],
-                                                  (uint32_t)fields[4]);
+                                                  (uint32_t)fields[3]);
             if (err == ESP_OK && field_count == 6)
                 err = app_config_set_ble_tx_power((int)fields[5]);
             if (err != ESP_OK) return BLE_ATT_ERR_VALUE_NOT_ALLOWED;
@@ -919,8 +917,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
                 "{\"schema\":1,\"revision\":1,\"title\":\"Настройки замка\","
                 "\"sections\":[{\"id\":\"lock\",\"title\":\"Замок\",\"items\":["
                 "{\"id\":\"phone_rssi_threshold\",\"title\":\"RSSI-порог зоны открытия и ухода (телефон → ESP32)\",\"type\":\"integer\",\"ui_type\":\"slider\",\"value\":%d,\"min\":-127,\"max\":0,\"step\":1,\"unit\":\"dBm\",\"read_only\":false},"
-                "{\"id\":\"timer_a_ms\",\"title\":\"Таймер A\",\"type\":\"integer\",\"ui_type\":\"slider\",\"value\":%lu,\"min\":0,\"max\":600000,\"step\":1,\"unit\":\"мс\",\"read_only\":false},"
-                "{\"id\":\"timer_b_s\",\"title\":\"Таймер B\",\"type\":\"integer\",\"ui_type\":\"slider\",\"value\":%lu,\"min\":0,\"max\":3600,\"step\":1,\"unit\":\"с\",\"read_only\":false}]},"
+                "{\"id\":\"timer_a_ms\",\"title\":\"Таймер A\",\"type\":\"integer\",\"ui_type\":\"slider\",\"value\":%lu,\"min\":0,\"max\":600000,\"step\":1,\"unit\":\"мс\",\"read_only\":false}]},"
                 "{\"id\":\"wifi_ota\",\"title\":\"Wi-Fi и OTA\",\"items\":["
                 "{\"id\":\"ota_wifi_ssid\",\"title\":\"SSID Wi-Fi\",\"type\":\"string\",\"ui_type\":\"text\",\"value\":\"\",\"read_only\":false},"
                 "{\"id\":\"ota_wifi_password\",\"title\":\"Пароль Wi-Fi\",\"type\":\"string\",\"ui_type\":\"text\",\"value\":\"\",\"read_only\":false},"
@@ -929,7 +926,7 @@ static int gatt_access(uint16_t conn_handle, uint16_t attr_handle,
                 "{\"id\":\"ota_save\",\"title\":\"Сохранить Wi-Fi/OTA настройки\",\"type\":\"action\",\"ui_type\":\"button\",\"read_only\":false},"
                 "{\"id\":\"ota_start\",\"title\":\"Запустить OTA\",\"type\":\"action\",\"ui_type\":\"button\",\"read_only\":false}]}]}",
                 cfg.phone_rssi_threshold,
-                (unsigned long)cfg.timer_a_ms, (unsigned long)cfg.timer_b_s);
+                (unsigned long)cfg.timer_a_ms);
             if (len < 0 || (size_t)len >= sizeof(json)) {
                 event_log_add("BLE admin: схема настроек переполнена");
                 return BLE_ATT_ERR_INSUFFICIENT_RES;
@@ -1353,19 +1350,16 @@ static void rssi_task(void *arg)
                 uint16_t handle;
                 bool owner_slot, rssi_valid;
                 int8_t last_rssi;
-                int64_t weak_since;
                 portENTER_CRITICAL(&s_connection_lock);
                 handle = s_slots[i].conn_handle;
                 owner_slot = s_slots[i].is_owner_slot;
                 rssi_valid = s_slots[i].rssi_valid;
                 last_rssi = s_slots[i].last_rssi;
-                weak_since = s_slots[i].weak_signal_since_ms;
                 portEXIT_CRITICAL(&s_connection_lock);
                 ESP_LOGI(BLE_PHONE_TAG,
-                         "slot[%d] owner=%u handle=%u rssi=%d valid=%u weak_since_ms=%lld",
+                         "slot[%d] owner=%u handle=%u rssi=%d valid=%u",
                          i, (unsigned)owner_slot, (unsigned)handle, last_rssi,
-                         (unsigned)rssi_valid,
-                         (long long)weak_since);
+                         (unsigned)rssi_valid);
             }
         }
         for (int i = 0; i < BLE_TOTAL_SLOTS; i++) {
@@ -1443,7 +1437,6 @@ static void rssi_task(void *arg)
             int8_t filtered_rssi = rssi;
             bool filtered_valid = false;
             bool secured = desc.sec_state.encrypted && desc.sec_state.bonded;
-            int64_t weak_since = 0;
             portENTER_CRITICAL(&s_connection_lock);
             int slot_index = slot_index_for_handle_locked(conn_handle);
             if (slot_index >= 0) {
@@ -1462,7 +1455,6 @@ static void rssi_task(void *arg)
                 }
                 slot->encrypted = desc.sec_state.encrypted;
                 slot->bonded = desc.sec_state.bonded;
-                weak_since = slot->weak_signal_since_ms;
             }
             portEXIT_CRITICAL(&s_connection_lock);
 
@@ -1470,30 +1462,12 @@ static void rssi_task(void *arg)
             app_config_get(&cfg);
             bool zone_sufficient = filtered_valid &&
                                     filtered_rssi >= cfg.phone_rssi_threshold;
-            if (zone_sufficient) {
-                portENTER_CRITICAL(&s_connection_lock);
-                slot_index = slot_index_for_handle_locked(conn_handle);
-                if (slot_index >= 0) s_slots[slot_index].weak_signal_since_ms = 0;
-                portEXIT_CRITICAL(&s_connection_lock);
-                weak_since = 0;
-            } else if (filtered_valid) {
-                portENTER_CRITICAL(&s_connection_lock);
-                slot_index = slot_index_for_handle_locked(conn_handle);
-                if (slot_index >= 0 && s_slots[slot_index].weak_signal_since_ms == 0)
-                    s_slots[slot_index].weak_signal_since_ms = now_ms;
-                if (slot_index >= 0) weak_since = s_slots[slot_index].weak_signal_since_ms;
-                portEXIT_CRITICAL(&s_connection_lock);
-                if (weak_since != 0 &&
-                    now_ms - weak_since >= cfg.zone_exit_grace_ms) {
-                    event_log_add("BLE: телефон покинул зону открытия, разрыв handle=%u RSSI=%d < %d dBm",
-                                  conn_handle, filtered_rssi, cfg.phone_rssi_threshold);
-                    portENTER_CRITICAL(&s_connection_lock);
-                    slot_index = slot_index_for_handle_locked(conn_handle);
-                    if (slot_index >= 0) s_slots[slot_index].weak_signal_since_ms = 0;
-                    portEXIT_CRITICAL(&s_connection_lock);
-                    ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
-                    continue;
-                }
+            if (filtered_valid && !zone_sufficient) {
+                event_log_add("BLE zone exit h=%u raw=%d med=%d lim=%d",
+                              conn_handle, rssi, filtered_rssi,
+                              cfg.phone_rssi_threshold);
+                ble_gap_terminate(conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+                continue;
             }
 
             if (!secured || !filtered_valid) continue;

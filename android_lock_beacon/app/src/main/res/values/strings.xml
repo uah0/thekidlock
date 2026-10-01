@@ -42,7 +42,6 @@
     <string name="esp_open_rssi_threshold">RSSI открытия (ESP), dBm (например -68)</string>
     <string name="esp_hold_rssi_threshold">RSSI удержания (ESP), dBm (например -78)</string>
     <string name="admin_timer_a">Таймер A, мс</string>
-    <string name="admin_timer_b">Таймер Б выхода из жёлтого, с</string>
     <string name="admin_adv_tx_power">Мощность BLE-маяка замка</string>
     <string name="section_wifi_ota">WI-FI И ОБНОВЛЕНИЕ ПРОШИВКИ</string>
     <string name="ota_wifi_ssid">Имя домашней Wi-Fi сети</string>

@@ -142,29 +142,25 @@ static esp_err_t config_get(httpd_req_t *req)
              "{\"phone_rssi_threshold\":%d,"
              "\"ble_tx_power_dbm\":%d,"
              "\"shunt_gpio\":%u,"
-             "\"timer_a_ms\":%lu,\"timer_b_s\":%lu,"
-             "\"zone_exit_grace_ms\":%lu}",
+             "\"timer_a_ms\":%lu}",
              cfg.phone_rssi_threshold,
              cfg.ble_tx_power_dbm,
              cfg.shunt_gpio,
-             (unsigned long)cfg.timer_a_ms, (unsigned long)cfg.timer_b_s,
-             (unsigned long)cfg.zone_exit_grace_ms);
+             (unsigned long)cfg.timer_a_ms);
     return send_json(req, json);
 }
 
 static esp_err_t config_post(httpd_req_t *req)
 {
-    char query[500], rssi[16], timer_a[16], timer_b[16], grace[16], shunt[8];
+    char query[500], rssi[16], timer_a[16], shunt[8];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "phone_rssi_threshold", rssi, sizeof(rssi)) != ESP_OK ||
-        httpd_query_key_value(query, "timer_a_ms", timer_a, sizeof(timer_a)) != ESP_OK ||
-        httpd_query_key_value(query, "timer_b_s", timer_b, sizeof(timer_b)) != ESP_OK) {
+        httpd_query_key_value(query, "timer_a_ms", timer_a, sizeof(timer_a)) != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, отсутствуют параметры; query='%s'", query);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing parameters");
     }
     app_config_t current;
     app_config_get(&current);
-    uint32_t grace_ms = current.zone_exit_grace_ms;
     uint32_t shunt_gpio = current.shunt_gpio;
     if (httpd_query_key_value(query, "shunt_gpio", shunt, sizeof(shunt)) == ESP_OK) {
         char *end = NULL;
@@ -174,26 +170,12 @@ static esp_err_t config_post(httpd_req_t *req)
         }
         shunt_gpio = (uint32_t)parsed;
     }
-    if (httpd_query_key_value(query, "zone_exit_grace_ms", grace, sizeof(grace)) == ESP_OK) {
-        char *end = NULL;
-        unsigned long parsed = strtoul(grace, &end, 10);
-        if (end == grace || *end != '\0' || parsed > APP_ZONE_EXIT_GRACE_MS_MAX) {
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid zone_exit_grace_ms");
-        }
-        grace_ms = (uint32_t)parsed;
-    }
-    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s exit_grace_ms=%lu shunt_gpio=%lu A=%s B=%s",
-             rssi, (unsigned long)grace_ms, (unsigned long)shunt_gpio, timer_a, timer_b);
+    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s shunt_gpio=%lu A=%s",
+             rssi, (unsigned long)shunt_gpio, timer_a);
     esp_err_t err = app_config_set_logic(atoi(rssi),
-                                         strtoul(timer_a, NULL, 10),
-                                         strtoul(timer_b, NULL, 10));
+                                         strtoul(timer_a, NULL, 10));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, app_config_set_logic отказал: %s", esp_err_to_name(err));
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
-    }
-    err = app_config_set_zone_exit_grace_ms(grace_ms);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Настройки замка: не удалось сохранить zone_exit_grace_ms: %s", esp_err_to_name(err));
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
     }
     err = app_config_set_shunt_gpio((uint8_t)shunt_gpio);

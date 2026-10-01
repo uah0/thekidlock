@@ -71,7 +71,6 @@ class MainActivity : Activity() {
     private lateinit var espOpenRssiField: EditText
     private lateinit var espHoldRssiField: EditText
     private lateinit var adminTimerA: EditText
-    private lateinit var adminTimerB: EditText
     private lateinit var adminAdvTxPower: Spinner
     private lateinit var adminAdvTxPowerValue: TextView
     private lateinit var otaSsidField: EditText
@@ -314,7 +313,6 @@ class MainActivity : Activity() {
                 espOpenRssiField.setText(fields[0])
                 espHoldRssiField.setText(fields[1])
                 adminTimerA.setText(fields[3])
-                adminTimerB.setText(fields[4])
                 val advPower = fields.getOrNull(5)?.toIntOrNull() ?: DEFAULT_ADV_TX_POWER_DBM
                 val powerIndex = ADV_TX_POWER_VALUES.indexOf(advPower).takeIf { it >= 0 }
                     ?: ADV_TX_POWER_VALUES.indexOf(DEFAULT_ADV_TX_POWER_DBM)
@@ -766,9 +764,7 @@ class MainActivity : Activity() {
         staticSettingsContainer.addView(sectionHeader(R.string.section_timers), topSpacedFullWidth(20))
         val timersCard = newCard()
         adminTimerA = adminNumberField(false)
-        adminTimerB = adminNumberField(false)
         addRow(timersCard, stepperRow(getString(R.string.admin_timer_a), adminTimerA, 0, 10_000, 100))
-        addRow(timersCard, stepperRow(getString(R.string.admin_timer_b), adminTimerB, 0, 120, 1))
         staticSettingsContainer.addView(timersCard, fullWidth())
 
         // --- АППАРАТНАЯ ЧАСТЬ ---
@@ -1724,8 +1720,7 @@ class MainActivity : Activity() {
         }
         val mapping = listOf(
             "phone_rssi_threshold" to { value: Long -> espOpenRssiField.setText(value.toString()) },
-            "timer_a_ms" to { value: Long -> adminTimerA.setText(value.toString()) },
-            "timer_b_s" to { value: Long -> adminTimerB.setText(value.toString()) }
+            "timer_a_ms" to { value: Long -> adminTimerA.setText(value.toString()) }
         )
         mapping.forEach { (id, apply) ->
             read(id)?.let { values[id] = it; apply(it) }
@@ -1743,8 +1738,7 @@ class MainActivity : Activity() {
     private fun saveAdminConfig() {
         val values = listOf(
             espOpenRssiField.text.toString(), espHoldRssiField.text.toString(),
-            "0", adminTimerA.text.toString(),
-            adminTimerB.text.toString()
+            "0", adminTimerA.text.toString(), "0"
         )
         if (values.any { it.toLongOrNull() == null }) {
             appendLog("Заполните все числовые поля настроек")

@@ -29,4 +29,3 @@ void lock_control_report_rssi(bool sufficient);
 void lock_control_report_disconnected(void);
 bool lock_control_is_open(void);
 bool lock_control_is_hold_open(void);
-bool lock_control_is_blocked(void);

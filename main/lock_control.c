@@ -15,7 +15,6 @@ static SemaphoreHandle_t s_mutex;
 static bool s_initialized;
 static bool s_requested_open;
 static volatile bool s_hold_open;
-static bool s_reopen_blocked;
 static QueueHandle_t s_events;
 static TaskHandle_t s_lock_task;
 unsigned lock_control_stack_free(void)
@@ -61,7 +60,6 @@ typedef enum {
     LOCK_EVENT_DISABLE_AUTO_CLOSE,
     LOCK_EVENT_CLOSE,
     LOCK_EVENT_RSSI_HIGH,
-    LOCK_EVENT_RSSI_LOW,
     LOCK_EVENT_DISCONNECTED,
 } lock_event_t;
 
@@ -81,27 +79,14 @@ static esp_err_t apply_state(bool open)
     return apply_command(open ? ULP_CMD_OPEN : ULP_CMD_CLOSE);
 }
 
-static void publish_reopen_blocked(bool blocked)
-{
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    s_reopen_blocked = blocked;
-    xSemaphoreGive(s_mutex);
-}
-
 static void lock_task(void *arg)
 {
     (void)arg;
     int64_t last_sufficient_ms = 0;
     int64_t test_open_deadline_ms = 0;
     bool test_open_active = false;
-    bool reopen_blocked = false;
     bool hold_open = s_hold_open;
     bool open_armed = false;
-    uint8_t low_rssi_count = 0;
-    bool release_pending = false;
-    bool release_condition_active = false;
-    bool connection_present = false;
-    int64_t release_deadline_ms = 0;
 
     for (;;) {
         lock_event_t event;
@@ -113,7 +98,7 @@ static void lock_task(void *arg)
         if (received) {
             switch (event) {
                 case LOCK_EVENT_OPEN:
-                    if (!reopen_blocked && !lock_control_requested_open()) {
+                    if (!lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
                             test_open_active = false;
@@ -126,10 +111,7 @@ static void lock_task(void *arg)
                     event_log_add("Замок: открытие вооружено внешней командой, ожидание RSSI");
                     break;
                 case LOCK_EVENT_TEST_OPEN:
-                    // Admin-initiated test open is a deliberate manual override: it must
-                    // always physically actuate the lock, even while automatic BLE/RSSI
-                    // reopening is being held back by the anti-flap "reopen_blocked" guard.
-                    // It intentionally does not start RSSI-triggered opening.
+                    // Admin-initiated test open is a deliberate manual override.
                     if (!lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
@@ -147,11 +129,6 @@ static void lock_task(void *arg)
                     hold_open = event == LOCK_EVENT_TOGGLE_HOLD_OPEN ? !hold_open :
                                 event == LOCK_EVENT_SET_HOLD_OPEN;
                     s_hold_open = hold_open;
-                    release_pending = false;
-                    release_condition_active = false;
-                    low_rssi_count = 0;
-                    reopen_blocked = false;
-                    publish_reopen_blocked(false);
                     if (hold_open) {
                         if (apply_command(ULP_CMD_HOLD_OPEN) != ESP_OK) {
                             hold_open = false;
@@ -182,11 +159,6 @@ static void lock_task(void *arg)
                     if (save_hold_open(false) != ESP_OK) {
                         event_log_add("Замок: ошибка сохранения AUTO в NVS");
                     }
-                    release_pending = false;
-                    release_condition_active = false;
-                    low_rssi_count = 0;
-                    reopen_blocked = false;
-                    publish_reopen_blocked(false);
                     if (!lock_control_requested_open() || apply_state(false) == ESP_OK) {
                         event_log_add("Замок: запрос закрытия: автоматический режим выключен телефоном");
                     } else {
@@ -201,68 +173,17 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_RSSI_HIGH:
-                    connection_present = true;
                     if (lock_control_requested_open()) {
                         last_sufficient_ms = now_ms;
-                    } else if (open_armed && !reopen_blocked) {
+                    } else if (open_armed) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
                             event_log_add("Замок: открытие по ранее полученной команде ARM_OPEN");
                         }
                     }
-                    // Strict consecutive streak: any single strong sample resets the
-                    // low-RSSI counter to zero. Note the trade-off: RSSI hovering right
-                    // at the threshold can keep the lock permanently reopen_blocked,
-                    // since one "sufficient" sample every few ticks prevents the streak
-                    // from ever reaching the release count. Requested explicitly despite
-                    // this trade-off.
-                    if (reopen_blocked) {
-                        low_rssi_count = 0;
-                        release_condition_active = false;
-                        if (release_pending) {
-                            release_pending = false;
-                            event_log_add("Замок: таймер Б отменён, RSSI восстановился");
-                        }
-                    }
-                    break;
-                case LOCK_EVENT_RSSI_LOW:
-                    connection_present = true;
-                    release_condition_active = true;
-                    if (reopen_blocked && !release_pending && low_rssi_count < UINT8_MAX) {
-                        low_rssi_count++;
-                        if (low_rssi_count >= 3) {
-                            low_rssi_count = 0;
-                            if (cfg.timer_b_s == 0) {
-                                reopen_blocked = false;
-                                publish_reopen_blocked(false);
-                                event_log_add("Замок: запрет повторного открытия снят по слабому RSSI");
-                            } else {
-                                release_pending = true;
-                                release_deadline_ms = now_ms + (int64_t)cfg.timer_b_s * 1000;
-                                event_log_add("Замок: таймер Б запущен на %lu с по слабому RSSI",
-                                              (unsigned long)cfg.timer_b_s);
-                            }
-                        }
-                    }
                     break;
                 case LOCK_EVENT_DISCONNECTED:
                     open_armed = false;
-                    connection_present = false;
-                    release_condition_active = true;
-                    if (reopen_blocked) {
-                        low_rssi_count = 0;
-                        if (cfg.timer_b_s == 0) {
-                            reopen_blocked = false;
-                            release_pending = false;
-                            publish_reopen_blocked(false);
-                            event_log_add("Замок: запрет повторного открытия снят по потере BLE-соединения");
-                        } else if (!release_pending) {
-                            release_pending = true;
-                            release_deadline_ms = now_ms + (int64_t)cfg.timer_b_s * 1000;
-                            event_log_add("Замок: таймер Б запущен на %lu с по потере BLE-соединения",
-                                          (unsigned long)cfg.timer_b_s);
-                        }
-                    }
                     break;
             }
         }
@@ -282,17 +203,6 @@ static void lock_task(void *arg)
             }
         }
 
-        if (reopen_blocked && release_pending && now_ms >= release_deadline_ms) {
-            release_pending = false;
-            low_rssi_count = 0;
-            if (release_condition_active || !connection_present) {
-                reopen_blocked = false;
-                publish_reopen_blocked(false);
-                event_log_add("Замок: таймер Б истёк, условие подтверждено");
-            } else {
-                event_log_add("Замок: таймер Б истёк, условие перехода не подтверждено");
-            }
-        }
         refresh_feedback(now_ms);
     }
 }
@@ -382,8 +292,8 @@ esp_err_t lock_control_config_changed(void)
 
 void lock_control_report_rssi(bool sufficient)
 {
-    if (!s_events) return;
-    lock_event_t event = sufficient ? LOCK_EVENT_RSSI_HIGH : LOCK_EVENT_RSSI_LOW;
+    if (!s_events || !sufficient) return;
+    lock_event_t event = LOCK_EVENT_RSSI_HIGH;
     xQueueSend(s_events, &event, 0);
 }
 
@@ -408,15 +318,6 @@ bool lock_control_is_hold_open(void)
     return s_initialized && s_hold_open;
 }
 
-bool lock_control_is_blocked(void)
-{
-    if (!s_initialized || !s_mutex) return false;
-    xSemaphoreTake(s_mutex, portMAX_DELAY);
-    bool blocked = s_reopen_blocked;
-    xSemaphoreGive(s_mutex);
-    return blocked;
-}
-
 
 static void refresh_feedback(int64_t now_ms)
 {
@@ -438,7 +339,6 @@ static void refresh_feedback(int64_t now_ms)
     }
     s_feedback.hold_open = s_hold_open;
     s_feedback.requested_open = s_requested_open;
-    bool blocked = s_reopen_blocked;
     lock_feedback_t current = s_feedback;
     xSemaphoreGive(s_mutex);
 
@@ -447,7 +347,7 @@ static void refresh_feedback(int64_t now_ms)
         current.state == LOCK_STATE_FAULT || current.fault_flags || current.close_rejected ? LED_STATE_FAULT :
         current.calibrating ? LED_STATE_CONFIGURATION :
         current.calibration_required ? LED_STATE_FAULT :
-        current.state == LOCK_STATE_LOCKED ? (blocked ? LED_STATE_LOCKED_BLOCKED : LED_STATE_LOCKED) :
+        current.state == LOCK_STATE_LOCKED ? LED_STATE_LOCKED :
         current.state == LOCK_STATE_UNLOCKED ? LED_STATE_UNLOCKED : LED_STATE_BOOT;
     if ((int)led != last_led) { led_set_state(led); last_led = led; }
     if (previous.state != current.state || previous.valid != current.valid ||

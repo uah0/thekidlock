@@ -4530,3 +4530,12 @@ Baseline build-android.ps1 до изменений: PASS. Итоговая build
   `fault_flags=0`, `calibration_valid=true`.
 - GET `/api/config` вернул `shunt_gpio=7`; проверено сохранённое значение
   по умолчанию. Переключение на другой GPIO и повторная калибровка не выполнялись.
+
+## 01.10.2026 — удаление таймера Б и выдержки слабого RSSI
+
+- До изменений `build-esp32.ps1`: PASS, firmware 10.0.249; `build-android.ps1`: PASS, build 133. Замок сначала был недоступен по Agent API, после возврата в сеть OTA 10.0.248 → 10.0.249 прошла успешно.
+- После изменений `build-esp32.ps1`: PASS, firmware 10.0.250, образ `0x146f30`, 32% app partition свободно. OTA 10.0.249 → 10.0.250: PASS, Agent подтвердил `device_id=a0:f2:62:f1:14:b8`, новый `boot_id=616d18aa49156822` и `firmware_version=10.0.250`.
+- Живой `/api/status`: `LOCKED`, `fault_flags=0`, `calibration_required=false`. Живой `/api/config` содержит RSSI-порог `-60`, таймер А `1000` мс, мощность BLE `-12` dBm и GPIO шунта `6`; полей таймера Б и выдержки слабого RSSI нет.
+- После изменений `build-android.ps1`: PASS, debug build 134; APK `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`, 2291236 байт. Установка на телефон отложена до окончания независимого опыта BLE Foreva.
+- Проверка `rg` не нашла действующих ссылок на удаленные таймеры в `main` и Android UI; `git diff --check`: PASS. Поведение физического замка при слабом RSSI после удаления выдержки не испытывалось; это изменение прекращает GATT-соединение при первом валидном медианном значении ниже порога.
+- Изменены: `main/app_config.h`, `main/app_config.c`, `main/lock_control.h`, `main/lock_control.c`, `main/ble_phone.c`, `main/web_ui.c`, `main/web/index.html`, `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt`, `android_lock_beacon/app/src/main/res/values/strings.xml`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
