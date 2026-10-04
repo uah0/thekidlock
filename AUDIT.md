@@ -3779,3 +3779,39 @@ foreground `BleLockService` активен, в проверенном окне l
 - Сохранены AGENTS.md, обязательные отчёты, README, AI_AGENT_COMPONENT.md, LOCK_AUTOMAT_ALGORITHM.md, ULP_ALGORITHM_FLOWCHART.md, ULP_ELECTRONICS_ENGINEERING.md, документация публикации Android, все CMakeLists.txt. Исходники не изменены, компиляция не выполнялась.
 - Проверка: все 9 документов находятся в целевой папке, обязательные документы на месте. Изменённые файлы: 9 перемещённых документов и корневые AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Исторические упоминания перемещённых файлов в отчётах сохранены.
 
+
+## 04.10.2026 — единый служебный маяк: исходный аудит
+
+- Резервный коммит 1f21136. Baseline Android 198 PASS; ESP 10.0.325 PASS, OTA PASS.
+- PhoneBeacon сейчас выбирает 0x81/0x82; ESP выбирает обработчик по рекламе. Wi-Fi и Web IP уже разделены характеристиками. MainActivity выполняет hold-open по Wi-Fi; lock_request_set_hold_open уже поддерживает явную идемпотентную установку через существующий автомат.
+- Новый служебный обмен интегрируется в существующие PhoneBeacon/BleLockService/Central. План и контракт: SERVICE_BEACON_PLAN.md. Не менять алгоритм/таймеры; только транспорт и подтверждение. Последовательная поставка ESP с временной совместимостью, затем APK, затем отказ от 0x81/0x82.
+
+
+## 04.10.2026 — единый служебный маяк, результат первого этапа
+
+- ESP 10.0.326 OTA PASS (10.0.325 → 10.0.326); Agent status подтвердил версию, encrypted/bonded, fault_flags=0.
+- Android build 199 PASS: новый маркер 0x83, GATT flags/request/result, запрос текущего hold режима перед явной установкой, UI ожидания/подтверждения и таймаут 30 с. Повтор незавершённых команд после перезапуска не сохраняется. Удалён старый Wi-Fi транспорт кнопки постоянного открытия; Web UI/Wi-Fi сохранены.
+- Проверкой жизненного цикла найдена необходимость возобновить AUTO после служебного запроса и сохранить hold-запрос при отмене hotspot; внесены небольшие корректировки, сборка следующего этапа выполняется.
+- Изменённые файлы Android: PhoneBeacon.kt, BleLockService.kt, MainActivity.kt, LockSettings.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt, BUILD_NUMBER; корневые и Android отчёты.
+
+
+## 04.10.2026 — единый служебный маяк, Android 200
+
+- Android build 200 PASS, build-android.ps1 -Action test PASS (24 теста debug и 24 release, включая 6 новых тестов проверки ID, malformed/устаревших подтверждений и команд явной установки). APK установлен, ориентация 0/0 сохранена и повторно проверена после запуска.
+- В физических журналах ESP подтверждены служебные requests flags=4 command=0→1 и hold result=0/hold=1; на телефоне confirmed_hold_open обновлён. Затем были изменения режима и hotspot с телефона; эти ручные действия не считаются контролируемым многократным прогоном.
+- Логи подтверждают единый marker 0x83 при Wi-Fi setup и ожидании Web IP. Контролируемый прогон требует разблокированного телефона. Автоматическая проверка отклонила команду подготовки экрана с wm dismiss-keyguard; запрошена ручная разблокировка.
+- Артефакт установки: artifacts/android-rotation-before-service-beacon200-install.json; UI: artifacts/service-beacon200-ui.xml. Изменены PhoneBeacon.kt, BleLockService.kt, MainActivity.kt, LockSettings.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt, Android BUILD_NUMBER и отчёты.
+
+
+## 04.10.2026 — переход на один служебный маяк завершён
+
+- Резервный коммит до работ: 1f21136. План и контракт: SERVICE_BEACON_PLAN.md.
+- Финальная ESP-сборка 10.0.327 PASS, OTA 10.0.326 → 10.0.327 PASS; firmware_version, тот же device_id a0:f2:62:f1:14:b8 и новый boot_id 85c26e91a463a746 подтверждены. fault_flags=0, bonded/encrypted=true, hold_open=false. AUTO телефона включено, замок открыт штатным AUTO.
+- Финальная прошивка принимает только AUTO 0x01 и единый служебный 0x83. Legacy 0x81/0x82 и их отдельные обработчики удалены. Значения 0x81 внутри UUID не являются рекламными маркерами.
+- Android build 200 PASS, установлен; SHA-256 установленной base.apk совпадает с APK сборки: 918ad5c52568baee1c019d8d1599ecf419e928053e54e6b6dac31ac4f540b6d9. Ориентация до/после и после запуска 0/0.
+- build-android.ps1 -Action test PASS: 24 теста debug + 24 release, включая 6 новых protocol tests. Проверены комбинированные flags Wi-Fi/IP, query/явные set, signed ID, malformed/устаревшие/неожиданные ответы и несовпадение подтверждённого режима.
+- Пользователь подтвердил физическую работоспособность. Журнал телефона подтверждает 0x83, чтение существующих Wi-Fi chunks, завершение provisioning, получение ESP Web UI IPv4 через encrypted BLE, возврат к AUTO 0x01. Журнал ESP на 10.0.326 подтвердил запрос фактического hold режима, set on, режим OPEN_HOLD и успешный ответ. Пользовательские изменения режима/настроек сохранены.
+- Контролируемый автоматический прогон 4 циклов не завершён: сначала несовпадение текста кнопки в тестовом сценарии, затем ESP перешёл в hotspot во время ручной проверки. Эти попытки не считаются PASS. Отклонённую автоматической проверкой команду подготовки экрана с wm dismiss-keyguard не выполняли; пользователь проверил вручную.
+- Отказы non-owner, отсутствие ответа 30 с и Bluetooth OFF во время команды на устройстве отдельно не провоцировались; проверены кодом и частично unit-тестами. Алгоритм автомата и таймеры не изменены, OTA/Wi-Fi/Web UI/scanner сохранены.
+- Артефакты: artifacts/android-rotation-before-service-beacon200-install.json, artifacts/service-beacon200-ui.xml, artifacts/service-beacon200-phone.log, artifacts/service-beacon200-validation.json, artifacts/service-beacon327-final-snapshot.json.
+- Изменённые файлы: main/ble_phone.c, BUILD_NUMBER; Android PhoneBeacon.kt, BleLockService.kt, MainActivity.kt, LockSettings.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt, BUILD_NUMBER; SERVICE_BEACON_PLAN.md; корневые и Android README.md/AUDIT.md/CHANGELOG.md/TEST_REPORT.md. git diff --check PASS.

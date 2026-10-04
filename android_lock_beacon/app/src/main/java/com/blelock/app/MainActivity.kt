@@ -1,5 +1,7 @@
 package com.blelock.app
 
+import android.bluetooth.BluetoothManager
+
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
@@ -61,8 +63,6 @@ class MainActivity : Activity() {
     private lateinit var mainContentView: View
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
-    private var wifiHoldOpenCommandPending = false
-    private var waitingForWifiIpForHoldOpen = false
     private var beaconPowerScreenVisible = false
     private lateinit var permissionButton: Button
     private lateinit var manualOpenButton: Button
@@ -181,6 +181,18 @@ class MainActivity : Activity() {
                     updateAdminEntryState()
                     renderWorkingMode()
                     appendLog(if (settings.ownerAccessConfirmed) "ESP32 подтвердила роль владельца" else "ESP32 подтвердила роль ключа без owner-доступа")
+                }
+                PhoneBeacon.ACTION_HOLD_OPEN_RESULT -> {
+                    workingModeState = workingModeState.copy(alwaysOpenEnabled = settings.confirmedHoldOpen)
+                    if (intent.getBooleanExtra(PhoneBeacon.EXTRA_SUCCESS, false)) {
+                        appendLog(if (settings.confirmedHoldOpen) "ESP32 подтвердила постоянное открытие по BLE"
+                            else "ESP32 подтвердила отмену постоянного открытия по BLE")
+                    } else {
+                        val error = intent.getStringExtra(PhoneBeacon.EXTRA_ERROR).orEmpty()
+                        appendLog("Команда режима замка: $error")
+                        Toast.makeText(this@MainActivity, error, Toast.LENGTH_LONG).show()
+                    }
+                    renderWorkingMode()
                 }
                 PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED -> {
                     pendingHotspotWifi = null
@@ -435,10 +447,6 @@ class MainActivity : Activity() {
                     val ip = value.substringAfter("WEB_READY;IP=").trim()
                     if (ip.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) {
                         if (localHotspotReservation == null) settings.lockWifiIp = ip
-                        if (waitingForWifiIpForHoldOpen) {
-                            waitingForWifiIpForHoldOpen = false
-                            toggleHoldOpenOverWifi(ip)
-                        }
                         if (localHotspotReservation != null) {
                             val openedIp = hotspotOpenedEspIp
                             if (openedIp != null && openedIp != ip) {
@@ -525,7 +533,8 @@ class MainActivity : Activity() {
             showBeaconPowerScreen(animated = false)
         }
         showBatteryOptimizationNoticeIfNeeded()
-        workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
+        workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled,
+            alwaysOpenEnabled = settings.confirmedHoldOpen)
         bindBleService()
         refreshState()
     }
@@ -614,6 +623,7 @@ class MainActivity : Activity() {
         // full-control request after a process restart and could delay the
         // visible connection until the background reconnect backoff expired.
         registerBackgroundReceiver()
+        workingModeState = workingModeState.copy(alwaysOpenEnabled = settings.confirmedHoldOpen)
         refreshState()
         showLegacyBleLocationNoticeIfNeeded()
         if (webUiBrowserOpen) {
@@ -655,6 +665,7 @@ class MainActivity : Activity() {
             addAction(PhoneBeacon.ACTION_OWNER_STATUS_CHANGED)
             addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
             addAction(PhoneBeacon.ACTION_WEB_UI_IP_RECEIVED)
+            addAction(PhoneBeacon.ACTION_HOLD_OPEN_RESULT)
         }
         ContextCompat.registerReceiver(
             this,
@@ -1519,48 +1530,29 @@ class MainActivity : Activity() {
     }
 
     private fun toggleKeepOpenMode() {
-        if (wifiHoldOpenCommandPending || waitingForWifiIpForHoldOpen) return
-        val ip = hotspotExpectedEspIp ?: settings.lockWifiIp
-        if (!ip.isNullOrBlank()) {
-            toggleHoldOpenOverWifi(ip)
-            return
+        if (BleLockService.lastHoldCommandPending) return
+        BleLockService.lastHoldCommandPending = true
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, BleLockService::class.java)
+                .setAction(BleLockService.ACTION_HOLD_OPEN_TOGGLE))
+            appendLog("Запрошено переключение постоянного открытия; ожидаю подтверждение ESP32 по BLE")
+        } catch (error: Exception) {
+            BleLockService.lastHoldCommandPending = false
+            Toast.makeText(this, "Не удалось отправить команду замку", Toast.LENGTH_LONG).show()
+            appendLog("Не удалось запустить BLE-команду: ${error.message}")
         }
-        requestLockWifiIp { toggleHoldOpenOverWifi(it) }
-    }
-
-    private fun toggleHoldOpenOverWifi(ip: String) {
-        wifiHoldOpenCommandPending = true
         renderWorkingMode()
-        appendLog("Переключаю постоянное открытие по Wi-Fi: $ip")
-        Thread({
-            val result = runCatching { WifiLockControl.toggle(ip) }
-            runOnUiThread {
-                wifiHoldOpenCommandPending = false
-                result.onSuccess { state ->
-                    workingModeState = WorkingModeReducer.reduce(
-                        workingModeState,
-                        WorkingModeEvent.AlwaysOpenConfirmed(state.holdOpen)
-                    )
-                    appendLog(if (state.holdOpen) "ESP32 подтвердила постоянное открытие по Wi-Fi"
-                              else "ESP32 подтвердила возврат в AUTO по Wi-Fi")
-                }.onFailure { error ->
-                    appendLog("Wi-Fi команда постоянного открытия не выполнена: ${error.message}")
-                    Toast.makeText(this, "ESP32 не ответила по Wi-Fi", Toast.LENGTH_LONG).show()
-                }
-                renderWorkingMode()
-            }
-        }, "lock-hold-open-wifi").start()
     }
 
     private fun resetManualButtonStates() = renderWorkingMode()
 
     private fun renderWorkingMode() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
-        val wifiCommandAvailable = !wifiHoldOpenCommandPending && (
-            !settings.lockWifiIp.isNullOrBlank() || !hotspotExpectedEspIp.isNullOrBlank() ||
-                (serviceBound && repository.currentState == BleRepository.State.READY)
-        )
-        val ui = WorkingModeUi.compute(workingModeState, wifiCommandAvailable)
+        val bluetoothReady = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
+        val ui = WorkingModeUi.compute(workingModeState,
+            bluetoothReady && settings.ownerAccessConfirmed && !BleLockService.lastHoldCommandPending)
+        manualKeepOpenButton.text = if (BleLockService.lastHoldCommandPending) "Ожидание ESP32…"
+            else getString(R.string.mode_always_open)
         setManualButtonBlue(manualOpenButton, ui.autoSelected)
         setManualButtonBlue(manualKeepOpenButton, ui.alwaysOpenSelected)
         manualOpenButton.isEnabled = ui.autoEnabled
@@ -1946,34 +1938,6 @@ class MainActivity : Activity() {
                     .setAction(BleLockService.ACTION_WEB_UI_IP_FINISHED)
             )
         }
-    }
-
-    private fun requestLockWifiIp(onReady: (String) -> Unit) {
-        val saved = settings.lockWifiIp?.trim()
-        if (saved.isValidIpv4()) {
-            onReady(saved!!)
-            return
-        }
-        val field = EditText(this).apply {
-            hint = "192.168.1.54"
-            inputType = InputType.TYPE_CLASS_TEXT
-            setSingleLine(true)
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Wi-Fi адрес ESP32")
-            .setMessage("Телефон и ESP32 должны быть доступны в одной Wi-Fi сети. Адрес сохранится для следующих команд.")
-            .setView(field)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Продолжить") { _, _ ->
-                val ip = field.text.toString().trim()
-                if (!ip.isValidIpv4()) {
-                    Toast.makeText(this, "Введите IPv4 адрес ESP32", Toast.LENGTH_LONG).show()
-                } else {
-                    settings.lockWifiIp = ip
-                    onReady(ip)
-                }
-            }
-            .show()
     }
 
     private fun startWebUiProvisioning() {

@@ -72,6 +72,16 @@ static const ble_uuid128_t s_phone_beacon_name_uuid = BLE_UUID128_INIT(
 static const ble_uuid128_t s_phone_beacon_web_ui_ip_uuid = BLE_UUID128_INIT(
     0xa3, 0x92, 0x81, 0x70, 0x6f, 0x5e, 0x32, 0x8d,
     0x21, 0x4c, 0x7b, 0x9a, 0x1a, 0x00, 0x4f, 0x6f);
+static const ble_uuid128_t s_phone_service_request_uuid = BLE_UUID128_INIT(
+    0xa3, 0x92, 0x81, 0x70, 0x6f, 0x5e, 0x32, 0x8d,
+    0x21, 0x4c, 0x7b, 0x9a, 0x1b, 0x00, 0x4f, 0x6f);
+static const ble_uuid128_t s_phone_service_result_uuid = BLE_UUID128_INIT(
+    0xa3, 0x92, 0x81, 0x70, 0x6f, 0x5e, 0x32, 0x8d,
+    0x21, 0x4c, 0x7b, 0x9a, 0x1c, 0x00, 0x4f, 0x6f);
+#define PHONE_SERVICE_MODE 0x83
+#define PHONE_SERVICE_WIFI 1
+#define PHONE_SERVICE_WEB_IP 2
+#define PHONE_SERVICE_HOLD 4
 #define PHONE_BEACON_COMPANY_ID 0xf0e1
 #define PHONE_BEACON_RETRY_MS 1000
 
@@ -378,8 +388,11 @@ static bool s_central_existing_bond_before_connect;
 static bool s_central_existing_ltk_before_connect;
 static bool s_central_existing_ltk_restored;
 static bool s_central_new_bond_settling;
-static bool s_central_wifi_provision_candidate;
-static bool s_central_webui_ip_candidate;
+static bool s_central_service_candidate;
+static uint16_t s_central_service_request_handle, s_central_service_result_handle;
+static uint8_t s_central_service_flags, s_central_service_command;
+static uint8_t s_central_service_request_id[4];
+static int64_t s_central_hold_deadline_ms;
 static _Atomic bool s_central_reset_pending;
 static _Atomic bool s_central_timeout_pending;
 static _Atomic int s_central_phase;
@@ -399,6 +412,9 @@ enum {
     CENTRAL_PHASE_WIFI_SETUP_READ,
     CENTRAL_PHASE_HOTSPOT_IP_READ,
     CENTRAL_PHASE_NEW_BOND_SETTLE,
+    CENTRAL_PHASE_SERVICE_REQUEST_READ,
+    CENTRAL_PHASE_HOLD_WAIT,
+    CENTRAL_PHASE_SERVICE_RESULT_WRITE,
 };
 
 void ble_phone_get_status(ble_phone_status_t *out)
@@ -480,8 +496,10 @@ static void central_schedule_retry(void)
     s_central_existing_ltk_before_connect = false;
     s_central_existing_ltk_restored = false;
     s_central_new_bond_settling = false;
-    s_central_wifi_provision_candidate = false;
-    s_central_webui_ip_candidate = false;
+    s_central_service_candidate = false;
+    s_central_service_request_handle = 0;
+    s_central_service_result_handle = 0;
+    s_central_service_flags = 0;
     memset(s_central_wifi_setup_handles, 0, sizeof(s_central_wifi_setup_handles));
     s_central_name_handle = 0;
     s_central_web_ui_ip_handle = 0;
@@ -887,33 +905,130 @@ static int central_wifi_setup_read_cb(uint16_t handle, const struct ble_gatt_err
     return 0;
 }
 
-static int central_proof_for_provision_cb(uint16_t handle,
-                                          const struct ble_gatt_error *error,
-                                          struct ble_gatt_attr *attr, void *arg)
+static bool central_service_owner(uint16_t handle)
 {
-    (void)arg;
-    static const char expected[] = "BLE_LOCK_V1";
-    bool valid = error->status == 0 && attr && attr->om &&
-                 OS_MBUF_PKTLEN(attr->om) == sizeof(expected) - 1 &&
-                 os_mbuf_cmpf(attr->om, 0, expected, sizeof(expected) - 1) == 0;
-    if (atomic_load(&s_central_reset_pending) || !central_connection_secured(handle) || !valid) {
-        event_log_add("BLE provisioning: encrypted proof failed status=%d", error->status);
+    struct ble_gap_conn_desc desc;
+    ble_addr_t owner;
+    return !atomic_load(&s_central_reset_pending) && central_connection_secured(handle) &&
+           ble_gap_conn_find(handle, &desc) == 0 && owner_load(&owner) == ESP_OK &&
+           address_equal(&owner, &desc.peer_id_addr);
+}
+
+static void central_service_continue(uint16_t handle)
+{
+    if (!central_service_owner(handle)) {
         central_disconnect(handle);
-        return 0;
+        return;
     }
-    if (central_try_send_web_ui_ip(handle)) return 0;
-    central_set_phase(CENTRAL_PHASE_WIFI_SETUP_READ, CENTRAL_GATT_TIMEOUT_MS);
-    s_central_wifi_setup_value_len = 0;
-    s_central_wifi_setup_expected_len = 0;
-    if (ble_gattc_read(handle, s_central_wifi_setup_handles[0],
-                       central_wifi_setup_read_cb, NULL) == 0) return 0;
-    event_log_add("BLE provisioning: Wi-Fi setup read could not start");
+    if (s_central_service_flags & PHONE_SERVICE_WIFI) {
+        if (s_central_wifi_setup_handles[0]) {
+            central_set_phase(CENTRAL_PHASE_WIFI_SETUP_READ, CENTRAL_GATT_TIMEOUT_MS);
+            s_central_wifi_setup_value_len = 0;
+            s_central_wifi_setup_expected_len = 0;
+            if (ble_gattc_read(handle, s_central_wifi_setup_handles[0],
+                               central_wifi_setup_read_cb, NULL) == 0) return;
+        }
+    } else if ((s_central_service_flags & PHONE_SERVICE_WEB_IP) && central_try_send_web_ui_ip(handle)) {
+        return;
+    }
     central_disconnect(handle);
+}
+
+static int central_service_result_cb(uint16_t handle, const struct ble_gatt_error *error,
+                                     struct ble_gatt_attr *attr, void *arg)
+{
+    (void)attr;
+    (void)arg;
+    event_log_add("BLE service: command result write status=%d", error->status);
+    if (error->status == 0) central_service_continue(handle);
+    else central_disconnect(handle);
     return 0;
 }
 
-static int central_web_ui_ip_proof_cb(uint16_t handle, const struct ble_gatt_error *error,
+static void central_service_send_result(uint16_t handle, uint8_t result)
+{
+    if (atomic_load(&s_central_reset_pending) || !central_connection_secured(handle)) {
+        central_disconnect(handle);
+        return;
+    }
+    uint8_t response[7] = {1};
+    memcpy(response + 1, s_central_service_request_id, 4);
+    response[5] = result;
+    response[6] = lock_control_is_hold_open() ? 1 : 0;
+    central_set_phase(CENTRAL_PHASE_SERVICE_RESULT_WRITE, CENTRAL_GATT_TIMEOUT_MS);
+    event_log_add("BLE service: hold result=%u hold=%u", result, response[6]);
+    if (!s_central_service_result_handle ||
+        ble_gattc_write_flat(handle, s_central_service_result_handle, response, sizeof(response),
+                             central_service_result_cb, NULL) != 0) central_disconnect(handle);
+}
+
+static void central_service_check_hold(uint16_t handle)
+{
+    if (!central_service_owner(handle)) {
+        central_disconnect(handle);
+        return;
+    }
+    lock_feedback_t feedback;
+    lock_control_get_feedback(&feedback);
+    bool desired = s_central_service_command == 1;
+    bool confirmed = feedback.valid && feedback.hold_open == desired &&
+                     (!desired || feedback.state == LOCK_STATE_UNLOCKED);
+    if (feedback.fault_flags) central_service_send_result(handle, 3);
+    else if (confirmed) central_service_send_result(handle, 0);
+    else if (esp_timer_get_time() / 1000 >= s_central_hold_deadline_ms)
+        central_service_send_result(handle, 3);
+    else central_set_phase(CENTRAL_PHASE_HOLD_WAIT, 100);
+}
+
+static int central_service_request_cb(uint16_t handle, const struct ble_gatt_error *error,
                                       struct ble_gatt_attr *attr, void *arg)
+{
+    (void)arg;
+    uint8_t request[7];
+    bool valid = error->status == 0 && attr && attr->om &&
+                 OS_MBUF_PKTLEN(attr->om) == sizeof(request) &&
+                 ble_hs_mbuf_to_flat(attr->om, request, sizeof(request), NULL) == 0 &&
+                 request[0] == 1 && request[1] != 0 && (request[1] & ~7) == 0 &&
+                 request[2] <= 2;
+    if (!valid || !central_connection_secured(handle) || atomic_load(&s_central_reset_pending)) {
+        event_log_add("BLE service: invalid/unsecured request status=%d", error->status);
+        central_disconnect(handle);
+        return 0;
+    }
+    s_central_service_flags = request[1];
+    s_central_service_command = request[2];
+    memcpy(s_central_service_request_id, request + 3, 4);
+    if (!(request[1] & PHONE_SERVICE_HOLD) &&
+        (request[2] != 0 || request[3] || request[4] || request[5] || request[6])) {
+        central_disconnect(handle);
+        return 0;
+    }
+    if ((request[1] & PHONE_SERVICE_HOLD) && (!s_central_service_result_handle ||
+        !(request[3] || request[4] || request[5] || request[6]))) {
+        central_disconnect(handle);
+        return 0;
+    }
+    if (!central_service_owner(handle)) {
+        event_log_add("BLE service: owner access denied");
+        if (request[1] & PHONE_SERVICE_HOLD) central_service_send_result(handle, 1);
+        else central_disconnect(handle);
+        return 0;
+    }
+    event_log_add("BLE service: request flags=%u command=%u", request[1], request[2]);
+    if (request[1] & PHONE_SERVICE_HOLD) {
+        if (request[2] == 0) central_service_send_result(handle, 0);
+        else if (lock_request_set_hold_open(request[2] == 1) != ESP_OK)
+            central_service_send_result(handle, 2);
+        else {
+            s_central_hold_deadline_ms = esp_timer_get_time() / 1000 + 5000;
+            central_set_phase(CENTRAL_PHASE_HOLD_WAIT, 100);
+        }
+    } else central_service_continue(handle);
+    return 0;
+}
+
+static int central_service_proof_cb(uint16_t handle, const struct ble_gatt_error *error,
+                                    struct ble_gatt_attr *attr, void *arg)
 {
     (void)arg;
     static const char expected[] = "BLE_LOCK_V1";
@@ -921,14 +1036,12 @@ static int central_web_ui_ip_proof_cb(uint16_t handle, const struct ble_gatt_err
                  OS_MBUF_PKTLEN(attr->om) == sizeof(expected) - 1 &&
                  os_mbuf_cmpf(attr->om, 0, expected, sizeof(expected) - 1) == 0;
     if (atomic_load(&s_central_reset_pending) || !central_connection_secured(handle) || !valid) {
-        event_log_add("BLE Web UI request: encrypted proof failed status=%d", error->status);
         central_disconnect(handle);
         return 0;
     }
-    if (!central_try_send_web_ui_ip(handle)) {
-        event_log_add("BLE Web UI request: owner IPv4 не готов");
+    central_set_phase(CENTRAL_PHASE_SERVICE_REQUEST_READ, CENTRAL_GATT_TIMEOUT_MS);
+    if (ble_gattc_read(handle, s_central_service_request_handle, central_service_request_cb, NULL) != 0)
         central_disconnect(handle);
-    }
     return 0;
 }
 
@@ -951,6 +1064,10 @@ static int central_chr_cb(uint16_t handle, const struct ble_gatt_error *error,
             s_central_name_handle = chr->val_handle;
         else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_beacon_web_ui_ip_uuid.u) == 0)
             s_central_web_ui_ip_handle = chr->val_handle;
+        else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_service_request_uuid.u) == 0)
+            s_central_service_request_handle = chr->val_handle;
+        else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_service_result_uuid.u) == 0)
+            s_central_service_result_handle = chr->val_handle;
         else {
             for (size_t i = 0; i < CENTRAL_WIFI_SETUP_CHUNK_COUNT; ++i) {
                 if (ble_uuid_cmp(&chr->uuid.u, &s_phone_beacon_wifi_setup_chunk_uuids[i].u) == 0) {
@@ -961,30 +1078,15 @@ static int central_chr_cb(uint16_t handle, const struct ble_gatt_error *error,
         }
         return 0;
     }
-    if (error->status == BLE_HS_EDONE && s_central_wifi_provision_candidate) {
-        if (!s_central_proof_handle || !s_central_wifi_setup_handles[0]) {
-            event_log_add("BLE provisioning: proof or Wi-Fi setup characteristic missing");
+    if (error->status == BLE_HS_EDONE && s_central_service_candidate) {
+        if (!s_central_proof_handle || !s_central_service_request_handle) {
+            event_log_add("BLE service: required characteristic missing");
             central_disconnect(handle);
             return 0;
         }
         central_set_phase(CENTRAL_PHASE_PROOF_READ, CENTRAL_GATT_TIMEOUT_MS);
-        if (ble_gattc_read(handle, s_central_proof_handle,
-                           central_proof_for_provision_cb, NULL) == 0) return 0;
-        event_log_add("BLE provisioning: proof read could not start");
-        central_disconnect(handle);
-        return 0;
-    }
-    if (error->status == BLE_HS_EDONE && s_central_webui_ip_candidate) {
-        if (!s_central_proof_handle) {
-            event_log_add("BLE Web UI request: proof characteristic missing");
+        if (ble_gattc_read(handle, s_central_proof_handle, central_service_proof_cb, NULL) != 0)
             central_disconnect(handle);
-            return 0;
-        }
-        central_set_phase(CENTRAL_PHASE_PROOF_READ, CENTRAL_GATT_TIMEOUT_MS);
-        if (ble_gattc_read(handle, s_central_proof_handle,
-                           central_web_ui_ip_proof_cb, NULL) == 0) return 0;
-        event_log_add("BLE Web UI request: proof read could not start");
-        central_disconnect(handle);
         return 0;
     }
     if (error->status == BLE_HS_EDONE && s_central_proof_handle) {
@@ -1020,6 +1122,8 @@ static int central_svc_cb(uint16_t handle, const struct ble_gatt_error *error,
         s_central_hotspot_ip_handle = 0;
         s_central_name_handle = 0;
         s_central_web_ui_ip_handle = 0;
+        s_central_service_request_handle = 0;
+        s_central_service_result_handle = 0;
         s_central_runtime_credentials_len = 0;
         central_set_phase(CENTRAL_PHASE_CHARACTERISTIC_DISCOVERY, CENTRAL_GATT_TIMEOUT_MS);
         if (ble_gattc_disc_all_chrs(handle, s_central_svc_start, s_central_svc_end,
@@ -1086,22 +1190,22 @@ static int central_gap_event(struct ble_gap_event *event, void *arg)
             const uint8_t *m = fields.mfg_data;
             if (!m || fields.mfg_data_len != 15 || m[0] != (PHONE_BEACON_COMPANY_ID & 0xff) ||
                 m[1] != (PHONE_BEACON_COMPANY_ID >> 8) || memcmp(m + 2, "LOCK", 4) ||
-                (m[6] != 1 && m[6] != 0x81 && m[6] != 0x82)) return 0;
+                (m[6] != 1 && m[6] != PHONE_SERVICE_MODE)) return 0;
             uint32_t device_id = ((uint32_t)m[7] << 24) | ((uint32_t)m[8] << 16) |
                                  ((uint32_t)m[9] << 8) | m[10];
-            bool webui_or_provisioning_beacon = m[6] == 0x81 || m[6] == 0x82;
+            bool service_beacon = m[6] == PHONE_SERVICE_MODE;
             bool registration_allowed = false;
             ble_phone_get_registration(&registration_allowed, NULL);
             if (registration_allowed) {
                 atomic_store(&s_central_suppressed_device_id_valid, false);
             } else if (atomic_load(&s_central_suppressed_device_id_valid) &&
                        atomic_load(&s_central_suppressed_device_id) == device_id &&
-                       !webui_or_provisioning_beacon) {
+                       !service_beacon) {
                 return 0;
             }
             app_config_t cfg;
             app_config_get(&cfg);
-            if (!webui_or_provisioning_beacon && disc->rssi < cfg.phone_rssi_threshold) {
+            if (!service_beacon && disc->rssi < cfg.phone_rssi_threshold) {
                 portENTER_CRITICAL(&s_central_low_rssi_lock);
                 s_central_low_rssi_count++;
                 if (disc->rssi < s_central_low_rssi_min)
@@ -1116,8 +1220,8 @@ static int central_gap_event(struct ble_gap_event *event, void *arg)
             s_central_session_id = ((uint32_t)m[11] << 24) | ((uint32_t)m[12] << 16) |
                                    ((uint32_t)m[13] << 8) | m[14];
             s_central_rssi = disc->rssi;
-            s_central_wifi_provision_candidate = m[6] == 0x81;
-            s_central_webui_ip_candidate = m[6] == 0x82;
+            s_central_service_candidate = m[6] == PHONE_SERVICE_MODE;
+            s_central_service_flags = 0;
             int64_t now_ms = esp_timer_get_time() / 1000;
             if (s_central_session_id != s_central_logged_session_id ||
                 now_ms - s_central_last_beacon_log_ms >= 30000) {
@@ -1284,9 +1388,6 @@ static int central_gap_event(struct ble_gap_event *event, void *arg)
                 led_set_configuration(false);
                 event_log_add("BLE central: новый bond проверен; pairing и режим настройки закрыты без reboot");
             }
-            if (s_central_wifi_provision_candidate) {
-                event_log_add("BLE central: Wi-Fi provisioning marker detected; protected credentials read only");
-            }
             s_central_svc_start = 0;
             central_set_phase(CENTRAL_PHASE_SERVICE_DISCOVERY, CENTRAL_GATT_TIMEOUT_MS);
             if (ble_gattc_disc_svc_by_uuid(event->enc_change.conn_handle,
@@ -1401,6 +1502,10 @@ static void central_timeout_work(struct ble_npl_event *event)
     if (phase == CENTRAL_PHASE_NEW_BOND_SETTLE) {
         event_log_add("BLE central: выдержка первого bond завершена; разрываю соединение");
         central_disconnect(s_central_handle);
+        return;
+    }
+    if (phase == CENTRAL_PHASE_HOLD_WAIT) {
+        central_service_check_hold(s_central_handle);
         return;
     }
     event_log_add("BLE central: timeout phase=%d, возвращаюсь к scan", phase);
