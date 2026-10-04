@@ -727,3 +727,29 @@ Android PhoneBeacon публикует encrypted-write characteristic `6f4f0012-
 - При изменении ползунка активный BLE advertising перезапускается с новым TX power; если реклама сейчас не активна, выбранное значение применяется при её следующем запуске.
 - Описание и шкала показывают относительные уровни, а не dBm: фактическая мощность зависит от модели телефона. RSSI threshold, который использует BLE-сканирование, сохранён отдельно.
 - ESP32-код и таймеры не менялись. Android baseline и итоговая `build-android.ps1` сборка прошли; финальный build number — 188.
+
+## 04.10.2026 — только номер сборки на экране Android
+
+- Исходная Android-сборка 194: PASS, build-android.ps1.
+- Аудит: MainActivity формирует две строки из app_version_release и app_version_timestamp. Изменение ограничено подписью внизу экрана: оставить Сборка <BUILD_NUMBER>, убрать версию и дату. BLE и настройки версии пакета не затрагиваются.
+
+
+## 04.10.2026 — подпись Сборка 195
+
+- На экране Android оставлена одна строка Сборка <номер>; версия приложения и дата сборки из блока удалены.
+- Проверка: baseline build 194 PASS; итоговый build 195 PASS через build-android.ps1, проверен diff подписи и единственный аргумент BUILD_NUMBER. Установка APK и физическая проверка не выполнялись.
+- Изменённые файлы: android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt, android_lock_beacon/app/src/main/res/values/strings.xml, android_lock_beacon/BUILD_NUMBER; корневые и Android AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+
+## 04.10.2026 — восстановление даты и времени сборки
+
+- Baseline Android build 196 PASS. Аудит: ресурс app_version_timestamp и BUILD_TIMESTAMP сохранены; требуется вернуть только TextView даты/времени в MainActivity. Подпись Сборка <номер> остаётся без версии. Предыдущее удаление даты/времени было ошибочной интерпретацией запроса.
+
+
+## 04.10.2026 — дата и время сборки восстановлены, APK 197
+
+- Исправлена ошибочная интерпретация запроса: на экране Сборка <номер> и исходная строка Собрано: <дата и время>. Версия приложения скрыта.
+- baseline 196 PASS, итоговая build-android.ps1 197 PASS; adb install -r Success на 2510DRA23E, SHA-256 установленной APK совпадает с собранной.
+- Ориентация сохранена перед установкой и восстановлена, проверка 0/0 → 0/0. Артефакт artifacts/android-rotation-before-build197-install.json. Физическая проверка UI не выполнялась.
+- Изменены MainActivity.kt, android_lock_beacon/BUILD_NUMBER, корневые и Android AUDIT.md/CHANGELOG.md/TEST_REPORT.md.
+

@@ -10,6 +10,7 @@ import android.bluetooth.BluetoothGattService
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.AdvertiseCallback
 import android.bluetooth.le.AdvertiseData
+import android.bluetooth.le.BluetoothLeAdvertiser
 import android.bluetooth.le.AdvertiseSettings
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -51,6 +52,11 @@ class PhoneBeacon(private val context: Context) {
     private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
     private var server: BluetoothGattServer? = null
     private var advertiserCallback: AdvertiseCallback? = null
+    private var activeAdvertiser: BluetoothLeAdvertiser? = null
+    private var serverGeneration = 0
+    private var serviceReady = false
+    private var advertisingStarting = false
+    private var advertisingStopRequested = false
     private val connectedPeers = LinkedHashMap<String, BluetoothDevice>()
     private val connectedPeersLock = Any()
     private var bondReceiverRegistered = false
@@ -66,99 +72,119 @@ class PhoneBeacon(private val context: Context) {
     val isWifiProvisioningActive: Boolean get() = wifiProvisioningRequested
     val isWebUiIpRequestActive: Boolean get() = webUiIpRequest
 
-    private val serverCallback = object : BluetoothGattServerCallback() {
+    private fun serverCallback(generation: Int) = object : BluetoothGattServerCallback() {
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-            val bondState = try { device.bondState } catch (_: SecurityException) { -1 }
-            val address = runCatching { device.address }.getOrNull()
-            Log.i(TAG, "GATT link address=$address deviceType=${runCatching { device.type }.getOrDefault(-1)} " +
-                "status=$status newState=$newState bondState=$bondState")
-            if (address != null) synchronized(connectedPeersLock) {
-                if (newState == BluetoothGatt.STATE_CONNECTED) connectedPeers[address] = device
-                else if (newState == BluetoothGatt.STATE_DISCONNECTED) connectedPeers.remove(address)
+            synchronized(this@PhoneBeacon) {
+                if (generation != serverGeneration) return
+
+                val bondState = try { device.bondState } catch (_: SecurityException) { -1 }
+                val address = runCatching { device.address }.getOrNull()
+                Log.i(TAG, "GATT link address=$address deviceType=${runCatching { device.type }.getOrDefault(-1)} " +
+                    "status=$status newState=$newState bondState=$bondState")
+                if (address != null) synchronized(connectedPeersLock) {
+                    if (newState == BluetoothGatt.STATE_CONNECTED) connectedPeers[address] = device
+                    else if (newState == BluetoothGatt.STATE_DISCONNECTED) connectedPeers.remove(address)
+                }
+                if (newState == BluetoothGatt.STATE_CONNECTED && !autoOpenWanted &&
+                    !isWifiProvisioningActive && !webUiIpRequest) {
+                    runCatching { server?.cancelConnection(device) }
+                        .onFailure { Log.w(TAG, "Could not reject GATT connection while Auto Open is off", it) }
+                }
+                if (newState == BluetoothGatt.STATE_DISCONNECTED && (autoOpenWanted || webUiIpRequest) &&
+                    !isWifiProvisioningActive && advertiserCallback == null && !hasConnectedPeers()) {
+                    startAdvertising()
+                }
+                if (newState != BluetoothGatt.STATE_DISCONNECTED || provisioningCredentials == null) return
+                val peer = runCatching { device.address }.getOrNull()
+                if (provisioningReadPeer == null || peer != provisioningReadPeer) {
+                    Log.i(TAG, "Ignoring disconnect before Wi-Fi credentials were read by this peer")
+                    return
+                }
+                provisioningCredentials = null
+                provisioningReadPeer = null
+                wifiProvisioningRequested = false
+                if (autoOpenWanted || webUiIpRequest) restartAdvertising() else stop()
+                Log.i(TAG, "Wi-Fi provisioning read completed; returning to normal beacon mode")
+                context.sendBroadcast(
+                    Intent(ACTION_WIFI_PROVISIONING_DISCONNECTED).setPackage(context.packageName)
+                )
+
             }
-            if (newState == BluetoothGatt.STATE_CONNECTED && !autoOpenWanted &&
-                !isWifiProvisioningActive && !webUiIpRequest) {
-                runCatching { server?.cancelConnection(device) }
-                    .onFailure { Log.w(TAG, "Could not reject GATT connection while Auto Open is off", it) }
-            }
-            if (newState == BluetoothGatt.STATE_DISCONNECTED && (autoOpenWanted || webUiIpRequest) &&
-                !isWifiProvisioningActive && advertiserCallback == null && !hasConnectedPeers()) {
-                startAdvertising()
-            }
-            if (newState != BluetoothGatt.STATE_DISCONNECTED || provisioningCredentials == null) return
-            val peer = runCatching { device.address }.getOrNull()
-            if (provisioningReadPeer == null || peer != provisioningReadPeer) {
-                Log.i(TAG, "Ignoring disconnect before Wi-Fi credentials were read by this peer")
-                return
-            }
-            provisioningCredentials = null
-            provisioningReadPeer = null
-            wifiProvisioningRequested = false
-            if (autoOpenWanted || webUiIpRequest) restartAdvertising() else stop()
-            Log.i(TAG, "Wi-Fi provisioning read completed; returning to normal beacon mode")
-            context.sendBroadcast(
-                Intent(ACTION_WIFI_PROVISIONING_DISCONNECTED).setPackage(context.packageName)
-            )
         }
 
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
-            if (!wanted || service.uuid != SERVICE_UUID) return
-            if (status == BluetoothGatt.GATT_SUCCESS) startAdvertising()
-            else Log.e(TAG, "GATT service registration failed: $status")
+            synchronized(this@PhoneBeacon) {
+                if (generation != serverGeneration) return
+
+                if (!wanted || service.uuid != SERVICE_UUID) return
+                if (status == BluetoothGatt.GATT_SUCCESS) {
+                    serviceReady = true
+                    startAdvertising()
+                }
+                else Log.e(TAG, "GATT service registration failed: $status")
+
+            }
         }
 
         override fun onCharacteristicReadRequest(
             device: BluetoothDevice, requestId: Int, offset: Int,
             characteristic: BluetoothGattCharacteristic
         ) {
-            val requestStartedNanos = SystemClock.elapsedRealtimeNanos()
-            val current = server ?: return
-            val bonded = try { device.bondState == BluetoothDevice.BOND_BONDED }
-            catch (_: SecurityException) { false }
-            val proofRead = wanted && (autoOpenWanted || wifiProvisioningRequested || webUiIpRequest) && bonded &&
-                characteristic.uuid == PROOF_UUID && offset <= PROOF.size
-            val wifiValue = provisioningCredentials
-            val wifiChunkIndex = WIFI_SETUP_CHUNK_UUIDS.indexOf(characteristic.uuid)
-            val wifiChunkStart = wifiChunkIndex * WIFI_SETUP_CHUNK_SIZE
-            val wifiChunkEnd = minOf(wifiChunkStart + WIFI_SETUP_CHUNK_SIZE, wifiValue?.size ?: 0)
-            val wifiRead = wanted && wifiProvisioningRequested && bonded && wifiValue != null &&
-                wifiChunkIndex >= 0 && wifiChunkStart < wifiValue.size && offset <= wifiChunkEnd - wifiChunkStart
-            val hotspotIpValue = hotspotIpBytes ?: ByteArray(4)
-            val hotspotIpRead = wanted && wifiProvisioningRequested && bonded && characteristic.uuid == HOTSPOT_IP_UUID &&
-                offset <= hotspotIpValue.size
-            val nameValue = if (characteristic.uuid == NAME_UUID) currentNameBytes() else null
-            val nameRead = wanted && autoOpenWanted && bonded && nameValue != null && offset <= nameValue.size
-            val autoOpenDisabledProof = wanted && !autoOpenWanted && bonded && characteristic.uuid == PROOF_UUID
-            val status = when {
-                proofRead || wifiRead || hotspotIpRead || nameRead -> BluetoothGatt.GATT_SUCCESS
-                autoOpenDisabledProof -> BluetoothGatt.GATT_READ_NOT_PERMITTED
-                else -> BluetoothGatt.GATT_FAILURE
-            }
-            val bytes = when {
-                proofRead -> PROOF
-                wifiRead -> {
-                    provisioningReadPeer = try { device.address }
-                    catch (_: SecurityException) { null }
-                    wifiValue!!.copyOfRange(wifiChunkStart, wifiChunkEnd)
+            synchronized(this@PhoneBeacon) {
+                if (generation != serverGeneration) return
+
+                val requestStartedNanos = SystemClock.elapsedRealtimeNanos()
+                val current = server ?: return
+                val bonded = try { device.bondState == BluetoothDevice.BOND_BONDED }
+                catch (_: SecurityException) { false }
+                val savedAutoEnabled = LockSettings(context).autoOpenEnabled
+                val effectiveAutoOpen = autoOpenWanted && savedAutoEnabled
+                val proofRead = wanted && (effectiveAutoOpen || wifiProvisioningRequested || webUiIpRequest) && bonded &&
+                    characteristic.uuid == PROOF_UUID && offset <= PROOF.size
+                val wifiValue = provisioningCredentials
+                val wifiChunkIndex = WIFI_SETUP_CHUNK_UUIDS.indexOf(characteristic.uuid)
+                val wifiChunkStart = wifiChunkIndex * WIFI_SETUP_CHUNK_SIZE
+                val wifiChunkEnd = minOf(wifiChunkStart + WIFI_SETUP_CHUNK_SIZE, wifiValue?.size ?: 0)
+                val wifiRead = wanted && wifiProvisioningRequested && bonded && wifiValue != null &&
+                    wifiChunkIndex >= 0 && wifiChunkStart < wifiValue.size && offset <= wifiChunkEnd - wifiChunkStart
+                val hotspotIpValue = hotspotIpBytes ?: ByteArray(4)
+                val hotspotIpRead = wanted && wifiProvisioningRequested && bonded && characteristic.uuid == HOTSPOT_IP_UUID &&
+                    offset <= hotspotIpValue.size
+                val nameValue = if (characteristic.uuid == NAME_UUID) currentNameBytes() else null
+                val nameRead = wanted && autoOpenWanted && bonded && nameValue != null && offset <= nameValue.size
+                val autoOpenDisabledProof = wanted && !effectiveAutoOpen && bonded && characteristic.uuid == PROOF_UUID
+                val status = when {
+                    proofRead || wifiRead || hotspotIpRead || nameRead -> BluetoothGatt.GATT_SUCCESS
+                    autoOpenDisabledProof -> BluetoothGatt.GATT_READ_NOT_PERMITTED
+                    else -> BluetoothGatt.GATT_FAILURE
                 }
-                hotspotIpRead -> hotspotIpValue
-                nameRead -> nameValue
-                else -> null
-            }
-            Log.i(
-                TAG,
-                "GATT read request id=$requestId uuid=${characteristic.uuid} deviceType=${device.type} " +
-                    "bondState=${device.bondState} bonded=$bonded wanted=$wanted " +
-                    "autoOpenWanted=$autoOpenWanted offset=$offset"
-            )
-            val value = bytes?.copyOfRange(offset, bytes.size)
-            try {
-                val accepted = current.sendResponse(device, requestId, status, offset, value)
-                val elapsedUs = (SystemClock.elapsedRealtimeNanos() - requestStartedNanos) / 1_000L
-                Log.i(TAG, "GATT read response id=$requestId uuid=${characteristic.uuid} " +
-                    "status=$status bytes=${value?.size ?: 0} accepted=$accepted elapsedUs=$elapsedUs")
-            } catch (e: SecurityException) {
-                Log.e(TAG, "GATT read response denied id=$requestId uuid=${characteristic.uuid}", e)
+                val bytes = when {
+                    proofRead -> PROOF
+                    wifiRead -> {
+                        provisioningReadPeer = try { device.address }
+                        catch (_: SecurityException) { null }
+                        wifiValue!!.copyOfRange(wifiChunkStart, wifiChunkEnd)
+                    }
+                    hotspotIpRead -> hotspotIpValue
+                    nameRead -> nameValue
+                    else -> null
+                }
+                Log.i(
+                    TAG,
+                    "GATT read request id=$requestId uuid=${characteristic.uuid} deviceType=${device.type} " +
+                        "bondState=${device.bondState} bonded=$bonded wanted=$wanted " +
+                        "autoOpenWanted=$autoOpenWanted savedAuto=$savedAutoEnabled offset=$offset"
+                )
+                val value = bytes?.copyOfRange(offset, bytes.size)
+                try {
+                    val accepted = current.sendResponse(device, requestId, status, offset, value)
+                    val elapsedUs = (SystemClock.elapsedRealtimeNanos() - requestStartedNanos) / 1_000L
+                    Log.i(TAG, "GATT read response id=$requestId uuid=${characteristic.uuid} " +
+                        "status=$status bytes=${value?.size ?: 0} accepted=$accepted elapsedUs=$elapsedUs")
+                } catch (e: SecurityException) {
+                    Log.e(TAG, "GATT read response denied id=$requestId uuid=${characteristic.uuid}", e)
+                }
+
             }
         }
 
@@ -166,32 +192,37 @@ class PhoneBeacon(private val context: Context) {
             device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
         ) {
-            val current = server ?: return
-            val bonded = try { device.bondState == BluetoothDevice.BOND_BONDED }
-            catch (_: SecurityException) { false }
-            val valid = wanted && autoOpenWanted && bonded && characteristic.uuid == OWNER_STATUS_UUID &&
-                !preparedWrite && offset == 0 && value.size == 1 && (value[0] == 0.toByte() || value[0] == 1.toByte())
-            if (valid) {
-                LockSettings(context).ownerAccessConfirmed = value[0] == 1.toByte()
-                context.sendBroadcast(
-                    Intent(ACTION_OWNER_STATUS_CHANGED).setPackage(context.packageName)
-                )
-            }
-            val webUiIp = if (wanted && bonded && characteristic.uuid == WEB_UI_IP_UUID &&
-                !preparedWrite && offset == 0) parseWebUiIp(value) else null
-            if (webUiIp != null) {
-                LockSettings(context).lockWifiIp = webUiIp
-                Log.i(TAG, "ESP Web UI IPv4 received over encrypted BLE")
-                context.sendBroadcast(
-                    Intent(ACTION_WEB_UI_IP_RECEIVED)
-                        .setPackage(context.packageName)
-                        .putExtra(EXTRA_WEB_UI_IP, webUiIp)
-                )
-            }
-            if (responseNeeded) {
-                val status = if (valid || webUiIp != null) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
-                try { current.sendResponse(device, requestId, status, offset, null) }
-                catch (e: SecurityException) { Log.e(TAG, "GATT owner status response denied", e) }
+            synchronized(this@PhoneBeacon) {
+                if (generation != serverGeneration) return
+
+                val current = server ?: return
+                val bonded = try { device.bondState == BluetoothDevice.BOND_BONDED }
+                catch (_: SecurityException) { false }
+                val valid = wanted && autoOpenWanted && bonded && characteristic.uuid == OWNER_STATUS_UUID &&
+                    !preparedWrite && offset == 0 && value.size == 1 && (value[0] == 0.toByte() || value[0] == 1.toByte())
+                if (valid) {
+                    LockSettings(context).ownerAccessConfirmed = value[0] == 1.toByte()
+                    context.sendBroadcast(
+                        Intent(ACTION_OWNER_STATUS_CHANGED).setPackage(context.packageName)
+                    )
+                }
+                val webUiIp = if (wanted && bonded && characteristic.uuid == WEB_UI_IP_UUID &&
+                    !preparedWrite && offset == 0) parseWebUiIp(value) else null
+                if (webUiIp != null) {
+                    LockSettings(context).lockWifiIp = webUiIp
+                    Log.i(TAG, "ESP Web UI IPv4 received over encrypted BLE")
+                    context.sendBroadcast(
+                        Intent(ACTION_WEB_UI_IP_RECEIVED)
+                            .setPackage(context.packageName)
+                            .putExtra(EXTRA_WEB_UI_IP, webUiIp)
+                    )
+                }
+                if (responseNeeded) {
+                    val status = if (valid || webUiIp != null) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
+                    try { current.sendResponse(device, requestId, status, offset, null) }
+                    catch (e: SecurityException) { Log.e(TAG, "GATT owner status response denied", e) }
+                }
+
             }
         }
     }
@@ -224,6 +255,7 @@ class PhoneBeacon(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun start() {
         autoOpenWanted = true
         if (wanted) {
@@ -236,11 +268,13 @@ class PhoneBeacon(private val context: Context) {
         startServer()
     }
 
+    @Synchronized
     fun startWebUiIpRequest() {
         webUiIpRequest = true
         if (!wanted) startServer() else restartAdvertising()
     }
 
+    @Synchronized
     fun finishWebUiIpRequest() {
         webUiIpRequest = false
         if (wifiProvisioningRequested) return
@@ -251,6 +285,7 @@ class PhoneBeacon(private val context: Context) {
         }
     }
 
+    @Synchronized
     fun startWifiProvisioning(ssid: String, password: String, hotspotIp: ByteArray?) {
         val ssidBytes = ssid.toByteArray(Charsets.UTF_8)
         val passwordBytes = password.toByteArray(Charsets.UTF_8)
@@ -266,20 +301,18 @@ class PhoneBeacon(private val context: Context) {
     }
 
     /** Suppress ordinary AUTO advertising while Android creates/resolves its hotspot. */
+    @Synchronized
     fun prepareWifiProvisioning(resumeAutoOpen: Boolean) {
         autoOpenWanted = resumeAutoOpen
         wifiProvisioningRequested = true
         provisioningCredentials = null
         provisioningReadPeer = null
         setHotspotIp(null)
-        val callback = advertiserCallback
-        advertiserCallback = null
-        try {
-            if (callback != null) bluetoothManager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
-        } catch (e: Exception) { Log.w(TAG, "Could not pause AUTO beacon for Wi-Fi setup", e) }
+        stopAdvertising()
         Log.i(TAG, "AUTO beacon paused while hotspot is being prepared")
     }
 
+    @Synchronized
     fun cancelWifiProvisioning() {
         if (!wifiProvisioningRequested) return
         wifiProvisioningRequested = false
@@ -292,28 +325,24 @@ class PhoneBeacon(private val context: Context) {
         Log.i(TAG, "Wi-Fi provisioning cancelled; beacon restored")
     }
 
+    @Synchronized
     fun setHotspotIp(address: ByteArray?) {
         hotspotIpBytes = address?.takeIf { it.size == 4 && it.any { octet -> octet != 0.toByte() } }?.copyOf()
     }
 
+    @Synchronized
     fun stopAutoOpen() {
         autoOpenWanted = false
         if (isWifiProvisioningActive || webUiIpRequest) {
             if (provisioningCredentials != null || webUiIpRequest) restartAdvertising()
             else {
-                val callback = advertiserCallback
-                advertiserCallback = null
-                try {
-                    if (callback != null) bluetoothManager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
-                } catch (e: Exception) { Log.w(TAG, "Could not pause provisioning beacon", e) }
+                stopAdvertising()
             }
         } else {
-            val callback = advertiserCallback
-            advertiserCallback = null
             val currentServer = server
             val peers = synchronized(connectedPeersLock) { connectedPeers.values.toList() }
             try {
-                if (callback != null) bluetoothManager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
+                stopAdvertising()
                 peers.forEach { peer ->
                     runCatching { currentServer?.cancelConnection(peer) }
                         .onFailure { Log.w(TAG, "Could not disconnect GATT peer while Auto Open is off", it) }
@@ -323,6 +352,7 @@ class PhoneBeacon(private val context: Context) {
         }
     }
 
+    @Synchronized
     private fun startServer() {
         if (wanted) return
         val adapter = bluetoothManager.adapter ?: return
@@ -338,6 +368,8 @@ class PhoneBeacon(private val context: Context) {
             }
             bondReceiverRegistered = true
         }
+        serverGeneration++
+        serviceReady = false
         sessionId = SecureRandom().nextInt()
         try {
             val characteristic = BluetoothGattCharacteristic(
@@ -384,7 +416,7 @@ class PhoneBeacon(private val context: Context) {
                     BluetoothGattCharacteristic.PERMISSION_READ_ENCRYPTED
                 )
             )
-            server = bluetoothManager.openGattServer(context, serverCallback)
+            server = bluetoothManager.openGattServer(context, serverCallback(serverGeneration))
             if (server?.addService(service) != true) {
                 Log.e(TAG, "GATT service could not be added")
                 stop()
@@ -407,8 +439,11 @@ class PhoneBeacon(private val context: Context) {
         return bytes.copyOf(end)
     }
 
+    @Synchronized
     private fun startAdvertising() {
-        if (!wanted || advertiserCallback != null) return
+        if (!wanted || !serviceReady || advertiserCallback != null) return
+        if (!wifiProvisioningRequested && !webUiIpRequest &&
+            (!autoOpenWanted || !LockSettings(context).autoOpenEnabled)) return
         val adapter = bluetoothManager.adapter ?: return
         val advertiser = adapter.bluetoothLeAdvertiser ?: return
         val txPowerLevel = when (LockSettings(context).phoneBeaconTxPowerLevel) {
@@ -439,32 +474,77 @@ class PhoneBeacon(private val context: Context) {
             .setIncludeDeviceName(false).setIncludeTxPowerLevel(false).build()
         val callback = object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-                Log.i(TAG, "Phone beacon active session=${sessionId.toUInt().toString(16)} " +
-                    "mode=0x${modeByte.toUByte().toString(16)} auto=$autoOpenWanted " +
-                    "webUiRequest=$webUiIpRequest provisioning=${provisioningCredentials != null}")
+                synchronized(this@PhoneBeacon) {
+                    if (advertiserCallback !== this) return
+                    advertisingStarting = false
+                    if (advertisingStopRequested) {
+                        if (stopAdvertising() && wanted && serviceReady &&
+                            (autoOpenWanted || webUiIpRequest || provisioningCredentials != null) &&
+                            (!wifiProvisioningRequested || provisioningCredentials != null)) {
+                            startAdvertising()
+                        }
+                        return
+                    }
+                    Log.i(TAG, "Phone beacon active session=${sessionId.toUInt().toString(16)} " +
+                        "mode=0x${modeByte.toUByte().toString(16)} auto=$autoOpenWanted " +
+                        "webUiRequest=$webUiIpRequest provisioning=${provisioningCredentials != null}")
+                }
             }
             override fun onStartFailure(errorCode: Int) {
-                Log.e(TAG, "Phone beacon advertising failed: $errorCode")
-                if (advertiserCallback === this) advertiserCallback = null
+                synchronized(this@PhoneBeacon) {
+                    if (advertiserCallback !== this) return
+                    val restart = advertisingStopRequested
+                    advertiserCallback = null
+                    activeAdvertiser = null
+                    advertisingStarting = false
+                    advertisingStopRequested = false
+                    Log.e(TAG, "Phone beacon advertising failed: $errorCode")
+                    if (restart && wanted && serviceReady &&
+                        (!wifiProvisioningRequested || provisioningCredentials != null)) startAdvertising()
+                }
             }
         }
+
+        activeAdvertiser = advertiser
         advertiserCallback = callback
+        advertisingStarting = true
+        advertisingStopRequested = false
         try { advertiser.startAdvertising(settings, data, callback) }
         catch (e: Exception) {
             advertiserCallback = null
+            activeAdvertiser = null
+            advertisingStarting = false
             Log.e(TAG, "Phone beacon advertising request failed", e)
         }
     }
 
-    private fun restartAdvertising() {
-        val callback = advertiserCallback
-        advertiserCallback = null
+    /** Keep the callback until registration finishes; early cancellation can orphan an OEM advertising set. */
+    @Synchronized
+    private fun stopAdvertising(): Boolean {
+        val callback = advertiserCallback ?: return true
+        if (advertisingStarting) {
+            advertisingStopRequested = true
+            Log.i(TAG, "Beacon stop deferred until advertising registration completes")
+            return false
+        }
         try {
-            if (callback != null) bluetoothManager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
-        } catch (e: Exception) { Log.w(TAG, "Could not restart beacon advertising", e) }
-        startAdvertising()
+            activeAdvertiser?.stopAdvertising(callback)
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not stop beacon advertising; retaining callback", e)
+            return false
+        }
+        advertiserCallback = null
+        activeAdvertiser = null
+        advertisingStopRequested = false
+        return true
     }
 
+    @Synchronized
+    private fun restartAdvertising() {
+        if (stopAdvertising()) startAdvertising()
+    }
+
+    @Synchronized
     fun applyConfiguredTransmitPower() {
         if (advertiserCallback != null) restartAdvertising()
     }
@@ -473,22 +553,23 @@ class PhoneBeacon(private val context: Context) {
         connectedPeers.isNotEmpty()
     }
 
+    @Synchronized
     fun stop() {
         wanted = false
+        serviceReady = false
+        serverGeneration++
         autoOpenWanted = false
         wifiProvisioningRequested = false
         webUiIpRequest = false
         provisioningCredentials = null
         provisioningReadPeer = null
         hotspotIpBytes = null
-        val callback = advertiserCallback
-        advertiserCallback = null
         val currentServer = server
         val peers = synchronized(connectedPeersLock) {
             connectedPeers.values.toList().also { connectedPeers.clear() }
         }
         try {
-            if (callback != null) bluetoothManager.adapter?.bluetoothLeAdvertiser?.stopAdvertising(callback)
+            stopAdvertising()
             peers.forEach { peer ->
                 runCatching { currentServer?.cancelConnection(peer) }
                     .onFailure { Log.w(TAG, "Could not cancel GATT connection during beacon stop", it) }

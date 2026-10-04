@@ -37,7 +37,7 @@
     <string name="firmware_version">Прошивка ESP32: %1$s</string>
     <string name="firmware_version_unknown">Прошивка ESP32: неизвестна</string>
     <string name="app_version_timestamp">Собрано: %1$s</string>
-    <string name="app_version_release">Версия приложения %1$s (сборка %2$d)</string>
+    <string name="app_version_release">Сборка %1$d</string>
     <string name="privacy_policy_button">Политика конфиденциальности</string>
     <string name="privacy_policy_url" translatable="false">https://uah0.github.io/thekidlock/privacy/</string>
     <string name="section_access">ДОСТУП</string>

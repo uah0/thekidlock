@@ -939,7 +939,6 @@ class MainActivity : Activity() {
                 addView(TextView(this@MainActivity).apply {
                     text = getString(
                         R.string.app_version_release,
-                        BuildConfig.VERSION_NAME,
                         BuildConfig.BUILD_NUMBER
                     )
                     textSize = 12f

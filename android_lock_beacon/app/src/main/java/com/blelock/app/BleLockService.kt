@@ -220,7 +220,8 @@ class BleLockService : Service(), BleRepository.Listener {
             addAction(Intent.ACTION_SCREEN_OFF)
         }
         if (Build.VERSION.SDK_INT >= 33) {
-            registerReceiver(bluetoothStateReceiver, stateFilter, RECEIVER_NOT_EXPORTED)
+            // Bluetooth broadcasts can originate from the privileged Bluetooth UID.
+            registerReceiver(bluetoothStateReceiver, stateFilter, RECEIVER_EXPORTED)
             registerReceiver(phoneBeaconReceiver,
                 IntentFilter().apply {
                     addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
@@ -237,6 +238,8 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // A bound service survives stopSelf; a new start must revive command handling.
+        stopping = false
         if (intent?.action == ACTION_BEACON_TX_POWER_CHANGED) {
             phoneBeacon.applyConfiguredTransmitPower()
             return if (mode == Mode.IDLE) {
@@ -714,7 +717,8 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun setAutomaticModeInternal(enabled: Boolean) {
-        if (stopping) return
+        if (stopping && enabled) return
+        bluetoothAvailable = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
         if (!enabled) {
             if (phoneBeacon.isWifiProvisioningActive) {
                 phoneBeacon.stopAutoOpen()
@@ -813,8 +817,8 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun handleBluetoothOn() {
-        if (stopping || mode == Mode.IDLE) return
         bluetoothAvailable = true
+        if (stopping || mode == Mode.IDLE) return
         resetReconnectBackoff()
         if (repositoryActive) {
             repository.close()
@@ -835,6 +839,7 @@ class BleLockService : Service(), BleRepository.Listener {
 
     private fun stopSelfSafely() {
         stopping = true
+        phoneBeacon.stop()
         handler.removeCallbacksAndMessages(null)
         if (::repository.isInitialized && repositoryActive) repository.close()
         repositoryActive = false

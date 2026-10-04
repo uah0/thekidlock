@@ -735,3 +735,25 @@ Screen-off проверка подтвердила native auto-connect запу�
 - Debug APK установлена через ADB Wi-Fi на телефон `2510DRA23E` (`192.168.1.65:37521`).
 - Исходная и итоговая ориентация совпала: `accelerometer_rotation=0`, `user_rotation=0`.
 - Артефакт до/после установки: `artifacts/android-rotation-before-beacon-tx-power-build188-install-20261004.json`.
+## 04.10.2026 — подпись Сборка 195
+
+- На экране Android оставлена одна строка Сборка <номер>; версия приложения и дата сборки из блока удалены.
+- Проверка: baseline build 194 PASS; итоговый build 195 PASS через build-android.ps1, проверен diff подписи и единственный аргумент BUILD_NUMBER. Установка APK и физическая проверка не выполнялись.
+- Изменённые файлы: android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt, android_lock_beacon/app/src/main/res/values/strings.xml, android_lock_beacon/BUILD_NUMBER; корневые и Android AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+
+## 04.10.2026 — установка Android сборки 195
+
+- Телефон 2510DRA23E найден по прежнему IP с новым ADB-портом 192.168.1.65:42223.
+- adb install -r: Success. Установлена APK сборки 195 с подписью Сборка <номер> без версии и даты.
+- accelerometer_rotation/user_rotation сохранены перед установкой и восстановлены; повторное чтение подтвердило 0/0 → 0/0. Артефакт: artifacts/android-rotation-before-build195-install.json.
+- Изменены только записи корневых и Android CHANGELOG.md/TEST_REPORT.md; повторная сборка для установки готовой APK не выполнялась. Проверка UI на экране не выполнялась.
+
+
+## 04.10.2026 — дата и время сборки восстановлены, APK 197
+
+- Исправлена ошибочная интерпретация запроса: на экране Сборка <номер> и исходная строка Собрано: <дата и время>. Версия приложения скрыта.
+- baseline 196 PASS, итоговая build-android.ps1 197 PASS; adb install -r Success на 2510DRA23E, SHA-256 установленной APK совпадает с собранной.
+- Ориентация сохранена перед установкой и восстановлена, проверка 0/0 → 0/0. Артефакт artifacts/android-rotation-before-build197-install.json. Физическая проверка UI не выполнялась.
+- Изменены MainActivity.kt, android_lock_beacon/BUILD_NUMBER, корневые и Android AUDIT.md/CHANGELOG.md/TEST_REPORT.md.
+

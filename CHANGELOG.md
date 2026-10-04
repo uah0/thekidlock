@@ -3342,3 +3342,86 @@ SHA-256 установленного через `adb pull` APK совпадае�
 - Из Web UI удалены селектор, поле мощности из `/api/config` и маршрут `/api/ble/power`. Сохранение порога RSSI и таймера A продолжает работать своим прежним маршрутом.
 - `build-esp32.ps1`: baseline build 318 PASS; builds 319 и 320 PASS. После каждой успешной ESP-сборки выполнена OTA; замок подтвердил `10.0.317 → 10.0.318 → 10.0.319 → 10.0.320`.
 - Android APK не изменялась: legacy ESP settings controls в текущей архитектуре не подключены к экрану телефонного сервиса.
+
+## 04.10.2026 — удаление старого BLE Peripheral ESP32
+
+- Перед изменениями создан резервный коммит `33ac9ad`.
+- Удалены advertising ESP, рекламный UUID/имя BLE Lock, старый GATT-сервер и характеристики команд, admin config/state/schema/events/bonds, OTA config/status и имени телефона.
+- Удалены Peripheral GAP callbacks, шесть входящих слотов, их RSSI watchdog, перезапуск рекламы и controller accept list.
+- Роли NimBLE Peripheral/Broadcaster выключены; Observer/Central сохранены. Инициализация локального адреса теперь выполняется при синхронизации Central.
+- Сохранены BLE scanner, phone beacon proof, bonding/NVS owner/имена, регистрация, таймауты Central, provisioning и передача Web UI IPv4; OTA, Wi-Fi, Web UI, MQTT, ThingSpeak и автомат замка продолжают использовать существующий код.
+- Диагностический BLE-статус использует действующее Central-соединение; удаление bond завершает его. Фиксированная мощность +9 dBm применяется без ADV API.
+- Изменённые файлы: `main/ble_phone.c`, `main/ble_phone.h`, `sdkconfig`, `sdkconfig.defaults`, `sdkconfig.defaults.esp32s3`, `BUILD_NUMBER`, `README.md`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+- Android PhoneBeacon advertising и защищённый GATT-сервер являются текущей схемой и сохранены. APK не изменён.
+
+- Сборка после восстановления общей проверки bond: PASS, 10.0.323. Размер образа 0x1469d0 (1 337 808 байт), на 36 288 байт меньше baseline. Общие и S3 defaults согласованы: только Central/Observer.
+- Финальная сборка: 10.0.324, успешна. OTA новой прошивки заблокирована недоступностью текущего замка; последняя подтверждённая версия на устройстве 10.0.321.
+
+## 04.10.2026 — прошивка после восстановления доступности замка
+
+- Повторная OTA успешна: 10.0.321 → 10.0.324, возврат устройства и firmware_version подтверждены.
+- При чтении журнала обнаружена ошибка discovery сервиса маяка телефона (status=14); успешная работа сценариев телефона пока не подтверждена.
+
+## 04.10.2026 — жизненный цикл BLE-маяка телефона
+
+- PhoneBeacon: общий монитор для GATT callbacks и команд lifecycle, отсечение callbacks закрытого поколения, готовность сервиса перед запуском рекламы, остановка через сохранённый advertiser.
+- BleLockService: приём системных Bluetooth events от privileged UID; обновление состояния адаптера при переключении AUTO, восстановление после STATE_ON.
+- Затронуты PhoneBeacon.kt, BleLockService.kt, android_lock_beacon/BUILD_NUMBER и отчёты AUDIT.md/CHANGELOG.md/TEST_REPORT.md. Алгоритм замка и таймеры ESP не менялись.
+- Второй этап: остановка и замена рекламы откладываются до завершения её регистрации; при ошибке stop сохраняется callback для предотвращения нового параллельного набора.
+- Build 191 установлен на Redmi Note 15. При восстановлении Bluetooth AUTO реклама и защищённый GATT proof запускаются автоматически. Ранняя отмена рекламы до onStartSuccess устранена.
+- Физическая проверка build 191 завершена: автоматическое восстановление после Bluetooth disable/enable, 134 секунды стабильного AUTO, открытие Web UI через hotspot и стабильный AUTO после возврата. Новых orphan advertising сообщений нет. Ориентация сохранена 0/0.
+
+## 04.10.2026 — выключение AUTO в живой bound service
+
+- Устранено сохранение stopping=true после повторного запуска службы, из-за которого выключение AUTO игнорировалось.
+- stopSelfSafely немедленно останавливает PhoneBeacon, не дожидаясь onDestroy bound service. Команда выключения не отбрасывается при stopping=true.
+- Ordinary AUTO advertising/proof дополнительно проверяет saved auto_open_enabled. Настройки/provisioning сохраняют защищённый GATT.
+- Изменены BleLockService.kt, PhoneBeacon.kt, Android BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- Build 193 собран и установлен. Физически подтверждены три цикла ON/OFF и повторное ON/OFF после Web UI при AUTO=false; выключенное AUTO больше не удерживает замок открытым. Итоговое состояние: AUTO=false, LOCKED, hold_open=false. Ориентация сохранена 0/0.
+
+## 04.10.2026 — подпись Сборка 195
+
+- На экране Android оставлена одна строка Сборка <номер>; версия приложения и дата сборки из блока удалены.
+- Проверка: baseline build 194 PASS; итоговый build 195 PASS через build-android.ps1, проверен diff подписи и единственный аргумент BUILD_NUMBER. Установка APK и физическая проверка не выполнялись.
+- Изменённые файлы: android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt, android_lock_beacon/app/src/main/res/values/strings.xml, android_lock_beacon/BUILD_NUMBER; корневые и Android AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+
+## 04.10.2026 — установка Android сборки 195
+
+- Телефон 2510DRA23E найден по прежнему IP с новым ADB-портом 192.168.1.65:42223.
+- adb install -r: Success. Установлена APK сборки 195 с подписью Сборка <номер> без версии и даты.
+- accelerometer_rotation/user_rotation сохранены перед установкой и восстановлены; повторное чтение подтвердило 0/0 → 0/0. Артефакт: artifacts/android-rotation-before-build195-install.json.
+- Изменены только записи корневых и Android CHANGELOG.md/TEST_REPORT.md; повторная сборка для установки готовой APK не выполнялась. Проверка UI на экране не выполнялась.
+
+
+## 04.10.2026 — дата и время сборки восстановлены, APK 197
+
+- Исправлена ошибочная интерпретация запроса: на экране Сборка <номер> и исходная строка Собрано: <дата и время>. Версия приложения скрыта.
+- baseline 196 PASS, итоговая build-android.ps1 197 PASS; adb install -r Success на 2510DRA23E, SHA-256 установленной APK совпадает с собранной.
+- Ориентация сохранена перед установкой и восстановлена, проверка 0/0 → 0/0. Артефакт artifacts/android-rotation-before-build197-install.json. Физическая проверка UI не выполнялась.
+- Изменены MainActivity.kt, android_lock_beacon/BUILD_NUMBER, корневые и Android AUDIT.md/CHANGELOG.md/TEST_REPORT.md.
+
+
+## 04.10.2026 — консервативная очистка проекта
+
+- Аудит: текущие сборочные скрипты используют .gradle-codex/.android; ссылок на .gradle-local в скриптах и настройках не найдено. Два ZIP-архива не входят в сборки; корневая памятка #U...txt содержит старые команды COM29 и не используется проектом.
+- Из проекта в C:\Dev\ble-lock-project-cleanup-20261004 перенесены .gradle-local (5255 файлов, 890633418 байт), ble-lock-project.zip, android_lock_beacon/android_lock_beacon.zip и корневая памятка #U...txt. Резервная копия сохранена, место на диске не освобождалось.
+- Автоматическая проверка отклонила команду безвозвратного удаления (blocked by policy, без подробной причины); вместо удаления выполнен обратимый перенос с проверкой абсолютных путей.
+- Исходники, незакоммиченные изменения кода, artifacts, снимки, ble-foreva, текущие build outputs, managed_components и ключи подписи сохранены.
+- Проверка: все четыре исходных пути отсутствуют, резервные пути существуют; используемые скрипты и каталоги окружения сохранены. Компиляция не выполнялась: код, ресурсы приложений и граф сборки не изменены.
+- Изменённые файлы: три отслеживаемых файла убраны из проекта (два ZIP и памятка), обновлены AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Старый ignored кэш перенесён отдельно.
+
+
+## 04.10.2026 — повторная попытка удаления резервной папки
+
+- Пользователь явно подтвердил окончательное удаление. Проверены абсолютный путь C:\Dev\ble-lock-project-cleanup-20261004 и содержимое: 5258 файлов, 903196884 байт.
+- Команда Remove-Item отклонена автоматической проверкой: blocked by policy, подробная причина не предоставлена. Удаление не выполнено; резервная папка сохранена. Код и сборки не менялись.
+
+
+## 04.10.2026 — устаревшие документы собраны в одну папку
+
+- В .obsolete-docs-20261004 перенесены 9 документов: NEXT_AGENT.md, ANDROID_LOCK_INTERACTION_SIMPLE.md, AUDIT_MULTI_SLOT.md, BANK_GRADE_BLE_MIGRATION_PLAN.md, TASK_ANDROID_BLE_APP.md, TASK_BLE_PHONE.md, AP_MODE_PLAN.md, DECLARATIVE_UI_SPEC.md, CODEX_TASK_BLE_BOND_RSSI.md.
+- Удаление собранной папки явно запрошено пользователем, но команда Remove-Item отклонена автоматической проверкой: blocked by policy, без подробной причины. Папка и документы остаются; окончательное удаление не выполнено.
+- Сохранены AGENTS.md, обязательные отчёты, README, AI_AGENT_COMPONENT.md, LOCK_AUTOMAT_ALGORITHM.md, ULP_ALGORITHM_FLOWCHART.md, ULP_ELECTRONICS_ENGINEERING.md, документация публикации Android, все CMakeLists.txt. Исходники не изменены, компиляция не выполнялась.
+- Проверка: все 9 документов находятся в целевой папке, обязательные документы на месте. Изменённые файлы: 9 перемещённых документов и корневые AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Исторические упоминания перемещённых файлов в отчётах сохранены.
+
