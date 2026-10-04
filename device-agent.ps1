@@ -4,7 +4,7 @@ param(
     [ValidateSet('capabilities', 'command', 'discover', 'info', 'status', 'ulp', 'events', 'snapshot',
                  'watch', 'open', 'close', 'auto', 'always-open',
                  'toggle-hold-open', 'arm-open', 'disable-auto-close',
-                 'ulp-lock', 'ulp-unlock', 'buzzer', 'diagnostics-on',
+                 'ulp-lock', 'ulp-unlock', 'ulp-gate-test', 'ulp-gate-test-stop', 'buzzer', 'diagnostics-on',
                  'diagnostics-off', 'log', 'monitor', 'restart', 'flash')]
     [string]$Action = 'snapshot',
     [Parameter(Position=1)]

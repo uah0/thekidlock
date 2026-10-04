@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 void remote_log_init(void);
+void remote_log_set_serial_enabled(bool enabled);
 size_t remote_log_read(uint64_t since, char *out, size_t out_size,
                        uint64_t *next_cursor, uint64_t *oldest_cursor,
                        bool *dropped);

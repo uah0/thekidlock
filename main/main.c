@@ -164,7 +164,9 @@ static void ulp_gate_diagnostic_task(void *arg)
                 d.close_reject_counter != previous.close_reject_counter ||
                 d.close_reject_latched != previous.close_reject_latched ||
                 d.close_verify_state != previous.close_verify_state ||
-                d.event_sequence != previous.event_sequence;
+                d.event_sequence != previous.event_sequence ||
+                (d.fsm_state == LOCK_FSM_GATE_TEST &&
+                 d.sense_raw != previous.sense_raw);
             bool verbose_edge = s_ulp_diagnostics_verbose &&
                 (d.gate_high_counter != previous_high ||
                  d.gate_low_counter != previous_low);

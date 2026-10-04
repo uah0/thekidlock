@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include "esp_err.h"
 
 #define WIFI_OTA_SSID_MAX 32
@@ -11,6 +12,10 @@
 esp_err_t wifi_ota_init(void);
 esp_err_t wifi_ota_set_config(const char *payload, size_t length);
 esp_err_t wifi_ota_set_runtime_config(const char *payload, size_t length);
+/* Phone hotspot IPv4 in network byte order; NULL clears it. RAM-only session state. */
+esp_err_t wifi_ota_set_runtime_phone_ip(const uint8_t address[4]);
+bool wifi_ota_get_runtime_phone_ip(uint8_t address_out[4]);
+bool wifi_ota_is_runtime_phone_session(void);
 esp_err_t wifi_ota_get_config(char *out, size_t out_size);
 esp_err_t wifi_ota_get_web_config(char *out, size_t out_size);
 bool wifi_ota_password_configured(void);

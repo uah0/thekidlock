@@ -55,6 +55,7 @@ static atomic_uint s_connect_attempts;
 static atomic_uint s_last_disconnect_reason;
 static atomic_uint s_last_disconnect_ms;
 static atomic_bool s_runtime_source;
+static uint8_t s_runtime_phone_ip[4];
 
 static const char *wifi_reason_name(unsigned reason)
 {
@@ -116,9 +117,47 @@ static void activate_saved_config(void)
 static void activate_saved_config_locked(void)
 {
     atomic_store(&s_runtime_source, false);
+    memset(s_runtime_phone_ip, 0, sizeof(s_runtime_phone_ip));
     strcpy(s_ssid, s_saved_ssid);
     strcpy(s_password, s_saved_password);
     strcpy(s_url, s_saved_url);
+}
+
+esp_err_t wifi_ota_set_runtime_phone_ip(const uint8_t address[4])
+{
+    if (!s_state_mutex) return ESP_ERR_INVALID_STATE;
+    uint8_t value[4] = {0};
+    if (address) {
+        memcpy(value, address, sizeof(value));
+        bool all_zero = value[0] == 0 && value[1] == 0 && value[2] == 0 && value[3] == 0;
+        bool all_broadcast = value[0] == 255 && value[1] == 255 && value[2] == 255 && value[3] == 255;
+        if (!all_zero && (all_broadcast || value[0] == 127 || value[0] >= 224 ||
+                          (value[0] == 169 && value[1] == 254))) {
+            return ESP_ERR_INVALID_ARG;
+        }
+    }
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    memcpy(s_runtime_phone_ip, value, sizeof(value));
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return ESP_OK;
+}
+
+bool wifi_ota_get_runtime_phone_ip(uint8_t address_out[4])
+{
+    if (!address_out || !s_state_mutex) return false;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    memcpy(address_out, s_runtime_phone_ip, sizeof(s_runtime_phone_ip));
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return address_out[0] || address_out[1] || address_out[2] || address_out[3];
+}
+
+bool wifi_ota_is_runtime_phone_session(void)
+{
+    if (!s_state_mutex) return false;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    bool result = atomic_load(&s_runtime_source);
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return result;
 }
 
 static void set_status_locked(const char *status);
@@ -217,6 +256,32 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
                  reason, wifi_reason_name(reason), e ? e->rssi : 0,
                  s_reconnect_enabled, wifi_source(), s_ssid, s_status);
         s_wifi_connected = false;
+        bool event_matches_phone = atomic_load(&s_runtime_source) && e && e->ssid_len > 0 &&
+            e->ssid_len == strlen(s_ssid) && memcmp(e->ssid, s_ssid, e->ssid_len) == 0;
+        if (event_matches_phone) {
+            ESP_LOGI(TAG, "Phone hotspot disconnected; restoring saved home Wi-Fi");
+            activate_saved_config_locked();
+            xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT);
+            if (s_auto_connect && s_saved_ssid[0] && s_saved_password[0]) {
+                wifi_config_t config = {0};
+                memcpy(config.sta.ssid, s_ssid, strnlen(s_ssid, sizeof(config.sta.ssid)));
+                memcpy(config.sta.password, s_password, strnlen(s_password, sizeof(config.sta.password)));
+                esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &config);
+                if (err == ESP_OK) {
+                    set_status("CONNECTING_WIFI");
+                    err = esp_wifi_connect();
+                }
+                if (err != ESP_OK) {
+                    set_status("ERROR_WIFI");
+                    ESP_LOGW(TAG, "saved Wi-Fi restore failed to start: %s", esp_err_to_name(err));
+                }
+            } else {
+                s_reconnect_enabled = false;
+                set_status("IDLE");
+                (void)esp_wifi_stop();
+            }
+            return;
+        }
         set_status("ERROR_WIFI");
         /* A disconnect event can belong to the previous connection when
          * runtime credentials replace an already running Web UI.  Do not
@@ -242,8 +307,9 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
         /* web_task only publishes readiness on its initial connection. A later
          * reconnect must refresh the BLE-visible status and IP as well. */
         if (s_web_active && !s_task_running) {
-            set_web_ready_status(&e->ip_info);
-            ESP_LOGI(TAG, "WiFiDiag IP recovered: Web status refreshed; saved priority restored");
+            if (atomic_load(&s_runtime_source)) set_web_ready_status(&e->ip_info);
+            else set_status("WIFI_CONNECTED");
+            ESP_LOGI(TAG, "WiFiDiag IP recovered: status refreshed source=%s", wifi_source());
         } else if (strcmp(s_status, "ERROR_WIFI") == 0) {
             set_status(s_task_running ? "CONNECTING_WIFI" :
                        s_web_task_running ? "CONNECTING_WEB" : "WIFI_CONNECTED");
@@ -389,27 +455,11 @@ esp_err_t wifi_ota_set_runtime_config(const char *payload, size_t length)
 static esp_err_t wifi_ota_set_runtime_config_locked(const char *payload, size_t length)
 {
     if (s_task_running || s_web_task_running) return ESP_ERR_INVALID_STATE;
-    unsigned last_reason = atomic_load(&s_last_disconnect_reason);
-    unsigned age_ms = (unsigned)(esp_timer_get_time() / 1000) - atomic_load(&s_last_disconnect_ms);
     ESP_LOGI(TAG, "WiFiDiag phone_request saved_ssid='%s' auto_connect=%d credentials_complete=%d status=%s connected=%d web_active=%d web_task=%d",
              s_saved_ssid, s_auto_connect, s_saved_ssid[0] && s_saved_password[0],
              s_status, s_wifi_connected, s_web_active, s_web_task_running);
-    ESP_LOGI(TAG, "WiFiDiag phone_request last_disconnect=%u(%s) age_ms=%u attempts=%u (historical event, may belong to previous connection)",
-             last_reason, wifi_reason_name(last_reason), last_reason ? age_ms : 0,
-             atomic_load(&s_connect_attempts));
     wifi_ap_record_t current_ap = {0};
     esp_err_t ap_err = s_wifi_stack_ready ? esp_wifi_sta_get_ap_info(&current_ap) : ESP_ERR_INVALID_STATE;
-    /* An old status string must never override a working preferred connection.
-     * Compare the actual AP, not s_ssid (which may have been reconfigured). */
-    bool saved_connected = s_wifi_connected && ap_err == ESP_OK &&
-        strncmp((const char *)current_ap.ssid, s_saved_ssid, sizeof(current_ap.ssid)) == 0;
-    if (s_auto_connect && s_saved_ssid[0] != '\0' && s_saved_password[0] != '\0' &&
-        (saved_connected || strcmp(s_status, "ERROR_WIFI") != 0)) {
-        ESP_LOGW(TAG, "runtime Wi-Fi rejected: saved auto-connect is active (status=%s saved_connected=%d current_ap='%.*s')",
-                 s_status, saved_connected, 32, (const char *)current_ap.ssid);
-        event_log_add("WiFiDiag phone rejected: saved priority");
-        return ESP_ERR_INVALID_STATE;
-    }
     if (!payload || length == 0 || length > WIFI_OTA_SSID_MAX + WIFI_OTA_PASSWORD_MAX + 1 || memchr(payload, 0, length)) {
         ESP_LOGW(TAG, "WiFiDiag phone rejected: invalid payload length");
         return ESP_ERR_INVALID_ARG;
@@ -429,12 +479,9 @@ static esp_err_t wifi_ota_set_runtime_config_locked(const char *payload, size_t 
         ESP_LOGW(TAG, "WiFiDiag phone rejected: invalid SSID/password length");
         return ESP_ERR_INVALID_ARG;
     }
-    const char *decision = !s_auto_connect ? "auto_connect_disabled" :
-        (!s_saved_ssid[0] || !s_saved_password[0]) ? "saved_credentials_incomplete" :
-        "status_ERROR_WIFI";
-    ESP_LOGW(TAG, "WiFiDiag phone accepted ssid='%s' reason=%s current_ap='%.*s' ap_info=%s; saved availability not rechecked by current policy",
-             copy, decision, 32, (const char *)current_ap.ssid, esp_err_to_name(ap_err));
-    event_log_add("WiFiDiag phone accepted: %s", decision);
+    ESP_LOGI(TAG, "WiFiDiag phone hotspot selected ssid='%s' current_ap='%.*s' ap_info=%s auto_connect=%d",
+             copy, 32, (const char *)current_ap.ssid, esp_err_to_name(ap_err), s_auto_connect);
+    event_log_add("WiFiDiag phone hotspot selected");
     stop_current_web_connection();
     atomic_store(&s_runtime_source, true);
     strcpy(s_ssid, copy);
@@ -734,11 +781,13 @@ static void web_task(void *arg)
             s_web_active = true;
             esp_netif_ip_info_t ip_info;
             if (esp_netif_get_ip_info(s_sta_netif, &ip_info) == ESP_OK) {
-                set_web_ready_status(&ip_info);
+                if (atomic_load(&s_runtime_source)) set_web_ready_status(&ip_info);
+                else set_status("WIFI_CONNECTED");
             } else {
-                set_web_ready_status(NULL);
+                if (atomic_load(&s_runtime_source)) set_web_ready_status(NULL);
+                else set_status("WIFI_CONNECTED");
             }
-            if (s_auto_update) {
+            if (s_auto_update && !atomic_load(&s_runtime_source)) {
                 esp_err_t ota_err = wifi_ota_check_for_update();
                 if (ota_err != ESP_OK) {
                     ESP_LOGW(TAG, "automatic OTA check not started: %s",

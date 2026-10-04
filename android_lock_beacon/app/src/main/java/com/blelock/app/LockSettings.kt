@@ -31,6 +31,12 @@ class LockSettings(context: Context) {
             preferences.edit().putBoolean(KEY_AUTO_OPEN, value).commit()
         }
 
+    var ownerAccessConfirmed: Boolean
+        get() = preferences.getBoolean(KEY_OWNER_ACCESS_CONFIRMED, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_OWNER_ACCESS_CONFIRMED, value).commit()
+        }
+
     var batteryOptimizationNoticeShown: Boolean
         get() = preferences.getBoolean(KEY_BATTERY_NOTICE_SHOWN, false)
         set(value) {
@@ -49,8 +55,14 @@ class LockSettings(context: Context) {
             preferences.edit().putString(KEY_LOCK_ADDRESS, value).commit()
         }
 
+    var lockWifiIp: String?
+        get() = preferences.getString(KEY_LOCK_WIFI_IP, null)
+        set(value) {
+            preferences.edit().putString(KEY_LOCK_WIFI_IP, value).commit()
+        }
+
     var webUiCountdownSeconds: Int
-        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 10).coerceIn(1, 60)
+        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 6).coerceIn(1, 60)
         set(value) {
             preferences.edit().putInt(KEY_WEB_UI_COUNTDOWN_SECONDS, value.coerceIn(1, 60)).commit()
         }
@@ -64,15 +76,33 @@ class LockSettings(context: Context) {
                 .commit()
         }
 
+    var phoneBeaconTxPowerLevel: Int
+        get() = preferences.getInt(
+            KEY_PHONE_BEACON_TX_POWER_LEVEL,
+            DEFAULT_PHONE_BEACON_TX_POWER_LEVEL
+        ).coerceIn(MIN_PHONE_BEACON_TX_POWER_LEVEL, MAX_PHONE_BEACON_TX_POWER_LEVEL)
+        set(value) {
+            preferences.edit().putInt(
+                KEY_PHONE_BEACON_TX_POWER_LEVEL,
+                value.coerceIn(MIN_PHONE_BEACON_TX_POWER_LEVEL, MAX_PHONE_BEACON_TX_POWER_LEVEL)
+            ).commit()
+        }
+
     companion object {
         private const val KEY_AUTO_OPEN = "auto_open_enabled"
+        private const val KEY_OWNER_ACCESS_CONFIRMED = "owner_access_confirmed"
         private const val KEY_BATTERY_NOTICE_SHOWN = "battery_optimization_notice_shown"
         private const val KEY_AUTOSTART_NOTICE_SHOWN = "autostart_notice_shown"
         private const val KEY_LOCK_ADDRESS = "lock_address"
+        private const val KEY_LOCK_WIFI_IP = "lock_wifi_ip"
         private const val KEY_WEB_UI_COUNTDOWN_SECONDS = "web_ui_countdown_seconds"
         private const val KEY_RSSI_THRESHOLD = "rssi_threshold"
+        private const val KEY_PHONE_BEACON_TX_POWER_LEVEL = "phone_beacon_tx_power_level"
         private const val DEFAULT_RSSI_THRESHOLD = -75
         private const val MIN_RSSI_THRESHOLD = -100
         private const val MAX_RSSI_THRESHOLD = -30
+        internal const val DEFAULT_PHONE_BEACON_TX_POWER_LEVEL = 3
+        internal const val MIN_PHONE_BEACON_TX_POWER_LEVEL = 0
+        internal const val MAX_PHONE_BEACON_TX_POWER_LEVEL = 3
     }
 }

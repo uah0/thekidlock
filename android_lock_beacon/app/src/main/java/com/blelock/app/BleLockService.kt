@@ -27,6 +27,8 @@ class BleLockService : Service(), BleRepository.Listener {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var repository: BleRepository
     private lateinit var settings: LockSettings
+    private lateinit var phoneBeacon: PhoneBeacon
+    private var hotspotSessionId: String? = null
     private var openSentForPresence = false
     private val autoOpenPresenceGate = AutoOpenPresenceGate()
     private var autoOpenWritePending = false
@@ -58,7 +60,8 @@ class BleLockService : Service(), BleRepository.Listener {
 
         fun unregisterClient(client: BleRepository.Listener) {
             clients.remove(client)
-            if (clients.isEmpty() && !settings.autoOpenEnabled && mode == Mode.ADMIN) {
+            if (clients.isEmpty() && !settings.autoOpenEnabled &&
+                !settings.ownerAccessConfirmed && mode == Mode.ADMIN) {
                 // ADMIN is also the connection-holding mode used while the main
                 // screen is visible. Once the last UI client goes away and
                 // automatic opening is disabled, there is no reason to retain
@@ -96,10 +99,9 @@ class BleLockService : Service(), BleRepository.Listener {
                 autoOffCloseWriteInFlight = false
                 setAutomaticModeInternal(true)
             } else {
-                autoOffClosePending = true
+                autoOffClosePending = false
                 autoOffCloseWriteInFlight = false
                 setAutomaticModeInternal(false)
-                trySendAutoOffClose()
             }
         }
         override fun openNow() = repository.openNow()
@@ -115,6 +117,10 @@ class BleLockService : Service(), BleRepository.Listener {
         override fun close() = Unit
 
         fun requestAdminConnection() = requestAdminConnectionInternal()
+
+        fun verifyOwnerAccess() {
+            requestAdminConnectionInternal()
+        }
 
         fun resumeAutomaticMode() = resumeAutomaticModeInternal()
     }
@@ -134,6 +140,51 @@ class BleLockService : Service(), BleRepository.Listener {
             }
         }
     }
+    private val phoneBeaconReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == ACTION_CLEAR_HOTSPOT_IP) {
+                val sessionId = intent.getStringExtra(EXTRA_HOTSPOT_SESSION)
+                if (sessionId == null || sessionId != hotspotSessionId) return
+                phoneBeacon.setHotspotIp(null)
+                hotspotSessionId = null
+                Log.i(TAG, "LocalOnlyHotspot stopped; PhoneBeacon hotspot IP cleared")
+                if (phoneBeacon.isWifiProvisioningActive) {
+                    phoneBeacon.cancelWifiProvisioning()
+                    if (mode == Mode.WIFI_PROVISIONING) {
+                        if (settings.autoOpenEnabled) {
+                            mode = Mode.AUTO_OPEN
+                            startAsForeground("Автоматический режим · BLE-маяк активен")
+                            updateNotification("Автоматический режим · BLE-маяк активен")
+                        } else {
+                            mode = Mode.IDLE
+                            stopSelfSafely()
+                        }
+                    }
+                }
+                if (mode == Mode.WEB_UI_DISCOVERY && !settings.autoOpenEnabled) {
+                    phoneBeacon.finishWebUiIpRequest()
+                    mode = Mode.IDLE
+                    stopSelfSafely()
+                }
+                return
+            }
+            if (intent.action != PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED ||
+                mode != Mode.WIFI_PROVISIONING) return
+            if (settings.autoOpenEnabled) {
+                mode = Mode.AUTO_OPEN
+                broadcastAutomaticMode(true)
+                startAsForeground("Автоматический режим · BLE-маяк активен")
+                updateNotification("Автоматический режим · BLE-маяк активен")
+            } else if (phoneBeacon.isWebUiIpRequestActive) {
+                mode = Mode.WEB_UI_DISCOVERY
+                startAsForeground("ESP32 получила Wi-Fi · ожидаю Web UI IP")
+                updateNotification("ESP32 получила Wi-Fi · ожидаю Web UI IP")
+            } else {
+                mode = Mode.IDLE
+                stopSelfSafely()
+            }
+        }
+    }
     private val departureRecovery = Runnable {
         if (!stopping && mode == Mode.AUTO_OPEN && openSentForPresence) {
             if (repository.hasNativeAutoConnectRequest) {
@@ -148,15 +199,18 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onCreate() {
         super.onCreate()
         settings = LockSettings(this)
+        phoneBeacon = PhoneBeacon(this)
         mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
         createNotificationChannel()
-        // A foreground service must publish its notification immediately after
-        // creation. Permission and Bluetooth checks are handled by onStartCommand.
-        // Delaying startForeground here lets Android kill the service as a timeout.
-        startAsForeground(
-            if (hasPermissions()) getString(R.string.service_starting)
-            else getString(R.string.service_permissions_missing)
-        )
+        // Publish the foreground notification immediately when this service
+        // is restoring an enabled beacon. A UI-only bind with Auto Open OFF
+        // must not start a background advertising/client session.
+        if (settings.autoOpenEnabled) {
+            startAsForeground(
+                if (hasPermissions()) getString(R.string.service_starting)
+                else getString(R.string.service_permissions_missing)
+            )
+        }
         repository = BleRepository(this, this, controlOnly = mode != Mode.ADMIN)
         repositoryActive = true
         bluetoothAvailable = getSystemService(BluetoothManager::class.java)
@@ -167,25 +221,120 @@ class BleLockService : Service(), BleRepository.Listener {
         }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(bluetoothStateReceiver, stateFilter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(phoneBeaconReceiver,
+                IntentFilter().apply {
+                    addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
+                    addAction(ACTION_CLEAR_HOTSPOT_IP)
+                }, RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(bluetoothStateReceiver, stateFilter)
+            registerReceiver(phoneBeaconReceiver,
+                IntentFilter().apply {
+                    addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
+                    addAction(ACTION_CLEAR_HOTSPOT_IP)
+                })
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_ADMIN) {
-            if (!hasPermissions()) {
-                updateNotification(getString(R.string.service_permissions_missing))
+        if (intent?.action == ACTION_BEACON_TX_POWER_CHANGED) {
+            phoneBeacon.applyConfiguredTransmitPower()
+            return if (mode == Mode.IDLE) {
+                stopSelfResult(startId)
+                START_NOT_STICKY
+            } else {
+                START_STICKY
+            }
+        }
+        if (intent?.action == ACTION_WEB_UI_IP_REQUEST) {
+            if (!hasPermissions() || !bluetoothAvailable) {
+                Log.e(TAG, "Cannot request Web UI IPv4: BLE permission/radio unavailable")
                 return START_NOT_STICKY
             }
-            requestAdminConnectionInternal()
+            if (settings.autoOpenEnabled) {
+                mode = Mode.AUTO_OPEN
+                phoneBeacon.start()
+                phoneBeacon.startWebUiIpRequest()
+                broadcastAutomaticMode(true)
+                startAsForeground("Автоматический режим · запрос Web UI IP")
+                updateNotification("Автоматический режим · запрос Web UI IP")
+            } else {
+                mode = Mode.WEB_UI_DISCOVERY
+                phoneBeacon.startWebUiIpRequest()
+                startAsForeground("Ожидание Web UI IP от ESP32")
+                updateNotification("Ожидание Web UI IP от ESP32")
+            }
             return START_STICKY
         }
+        if (intent?.action == ACTION_WEB_UI_IP_FINISHED) {
+            phoneBeacon.finishWebUiIpRequest()
+            if (settings.autoOpenEnabled) {
+                mode = Mode.AUTO_OPEN
+                phoneBeacon.start()
+                broadcastAutomaticMode(true)
+            } else if (!phoneBeacon.isWifiProvisioningActive) {
+                mode = Mode.IDLE
+                stopSelfSafely()
+            }
+            return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_WIFI_PROVISION_PENDING) {
+            val sessionId = intent.getStringExtra(EXTRA_HOTSPOT_SESSION)
+            if (!hasPermissions() || !bluetoothAvailable || sessionId.isNullOrBlank()) {
+                Log.e(TAG, "Cannot prepare Wi-Fi provisioning: BLE permission/radio/session unavailable")
+                return START_NOT_STICKY
+            }
+            mode = Mode.WIFI_PROVISIONING
+            hotspotSessionId = sessionId
+            if (repositoryActive) {
+                repository.close()
+                repositoryActive = false
+            }
+            phoneBeacon.prepareWifiProvisioning(settings.autoOpenEnabled)
+            startAsForeground("Подготовка Wi-Fi · маяк AUTO приостановлен")
+            updateNotification("Подготовка Wi-Fi · маяк AUTO приостановлен")
+            Log.i(TAG, "AUTO beacon paused for hotspot preparation session=$sessionId")
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_WIFI_PROVISION) {
+            val ssid = intent.getStringExtra(EXTRA_WIFI_SSID).orEmpty()
+            val password = intent.getStringExtra(EXTRA_WIFI_PASSWORD).orEmpty()
+            val hotspotIp = intent.getByteArrayExtra(EXTRA_HOTSPOT_IP)?.takeIf { it.size == 4 }
+            val sessionId = intent.getStringExtra(EXTRA_HOTSPOT_SESSION)
+            if (!hasPermissions() || !bluetoothAvailable || ssid.isBlank()) {
+                Log.e(TAG, "Cannot start Wi-Fi provisioning: BLE permission/radio/SSID unavailable")
+                stopSelfSafely()
+                return START_NOT_STICKY
+            }
+            mode = Mode.WIFI_PROVISIONING
+            hotspotSessionId = sessionId
+            if (repositoryActive) {
+                repository.close()
+                repositoryActive = false
+            }
+            startAsForeground("Настройка Wi-Fi · ждём ESP32")
+            runCatching { phoneBeacon.startWifiProvisioning(ssid, password, hotspotIp) }
+                .onFailure {
+                    Log.e(TAG, "Wi-Fi provisioning beacon failed", it)
+                    stopSelfSafely()
+                }
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_ADMIN) {
+            Log.w(TAG, "Legacy ADMIN BLE request ignored; owner administration uses Wi-Fi Web UI")
+            stopSelfSafely()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_START) {
+            if (phoneBeacon.isWifiProvisioningActive) {
+                phoneBeacon.start()
+                return START_STICKY
+            }
             mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
+            if (settings.autoOpenEnabled) startAsForeground(getString(R.string.service_starting))
             broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         }
-        if (intent?.action == ACTION_STOP || (!settings.autoOpenEnabled && mode != Mode.ADMIN)) {
+        if (intent?.action == ACTION_STOP || !settings.autoOpenEnabled) {
             stopSelfSafely()
             return START_NOT_STICKY
         }
@@ -197,24 +346,41 @@ class BleLockService : Service(), BleRepository.Listener {
             updateNotification(getString(R.string.bluetooth_disabled))
             return START_STICKY
         }
-        if (mode == Mode.AUTO_OPEN && repository.currentState == BleRepository.State.READY) {
-            repository.requestImmediateRssi()
-        } else {
-            scheduleSearch(0)
+        if (mode == Mode.AUTO_OPEN) {
+            phoneBeacon.start()
+            if (repositoryActive) {
+                repository.close()
+                repositoryActive = false
+            }
+            startAsForeground("Автоматический режим · BLE-маяк активен")
+            updateNotification("Автоматический режим · BLE-маяк активен")
+            return START_STICKY
         }
+        scheduleSearch(0)
         return START_STICKY
     }
     private val otaRecovery = Runnable {
         if (stopping || mode != Mode.OTA || !bluetoothAvailable) return@Runnable
-        mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
+        mode = when {
+            settings.autoOpenEnabled -> Mode.AUTO_OPEN
+            else -> Mode.IDLE
+        }
         broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         openSentForPresence = false
         if (mode == Mode.AUTO_OPEN) {
+            phoneBeacon.start()
+            if (repositoryActive) {
+                repository.close()
+                repositoryActive = false
+            }
+            startAsForeground("Автоматический режим · BLE-маяк активен")
+            updateNotification("Автоматический режим · BLE-маяк активен")
+        } else if (mode == Mode.ADMIN) {
             if (!repositoryActive) {
-                repository = BleRepository(this, this, controlOnly = true)
+                repository = BleRepository(this, this, controlOnly = false)
                 repositoryActive = true
             } else {
-                repository.setControlOnly(true)
+                repository.setControlOnly(false)
             }
             scheduleSearch(0)
         }
@@ -222,15 +388,19 @@ class BleLockService : Service(), BleRepository.Listener {
 
     override fun onDestroy() {
         stopping = true
+        phoneBeacon.stop()
         handler.removeCallbacksAndMessages(null)
         if (repositoryActive) repository.close()
         runCatching { unregisterReceiver(bluetoothStateReceiver) }
+        runCatching { unregisterReceiver(phoneBeaconReceiver) }
         clearCachedConnectionState()
         super.onDestroy()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (settings.autoOpenEnabled && !stopping) scheduleServiceRecovery()
+        if (settings.autoOpenEnabled && !stopping) {
+            scheduleServiceRecovery()
+        }
         super.onTaskRemoved(rootIntent)
     }
 
@@ -239,6 +409,13 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onBleState(state: BleRepository.State, detail: String) {
         if (state != repository.currentState) {
             Log.d(TAG, "Ignoring stale BLE state callback: $state, current=${repository.currentState}")
+            return
+        }
+        if (mode != Mode.ADMIN && mode != Mode.OTA) {
+            // The Android phone is the Peripheral in the new architecture.
+            // A delayed callback from a closed legacy client must not restart
+            // scanning or send any lock command.
+            Log.d(TAG, "Ignoring legacy Android Central callback in mode=$mode")
             return
         }
         updateNotification(detail)
@@ -310,6 +487,7 @@ class BleLockService : Service(), BleRepository.Listener {
             BleRepository.State.DEPARTED -> {
                 handler.removeCallbacks(departureRecovery)
                 openSentForPresence = false
+                autoOpenPresenceGate.onDepartureConfirmed()
                 if (mode == Mode.AUTO_OPEN || mode == Mode.ADMIN) {
                     if (repository.hasNativeAutoConnectRequest) {
                         Log.i(TAG, "BLE departure confirmed; native auto-connect remains armed")
@@ -330,11 +508,6 @@ class BleLockService : Service(), BleRepository.Listener {
             openSentForPresence = false
             repository.clearAutoConnectOpenSentForPresence()
             Log.i(TAG, "Always Open reset confirmed LOCKED; native presence guard cleared")
-        }
-        if (autoOpenPresenceGate.onLockStatus(status)) {
-            openSentForPresence = false
-            repository.clearAutoConnectOpenSentForPresence()
-            Log.i(TAG, "AUTO_OPEN_REARMED: lock confirmed OPEN then LOCKED")
         }
         if (autoOffClosePending && autoOffCloseWriteInFlight &&
             status?.trim()?.equals("LOCKED", ignoreCase = true) == true) {
@@ -378,6 +551,9 @@ class BleLockService : Service(), BleRepository.Listener {
 
     override fun onGattRssi(rssi: Int?) {
         if (rssi == null) return
+        // In AUTO the lock now initiates the secured contact from beacon data.
+        // A stale legacy GATT callback must never send the former OPEN command.
+        if (mode == Mode.AUTO_OPEN) return
         val threshold = settings.rssiThreshold
         val nativeRequest = repository.hasNativeAutoConnectRequest
         val nativeOpenSent = nativeRequest && repository.hasOpenBeenSentForAutoConnectPresence
@@ -388,7 +564,7 @@ class BleLockService : Service(), BleRepository.Listener {
             autoOffClosePending -> "autoOffClosePending=true"
             repository.currentState != BleRepository.State.READY -> "state=${repository.currentState}"
             autoOpenWritePending -> "autoOpenWritePending=true"
-            openSentForPresence -> "openSentForPresence=true"
+            autoOpenPresenceGate.isBlocked -> "one OPEN already sent for this presence"
             nativeOpenSent -> "nativeOpenSent=true"
             nativeOpenPending -> "nativeOpenPending=true"
             else -> null
@@ -409,7 +585,6 @@ class BleLockService : Service(), BleRepository.Listener {
 
         if (rssi < threshold) {
             Log.i(TAG, "AUTO_OPEN_WAITING_FOR_RSSI: gattRssi=$rssi threshold=$threshold dBm")
-            BleEventTones.weakAdvertisement()
             return
         }
 
@@ -456,7 +631,7 @@ class BleLockService : Service(), BleRepository.Listener {
 
     override fun onOtaStatus(value: String) {
         if (value == "ERROR_WIFI" || value == "ERROR_OTA") {
-            mode = Mode.ADMIN
+            mode = Mode.IDLE
             broadcastAutomaticMode(false)
         }
         clients.toList().forEach { it.onOtaStatus(value) }
@@ -492,27 +667,7 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun requestAdminConnectionInternal() {
-        if (stopping || mode == Mode.OTA || !hasPermissions() || !bluetoothAvailable) return
-        mode = Mode.ADMIN
-        broadcastAutomaticMode(false)
-        openSentForPresence = false
-        handler.removeCallbacks(searchRunnable)
-        handler.removeCallbacks(departureRecovery)
-        if (!repositoryActive) {
-            repository = BleRepository(this, this, controlOnly = false)
-            repositoryActive = true
-            startAsForeground(getString(R.string.service_starting))
-        } else {
-            repository.promoteToFullControl()
-        }
-        // Opening the UI must never tear down a usable automatic-mode GATT
-        // session. A forced rediscovery here used to race ACTION_START and
-        // create two consecutive connectGatt attempts; after an app force-stop
-        // that race could push recovery into the 30-second backoff. The active
-        // encrypted session can be promoted to full-control mode in place, and
-        // an in-flight connection will observe the updated controlOnly flag
-        // when its handshake completes.
-        if (!repository.isConnectingOrConnected()) repository.findAndConnect()
+        Log.w(TAG, "Legacy Android Central request rejected; ESP initiates BLE pairing and AUTO")
     }
 
     private fun startHomeOtaInternal(): Boolean {
@@ -528,46 +683,51 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun resumeAutomaticModeInternal() {
-        if (stopping || !bluetoothAvailable || !repositoryActive) return
+        if (stopping || !bluetoothAvailable) return
+        if (phoneBeacon.isWifiProvisioningActive) {
+            if (settings.autoOpenEnabled) phoneBeacon.start() else phoneBeacon.stopAutoOpen()
+            startAsForeground("Настройка Wi-Fi · ждём ESP32")
+            updateNotification("Настройка Wi-Fi · ждём ESP32")
+            return
+        }
         mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
         broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         openSentForPresence = false
         autoOpenWritePending = false
-        repository.setControlOnly(true)
         if (mode == Mode.AUTO_OPEN) {
-            if (repository.currentState == BleRepository.State.READY) {
-                repository.requestImmediateRssi()
-            } else if (!repository.isConnectingOrConnected()) {
-                repository.findAndConnect()
+            phoneBeacon.start()
+            if (repositoryActive) {
+                repository.close()
+                repositoryActive = false
             }
+            startAsForeground("Автоматический режим · BLE-маяк активен")
+            updateNotification("Автоматический режим · BLE-маяк активен")
+            return
         }
+        phoneBeacon.stop()
+        if (repositoryActive) {
+            repository.close()
+            repositoryActive = false
+        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun setAutomaticModeInternal(enabled: Boolean) {
         if (stopping) return
         if (!enabled) {
+            if (phoneBeacon.isWifiProvisioningActive) {
+                phoneBeacon.stopAutoOpen()
+                mode = Mode.WIFI_PROVISIONING
+                broadcastAutomaticMode(false)
+                return
+            }
+            phoneBeacon.stopAutoOpen()
             openSentForPresence = false
             autoOpenWritePending = false
             handler.removeCallbacks(searchRunnable)
             handler.removeCallbacks(departureRecovery)
             broadcastAutomaticMode(false)
-
-            if (hasPermissions() &&
-                ((clients.isNotEmpty() && bluetoothAvailable) || autoOffClosePending)) {
-                // Turning automatic opening off only disables OPEN automation.
-                // Keep the BLE control connection alive while the app is open.
-                mode = Mode.ADMIN
-                if (!repositoryActive) {
-                    repository = BleRepository(this, this, controlOnly = false)
-                    repositoryActive = true
-                } else {
-                    repository.setControlOnly(false)
-                }
-                startAsForeground(getString(R.string.service_starting))
-                if (bluetoothAvailable && !repository.isConnectingOrConnected()) scheduleSearch(0)
-                if (!bluetoothAvailable) updateNotification(getString(R.string.bluetooth_disabled))
-                return
-            }
 
             mode = Mode.IDLE
             if (repositoryActive) {
@@ -576,6 +736,14 @@ class BleLockService : Service(), BleRepository.Listener {
             }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+            return
+        }
+
+        if (phoneBeacon.isWifiProvisioningActive) {
+            mode = Mode.WIFI_PROVISIONING
+            phoneBeacon.start()
+            broadcastAutomaticMode(true)
+            Log.i(TAG, "Auto Open preference changed independently; Wi-Fi provisioning continues")
             return
         }
 
@@ -591,24 +759,17 @@ class BleLockService : Service(), BleRepository.Listener {
             updateNotification(getString(R.string.bluetooth_disabled))
             return
         }
-        if (!repositoryActive) {
-            repository = BleRepository(this, this, controlOnly = true)
-            repositoryActive = true
-        } else {
-            repository.setControlOnly(true)
+        phoneBeacon.start()
+        if (repositoryActive) {
+            repository.close()
+            repositoryActive = false
         }
-        openSentForPresence = false
-        autoOpenWritePending = false
-        startAsForeground(getString(R.string.service_starting))
+            startAsForeground("Автоматический режим · BLE-маяк активен")
         broadcastAutomaticMode(true)
-        if (repository.currentState == BleRepository.State.READY) {
-            repository.requestImmediateRssi()
-        } else {
-            scheduleSearch(0)
-        }
     }
 
     private val searchRunnable = Runnable {
+        if (mode == Mode.AUTO_OPEN) return@Runnable
         if (stopping || (mode != Mode.AUTO_OPEN && mode != Mode.ADMIN) || !bluetoothAvailable) {
             Log.d(TAG, "BLE search skipped: stopping=$stopping mode=$mode bluetooth=$bluetoothAvailable")
             return@Runnable
@@ -632,6 +793,7 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun handleBluetoothOff() {
+        phoneBeacon.stop()
         bluetoothAvailable = false
         resetReconnectBackoff()
         handler.removeCallbacks(searchRunnable)
@@ -654,18 +816,21 @@ class BleLockService : Service(), BleRepository.Listener {
         if (stopping || mode == Mode.IDLE) return
         bluetoothAvailable = true
         resetReconnectBackoff()
-        if (repositoryActive) repository.close()
-        repository = BleRepository(this, this, controlOnly = mode != Mode.ADMIN)
-        repositoryActive = true
-        openSentForPresence = false
-        autoOpenWritePending = false
-        broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
-        updateNotification(getString(R.string.service_bluetooth_restored))
-        if (mode == Mode.OTA) {
-            handler.postDelayed(otaRecovery, OTA_RECOVERY_DELAY_MS)
-        } else {
-            scheduleSearch(BLUETOOTH_RESTART_DELAY_MS)
+        if (repositoryActive) {
+            repository.close()
+            repositoryActive = false
         }
+        if (mode == Mode.AUTO_OPEN && settings.autoOpenEnabled) {
+            phoneBeacon.start()
+            openSentForPresence = false
+            autoOpenWritePending = false
+            broadcastAutomaticMode(true)
+            startAsForeground("Автоматический режим · BLE-маяк активен")
+            updateNotification("Автоматический режим · BLE-маяк активен")
+            return
+        }
+        mode = Mode.IDLE
+        stopSelfSafely()
     }
 
     private fun stopSelfSafely() {
@@ -775,6 +940,8 @@ class BleLockService : Service(), BleRepository.Listener {
         return checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) ==
             PackageManager.PERMISSION_GRANTED &&
             checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) ==
+            PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) ==
             PackageManager.PERMISSION_GRANTED
     }
 
@@ -783,6 +950,16 @@ class BleLockService : Service(), BleRepository.Listener {
         const val ACTION_START = "com.blelock.app.action.START"
         const val ACTION_STOP = "com.blelock.app.action.STOP"
         const val ACTION_ADMIN = "com.blelock.app.action.ADMIN"
+        const val ACTION_WIFI_PROVISION = "com.blelock.app.action.WIFI_PROVISION"
+        const val ACTION_WIFI_PROVISION_PENDING = "com.blelock.app.action.WIFI_PROVISION_PENDING"
+        const val ACTION_WEB_UI_IP_REQUEST = "com.blelock.app.action.WEB_UI_IP_REQUEST"
+        const val ACTION_WEB_UI_IP_FINISHED = "com.blelock.app.action.WEB_UI_IP_FINISHED"
+        const val ACTION_BEACON_TX_POWER_CHANGED = "com.blelock.app.action.BEACON_TX_POWER_CHANGED"
+        const val ACTION_CLEAR_HOTSPOT_IP = "com.blelock.app.action.CLEAR_HOTSPOT_IP"
+        const val EXTRA_WIFI_SSID = "wifi_ssid"
+        const val EXTRA_WIFI_PASSWORD = "wifi_password"
+        const val EXTRA_HOTSPOT_IP = "hotspot_ipv4_network_order"
+        const val EXTRA_HOTSPOT_SESSION = "hotspot_session_id"
         const val ACTION_DEVICE_DETECTED = "com.blelock.app.action.DEVICE_DETECTED"
         const val EXTRA_DETECTED_DEVICE = "detected_device"
         const val ACTION_SIGNAL_RSSI = "com.blelock.app.action.SIGNAL_RSSI"
@@ -828,5 +1005,5 @@ class BleLockService : Service(), BleRepository.Listener {
         private const val RESTART_REQUEST_CODE = 1002
     }
 
-    private enum class Mode { IDLE, AUTO_OPEN, ADMIN, OTA }
+    private enum class Mode { IDLE, AUTO_OPEN, ADMIN, OTA, WIFI_PROVISIONING, WEB_UI_DISCOVERY }
 }

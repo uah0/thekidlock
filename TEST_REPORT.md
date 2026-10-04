@@ -1,5 +1,150 @@
 # Отчёт о проверках
 
+## Web UI только из сети телефона — базовая проверка 04.10.2026
+
+- ESP `build-esp32.ps1`: PASS, ESP-IDF 5.4.4, build 10.0.315.
+- По проектному правилу сборка сразу загружена на текущий замок через `device-agent.ps1 flash`: PASS, firmware `10.0.314 → 10.0.315`; устройство вернулось и подтвердило новую версию.
+- Базовая Android build 182 и debug/release unit tests ранее прошли. Перед установкой сохранены и после установки восстановлены/сверены `accelerometer_rotation=1`, `user_rotation=0` (`artifacts/android-rotation-before-fresh-webui-ip-build182-install-20261004.json`).
+- Изменений кода для нового требования на этом этапе нет; базовая сборка прошла до их внесения.
+
+## Актуальный IP Web UI после отключения домашнего Wi-Fi — 04.10.2026
+
+- Android `build-android.ps1 -Action debug`: PASS, build 182. `build-android.ps1 -Action test`: PASS (`testDebugUnitTest`, `testReleaseUnitTest`).
+- Build 182 установлена на Redmi Note 15. Перед установкой сохранены системные `accelerometer_rotation=1`, `user_rotation=0`; после установки значения восстановлены и сверены (`artifacts/android-rotation-before-fresh-webui-ip-build182-install-20261004.json`).
+- Физический runtime PASS при выключенном ESP автоподключении к домашней сети: кнопка не открыла сохранённый `192.168.1.54`; после 5 секунд телефон создал hotspot `172.18.51.2`, ESP прочитала настройки по BLE и подключилась, передала текущий IP `172.18.51.177` по encrypted BLE, Chrome открыл Web UI с firmware 10.0.314 (`artifacts/webui-build182-after-tap-20261004.png`).
+- Журнал после нажатия содержит переход в PhoneBeacon mode `0x81` для provisioning, чтения Wi-Fi chunks, затем mode `0x82`, encrypted IP push и открытие URL `http://172.18.51.177/`; запусков старого `192.168.1.54` в этом runtime нет.
+
+## Передача Web UI IP от ESP к телефону — 04.10.2026
+
+- `build-android.ps1 -Action debug`: PASS, Android build 182. `build-android.ps1 -Action test`: PASS (`testDebugUnitTest`, `testReleaseUnitTest`).
+- APK build 180 установлена на Redmi Note 15. Ориентация до/после `accelerometer_rotation=1`, `user_rotation=0` восстановлена и подтверждена (`artifacts/android-rotation-before-webui-auto-build180-install-20261004.json`).
+- `build-esp32.ps1`: PASS, ESP-IDF 5.4.4, firmware 10.0.314. OTA `10.0.313 → 10.0.314`: PASS, device-agent подтвердил ту же плату.
+- Runtime при пустом `lock_wifi_ip`: encrypted bonded IP push принят Android; `192.168.1.54` сохранён, Chrome автоматически открыл Web UI с firmware 10.0.314 (`artifacts/webui-auto-build180-ip-push.png`).
+- При отсутствии IP телефон запустил LocalOnlyHotspot и определил `172.18.51.2`. Первая попытка при RSSI `−62 dBm` и пороге `−60 dBm` не подключилась; после исключения для service-only markers полный сценарий без домашнего Wi-Fi повторно не запускался, поскольку текущий Web UI доступен в домашней сети.
+- Состояние ESP после OTA: `OPEN`, `fault_flags=0`; команд управления замком во время проверки не отправляли.
+
+## Android Web UI по кнопке «Настройки» — 04.10.2026
+
+- Android build 175 `build-android.ps1 -Action test`: PASS (debug/release unit tests); baseline до текущей правки прошёл.
+- На Redmi Note 15 физически нажата кнопка «Настройки». Воспроизведено: PhoneBeacon передал encrypted chunks `20 + 14`, ESP прочитала hotspot IP, но Android не получила ESP `OTA_STATUS`; через минуту LocalOnlyHotspot завершился, браузер не открылся. Архитектурная проверка подтвердила, что service отклоняет legacy Android Central connection.
+- Android build 176 `build-android.ps1`: PASS. Установка на Redmi Note 15: PASS; orientation до/после `1/0`, восстановление подтверждено (`artifacts/android-rotation-before-webui-direct-build176-install-20261004.json`).
+- `build-android.ps1 -Action test` после изменения: PASS (`testDebugUnitTest`, `testReleaseUnitTest`).
+- Runtime build 176 на Redmi Note 15: PASS. Диалог показан, введён `192.168.1.54`, Chrome открыл Web UI «BLE Lock» (страница «Мастер настройки», firmware 10.0.310); сохранённый `lock_wifi_ip` подтверждён чтением настроек приложения.
+- Повторное нажатие: PASS — диалог не появляется, Chrome сразу открывает Web UI.
+- После открытия страницы ESP отвечает: firmware 10.0.310, `LOCKED`, `fault_flags=0`.
+
+## ESP Wi-Fi provisioning / Web UI — 04.10.2026
+
+- Build 10.0.309 прошёл и установлен OTA: PASS, версия `10.0.308 → 10.0.309` подтверждена Agent API.
+- Повторное нажатие «Настройки» показало `nul_at=20` в теле Wi-Fi payload, абсолютный индекс 22 (граница BLE ATT-фрагментов). Android GATT ответил длиной 34 на offset 0 и длиной 12 на offset 22. Исходный Android byte array нужно сверить перед исправлением.
+- Android baseline перед диагностическим изменением: PASS, `build-android.ps1`, build 171. После добавления безопасного индекса NUL требуется собрать APK, установить с сохранением/восстановлением системной ориентации и повторить клик.
+- Android build 173 на физическом Redmi: source buffer `ssidBytes=17 passwordBytes=15 nulAt=-1`; при том же provisioning ESP build 10.0.309 получает `nul_at=20` в данных (абсолютный ATT offset 22). Для устранения перехода через этот дефектный long-read boundary введён протокол пяти коротких chunk characteristics. Повторные сборки/OTA и runtime click пока ожидают выполнения.
+- Chunked Android implementation: PASS, `build-android.ps1`, build 174. APK установка с обязательным восстановлением orientation и согласованная ESP-сборка ещё впереди.
+- ESP chunked implementation: PASS, `build-esp32.ps1`, ESP-IDF 5.4.4, build 10.0.310. OTA на замок и runtime click впереди.
+- Build 10.0.310 runtime: Android `PhoneBeacon` и ESP согласовали chunk reads `20 + 14`; ESP прочитала IPv4 `172.18.51.2`. Настроенный ранее Wi-Fi приоритетно сохранён и runtime phone config закономерно отклонён (`saved priority`). Найден Android state bug: кнопка не ставила `webUiRequestPending`, а GATT disconnect сбрасывал его до Web UI status poll. Исправление в `MainActivity.kt` собрано/проверяется следующим Android build.
+- Android Web UI request state fix: PASS, `build-android.ps1`, build 175.
+- Build 175 installed on Redmi Note 15: PASS; `accelerometer_rotation=1`, `user_rotation=0` saved/restored/verified. Current ESP UI endpoint `http://192.168.1.54/` responds HTTP 200 (`BLE Lock`), ESP firmware 10.0.310, `OPEN`, faults 0.
+- Final button-to-browser runtime check not completed: phone is currently on its lock screen; app remains in background. После разблокировки проверить кнопку и переход в браузер.
+
+- Baseline ESP сборка без новых изменений: PASS, ESP-IDF 5.4.4, build 10.0.306.
+- Baseline OTA: PASS, устройство обновилось с 10.0.305 до 10.0.306 и вернуло подтверждённую версию.
+- Исправленная сборка с безопасной диагностикой: PASS, ESP-IDF 5.4.4, build 10.0.308. Ошибочная попытка build 10.0.307 не устанавливалась.
+- OTA build 10.0.308: PASS, переход `10.0.306 → 10.0.308`, версия подтверждена Agent API. Кнопка снова запускает bonded provisioning, но Wi-Fi payload отклонён.
+- Первая сборка диагностики выявила повторное объявление `ssid_len`/`password_len`; ошибка устранена до установки прошивки. Строка-итог скрипта противоречила фактической ошибке Ninja, поэтому результат не засчитан как PASS.
+- Android `PhoneBeacon` формирует payload `[ssid_len, password_len, ssid_utf8, password_utf8]`; ESP отвергала 34-байтное значение до чтения IPv4 hotspot. Содержимое credentials не выводится.
+- Runtime нажатием «Настройки» на build 10.0.308 установлено: `sec=1`, длины SSID/password `17/15`, общий размер `34`, но присутствует NUL. Для следующей диагностики добавлено логирование только индекса NUL.
+- Сборка ESP с индексом NUL прошла: build 10.0.309. OTA и повторное чтение журнала ожидают выполнения.
+
+## Android proof при Wi-Fi provisioning — 04.10.2026
+
+- Baseline `build-android.ps1`: PASS, предыдущий Android build 170.
+- После изменения `PhoneBeacon.kt`: `build-android.ps1` PASS, Android build 171.
+- APK установлена на Redmi Note 15 по ADB. До/после: `accelerometer_rotation=0`, `user_rotation=0`; снимок перед установкой — `artifacts/android-rotation-before-proof-provision-build171-install-20261004.json`.
+- После установки ESP остаётся доступна: firmware 10.0.305, `LOCKED`, `fault_flags=0`.
+- Runtime proof → Wi-Fi credentials → hotspot IP после исправления ещё не проверен: экран телефона заблокирован; после разблокировки запустить кнопку «Настройки» и проверить события ESP/Android.
+
+## Wi-Fi provisioning: завершение длинного чтения — 04.10.2026
+
+- Baseline до изменения: `build-esp32.ps1` — PASS, firmware 10.0.304.
+- После изменения: `build-esp32.ps1` — PASS, ESP-IDF 5.4.4 / ESP32-S3, firmware 10.0.305.
+- OTA — PASS через `device-agent.ps1 flash`: `10.0.303 → 10.0.305`. После перезагрузки Agent API подтвердил firmware 10.0.305, состояние `OPEN`, `fault_flags=0`; первый немедленный status запрос пришёл во время reboot и не ответил, повторный запрос после возврата устройства прошёл.
+- После OTA обычные AUTO reconnect проверены: ESP восстанавливала existing LTK (`ENC st=0 e=1 b=1`) и получала `proofRsp ... valid=1`; Android ADB видит Redmi Note 15 (`2510DRA23E`).
+- В первичной проверке после OTA пользовательский provisioning flow ещё не запускался; результат последующей попытки описан ниже.
+
+## Проверка активного сценария «Настройки» после OTA — 04.10.2026
+
+- Устройство: Redmi Note 15, Android ADB доступен; приложение 1.0.0 (build 169). При начале проверки сценарий уже был запущен: экран показывал «Ожидание ESP32…», локальная точка доступа Android `AndroidShare_6134` была активна.
+- ESP firmware 10.0.305 обнаружила provisioning marker, нашла существующий LTK, успешно установила encrypted/bonded соединение (`ENC st=0 e=1 b=1`), затем запросила proof.
+- Android `PhoneBeacon` зарегистрировал bonded peer (`bondState=12`), но `autoOpenWanted=false` и ответил на proof GATT read статусом 2 (`READ_NOT_PERMITTED`). ESP получил NimBLE status 258, записал `encrypted proof failed` и отключился.
+- Результат: провал до чтения характеристики `WIFI_SETUP`; credentials не прочитаны, `HOTSPOT_IP` не запрашивался, ESP к телефону по Wi-Fi не подключалась. Исправление `BLE_HS_EDONE` этой попыткой не проверено, поскольку callback чтения credentials не был вызван.
+- Вывод по коду: Android разрешает proof только при Auto Open ON, тогда как provisioning запускает маяк при Auto Open OFF. Требуется отдельная правка пути proof во время provisioning с сохранением encrypted/bonded проверки. В этой проверке исходники и установленный APK не менялись.
+
+## Расширенная трассировка BLE security и ATT — 03.10.2026
+
+- Исходные сборки до изменений: Android `build-android.ps1 -Action debug` — PASS; ESP `build-esp32.ps1` — PASS, firmware 10.0.292. Android APK не устанавливалась на baseline. ESP 10.0.292 загружена OTA; Agent подтвердил версию.
+- После изменений первая ESP-компиляция выявила обращение к несуществующему `peer_addr` в `ble_gap_conn_desc`; использовано фактическое поле NimBLE `peer_ota_addr`, затем сборка прошла. Это ошибка компиляции диагностики, не изменение runtime-логики.
+- Итоговая `build-esp32.ps1` — PASS, build 294, image `0x14f2c0`; OTA PASS, переход 10.0.292 → 10.0.294. Agent подтвердил устройство `a0:f2:62:f1:14:b8`, firmware 10.0.294, состояние `LOCKED`, faults 0.
+- Итоговая `build-android.ps1 -Action debug` — PASS, build 169. `build-android.ps1 -Action test` — PASS (debug/release unit tests).
+- Android build 169 установлен через ADB. Перед установкой сохранены настройки ориентации `accelerometer_rotation=1`, `user_rotation=0`; после установки оба значения восстановлены и повторно прочитаны как `1/0`.
+- Радиоповтор хорошего и плохого сценария с новой диагностикой ещё не выполнен. HCI snoop/bugreport пока не захвачены; SMP PDU и точное направление первой Pairing Request остаются неподтверждёнными.
+- Дополнительная коррекция размера event строк: ESP build 295 — PASS; OTA 10.0.294 → 10.0.295 подтверждена устройством. Проверен полный вывод event ring: peer OTA/identity address types, `SEC_START rc=0`, `ENC st=520`, флаги encryption/authentication/bonded и размер ключа больше не обрезаются.
+- После reboot 10.0.295 ESP многократно находит сохранённую запись (`LTK=1 SC=1`) и начинает security (`rc=0`), но получает `ENC_CHANGE status=520` (`0x208`, HCI error `0x08`) с `enc=0/auth=0/bonded=0`, затем disconnect reason 520. Android параллельно сообщает `SMP_CONN_TOUT`; его стек сохраняет существующий bond, и `PhoneBeacon` не получает proof ATT read. Это подтверждает timeout до proof, но не раскрывает PDU, инициировавший SMP/security.
+- Радио хорошее/плохое после новой сборки отдельно ещё не классифицировано. Требуются Android HCI snoop и bugreport на одном успешно завершившемся и одном таймаутном цикле.
+- HCI snoop поставлен в Enabled через Developer options, Bluetooth OFF/ON применён; маяк Android возобновлён, bonds сохранены. Получены два bugreport, но оба встроенных `btsnooz_hci.log` содержат только 16-байтовый заголовок. В системном отчёте одновременно видны `btsnoopdefaultmode=disabled`, `btsnooplogmode=full`, `SnoopLogMode=FILTERED`; raw bugreports оставлены вне передаваемого архива.
+- После полной перезагрузки Wi-Fi ADB/mDNS временно пропал, затем восстановлен пользователем. Android process жив; GATT callbacks по-прежнему видят `bondState=12`, system log сообщает `SMP_CONN_TOUT` и что ключи не удаляются. ESP 10.0.295 доступна, `LOCKED`, faults 0, bond record LTK/SC присутствует; последняя security phase завершилась без proof с сырым status 573.
+- Post-reboot bugreport не содержит `btsnooz_hci.log`; dumpstate по-прежнему показывает несовпадающие `btsnoopdefaultmode=disabled`, `btsnooplogmode=full`, `SnoopLogMode=FILTERED`. Поля SMP PDU поэтому не получены.
+
+## Диагностика повторной потери BLE bond — 03.10.2026
+
+- Android свежий BLE dump: после периодов успешных proof чтений позже возникают `BOND_BONDING` и SSP Consent; затем `auth_failure`, `SMP_CONN_TOUT` и удаление pending bonding keys. ESP в этот период сохраняет PEER LTK, но security phase истекает.
+- Android build 160: PASS; debug APK установлена. Ориентация до и после установки `accelerometer_rotation=0`, `user_rotation=0`.
+- Новый диагностический callback установлен, но контролируемая новая попытка pairing с захватом полного цикла ещё не выполнена; долговременное сохранение bond пока не подтверждено.
+
+## Завершение pairing mode после bond — 03.10.2026
+
+- Радио: Android PhoneBeacon сообщил `bondState=12`, `bonded=true`; защищённый proof прочитан с GATT status 0. ESP зарегистрировала защищённый телефон. В логах повторных `SMP_CONN_TOUT` после успешного чтения proof нет.
+- `build-esp32.ps1`: PASS, firmware 10.0.287. OTA: PASS, Agent подтвердил переход 10.0.286 → 10.0.287 и новый boot id.
+- После reboot ESP сохранила bond `4C:8E:19:3A:70:65` и имя `REDMI Note 15`; состояние `LOCKED`, `fault_flags=0`, `hold_open=false`.
+- Фикс выключения синего pairing/config LED установлен. По текущей прошивке config mode после reboot и после успешного нового bond выключен; визуальную индикацию после pairing отдельно проверить на следующем registration window.
+
+## Android Auto Open OFF/ON после pairing — 03.10.2026
+
+- Радиотест не прошёл: после переключения Auto Open Android снова получил `SMP_CONN_TOUT` и удалил bond; ESP сохранила свой LTK. Перед этим ESP зафиксировала GATT status 257 на proof. После отказа proof подтверждений не было, замок закрылся таймером A.
+- Android build 159: PASS; APK `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk` установлена через ADB.
+- До/после установки: `accelerometer_rotation=0`, `user_rotation=0`; восстановлены и проверены.
+- Foreground service и маяк активны. Stale ESP bond Redmi адресно удалён; список bonds пуст. Для новой проверки требуется открыть pairing window BOOT.
+
+## Восстановление зависшего BLE autoConnect — 01.10.2026
+
+- Исходная Android-сборка 131 до правок: PASS. При телефоне рядом с ESP запрос `connectGatt(autoConnect=true)` оставался в `CONNECTING` более двух минут без GATT-колбэка.
+- Android-сборка 132 после правки: `build-android.ps1` — PASS. APK установлен на Redmi Note 15; ориентация до и после установки `accelerometer_rotation=0`, `user_rotation=0`.
+- Телефон: native-запрос 14:42:42 → watchdog 14:44:52 → прямая попытка GATT status 133 → повторный native-запрос 14:44:59. После перезапуска ESP в 14:47:06 получено `GATT_CONNECTED`; защищённое чтение и OPEN прошли. ESP 10.0.248 подтвердила `OPEN`, `connected=true`, `fault_flags=0`.
+- Повторная отправка OPEN при RSSI `-64…-66 dBm` подавлена правилом одного открытия. Оставшийся отказ до перезапуска ESP по этим данным не локализован; аудит фиксирует это ограничение.
+
+## Гостевой Redmi Note 8 Pro и GATT — 01.10.2026
+
+- Baseline `build-esp32.ps1` до правок: PASS, firmware 10.0.243. По правилу проекта установлена OTA; Agent подтвердил device_id `a0:f2:62:f1:14:b8`, версию 10.0.243 и новый boot_id.
+- До исправления Redmi при RSSI ESP около `-28…-33 dBm` многократно читал `LOCK_STATUS`, затем запись `PHONE_NAME` истекала через 10 секунд. Слот 1 отмечен `owner=0`; имя этого bonded MAC не было сохранено.
+- Итоговая `build-esp32.ps1`: PASS, firmware 10.0.244, app image `0x1478c0`, 32% OTA-раздела свободно. OTA 10.0.243 → 10.0.244 прошла на том же device_id; Agent подтвердил новый `boot_id=69aba533946aacf4`, статус `LOCKED`, `fault_flags=0`.
+- После ручного перезапуска приложения Redmi прочитал `LOCK_INFO` и `LOCK_STATUS`, получил `onMtuChanged mtu=256 status=0`, затем `onCharacteristicWrite PHONE_NAME status=0` и ответ `ADMIN_STATE status=2`. Приложение осталось в `READY`, выполняло регулярные RSSI-чтения; ESP сохранил имя `ddt` для `A4:45:19:03:46:81`, связь `encrypted=true`, `bonded=true`, RSSI около `-26 dBm`.
+- Проверка кнопок показала отдельное ограничение прав: ESP дважды отклонил `BLE MODE` как команду не-владельца. Redmi — гостевой телефон; решение о его праве переключать режимы ожидает указания пользователя.
+
+## Двухточечная калибровка двери — 01.10.2026
+
+- Baseline без изменений: `build-esp32.ps1` — PASS, build 241, image
+  `0x147aa0`, свободно 32% OTA-раздела. OTA подтвердил переход 10.0.240 →
+  10.0.241 на устройстве `a0:f2:62:f1:14:b8`; статус `LOCKED`, faults 0.
+- Итоговая `build-esp32.ps1` — PASS, build 242, image `0x147890`, свободно
+  32% OTA-раздела. OTA подтвердил 10.0.241 → 10.0.242 на том же устройстве,
+  новый `boot_id=2183889df522fbfd`.
+- После OTA `/api/agent/info` подтвердил firmware 10.0.242. `/api/agent/status`:
+  `LOCKED`, `fault_flags=0`, `calibration_valid=true`; существующая калибровка
+  осталась активной. GET `/calibration` вернул HTTP 200, содержит шаги
+  «Дверь закрыта» и «Дверь открыта» и не содержит шага ручного листа.
+- Полный физический прогон мастера не выполнялся: дверь не перемещалась и POST
+  сохранения новой калибровки не вызывался. Формула/backend скомпилированы,
+  страница проверена через HTTP; старая запись NVS и состояние замка сохранены.
+
 ## Диагностика GPIO7 при включённом MOSFET — 30.09.2026
 
 - Baseline до правок прошёл (`build-esp32.ps1`, build 235); baseline образ не
@@ -201,9 +346,9 @@
 
 ## Закрытие по одному листу и имя телефона — 24.09.2026
 
-- Исходная ESP32-сборка: PASS, build 155.
+- Исходная ESP32-сборка: PASS, build 154.
 - Исходная Android debug-сборка: PASS.
-- ESP32 после изменений: PASS, build 156; образ `0x141340`, свободно
+- ESP32 после изменений: PASS, build 154; образ `0x141340`, свободно
   `0x9ecc0` байт (33%).
 - Android debug после изменений: PASS.
 - OTA по Wi-Fi: PASS, ESP32 обновлена `10.0.154 → 10.0.156`.
@@ -4531,6 +4676,87 @@ Baseline build-android.ps1 до изменений: PASS. Итоговая build
 - GET `/api/config` вернул `shunt_gpio=7`; проверено сохранённое значение
   по умолчанию. Переключение на другой GPIO и повторная калибровка не выполнялись.
 
+## 01.10.2026 — права гостя на кнопки режимов
+
+- Исходная сборка перед изменением: `build-esp32.ps1` PASS, firmware 10.0.245; OTA PASS, Agent подтвердил устройство `a0:f2:62:f1:14:b8` и версию 10.0.245.
+- Сборка с изменением: `build-esp32.ps1` PASS, ESP-IDF 5.4.4, firmware 10.0.246, образ `0x147910`, свободно 32% OTA-раздела.
+- OTA PASS: 10.0.245 → 10.0.246; после загрузки Agent сообщил `boot_id=ccd56684fc03d913`, `state=LOCKED`, `fault_flags=0`.
+- После перезапуска приложения Redmi Note 8 Pro подключился как гость: ESP `connected=true`, `encrypted=true`, `bonded=true`; обе кнопки в UI имеют `enabled=true`.
+- ADB-инъекция нажатий на MIUI отклонена системой (`INJECT_EVENTS permission`); проверка реального переключения выполнена ручными нажатиями на телефоне с контролем событий ESP.
+- При ручном управлении с гостевого Redmi ESP зарегистрировала `BLE MODE принят: ALWAYS_OPEN` и фактический `OPEN_HOLD fault=0x0`. Затем `BLE AUTO_OFF_CLOSE принят`, фактический статус вернулся в `LOCKED fault=0x0`. На гостевом Android после включения автоматического режима кнопка «Автоматический режим» имела `selected=true`, «Замок постоянно открыт» — `selected=false`.
+- Позже телефон вышел из зоны открытия и ESP разорвала BLE-соединение; последний прочитанный статус замка `LOCKED`, `hold_open=false`, `fault_flags=0`.
+- При повторном появлении гостевого телефона в зоне ESP зарегистрировала новое encrypted/bonded соединение, приняла `BLE OPEN`, и фактический статус стал `OPEN fault=0x0` в автоматическом режиме. Это подтверждает рабочий путь автоматического открытия после нажатия второй кнопки.
+
+## 01.10.2026 — установка Android build 124 на REDMI Note 15
+
+- Второй телефон `192.168.1.65:34255` опознан как REDMI Note 15. Установленный до обновления APK сохранён в `artifacts/redmi-note15-app-before-build124.apk`; его подпись совпала с подписью целевого APK, поэтому `adb install -r` сохранил данные владельца.
+- Готовый APK из `android_lock_beacon_fixed_ble_tone_v2/app/build/outputs/apk/debug/app-debug.apk` установлен успешно. SHA-256 установленного `base.apk` точно совпал с исходным APK: `BD8388C3E60D1050A0884003F7657B52E7848D0207540CAD6565DFC7296D1C4F`.
+- При запуске главный экран показывает «Версия приложения 1.0.0 (сборка 124)», обе кнопки режимов и кнопку «Настройки» владельца.
+- До установки сохранены `accelerometer_rotation=0`, `user_rotation=0` в `artifacts/redmi-note15-rotation-before-build124-20261001.json`. После установки оба значения восстановлены и повторно проверены; после запуска приложения повторная проверка снова дала `0/0`.
+
+## 01.10.2026 — откат REDMI Note 15 на Android build 122
+
+- ADB-устройство `192.168.1.65:34255` подтверждено как REDMI Note 15 (`2510DRA23E`). До отката установленный APK побайтно совпадал с сохранённой сборкой 124 (SHA-256 `BD8388C3E60D1050A0884003F7657B52E7848D0207540CAD6565DFC7296D1C4F`). Подписи APK 122 и 124 совпадают.
+- Перед установкой прочитаны `accelerometer_rotation=0` и `user_rotation=0`; значения сохранены в `artifacts/redmi-note15-rotation-before-build122-20261001-082419.json`.
+- `adb install -r artifacts/redmi-note15-app-before-build124.apk`: `Success`. SHA-256 установленного `base.apk` совпал с APK сборки 122: `94E9DE477EC4E59D3214A6C166CCEE75C61EA582CECD165EAD28B1F9CB26F29C`. В APK `versionName=1.0.0`, `versionCode=1`, `BUILD_NUMBER=122`.
+- После установки оба параметра ориентации восстановлены и повторно прочитаны как `0/0`. `firstInstallTime` пакета не изменился, процесс приложения запущен; в просмотренных сообщениях `AndroidRuntime` немедленного сбоя нет. BLE-сценарии и физическое управление замком после отката не проверялись.
+- Использован готовый сохранённый APK; исходники не изменялись и новая сборка не выполнялась.
+
+## 01.10.2026 — установка Android build 120 на REDMI Note 15
+
+- ADB подтвердил `192.168.1.65:34255` как REDMI Note 15. Перед установкой установленный APK побайтно совпадал с сохранённой сборкой 122 (SHA-256 `94E9DE477EC4E59D3214A6C166CCEE75C61EA582CECD165EAD28B1F9CB26F29C`). Подписи APK 120 и 122 совпадают.
+- Системные значения `accelerometer_rotation=0` и `user_rotation=0` прочитаны и сохранены в `artifacts/redmi-note15-rotation-before-build120-20261001-084457.json` до установки.
+- `adb install -r android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`: `Success`. SHA-256 установленного `base.apk` совпал с APK сборки 120: `BCE3BD7D6247937E40920CE8973DFE60306C3D0F51771B56D5337D26F4D14889`. В APK `versionName=1.0.0`, `versionCode=1`, `BUILD_NUMBER=120`.
+- После установки оба параметра ориентации восстановлены и дважды прочитаны как `0/0`. `firstInstallTime` пакета не изменился; процесс приложения работает, в просмотренных сообщениях `AndroidRuntime` немедленного сбоя нет.
+- BLE-сценарии, Web UI и физическое управление замком после установки не проверялись. Использован готовый APK; новая сборка не выполнялась.
+
+## 01.10.2026 — один Android-проект в рабочем дереве
+
+- До изменения `build-android.ps1`: PASS, основной `android_lock_beacon` собран как build 121. APK прежней сборки 120 скопирован в `artifacts/android-main-build120-before-consolidation.apk` до запуска скрипта.
+- Архив `artifacts/android-variants-before-removal-20261001.zip` создан до вывода двух копий из проекта: 3222 записи; проверено наличие `BleRepository.kt` и файлов подписи обеих копий. APK сборки 119 отдельно сохранён в `artifacts/android-fixed-tone-build119-before-consolidation.apk`.
+- Рекурсивное удаление было отклонено автоматической проверкой. После проверки абсолютных путей обе копии перенесены в `%TEMP%\codex-ble-lock-retired-variants-20261001`. В корне остался один каталог `android_lock_beacon*` — `android_lock_beacon`.
+- После изменения `build-android.ps1`: PASS, debug APK основного проекта собран как build 122. Скрипт принимает только `ProjectName=android_lock_beacon`; `git diff --check` для изменённых скрипта и отчётов прошёл.
+- Изменены `build-android.ps1`, `android_lock_beacon/BUILD_NUMBER`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`; добавлены архив и сохранённые APK 119/120. Исходники приложения и прошивка не изменялись. APK на телефон в этом этапе не устанавливался.
+
+## 01.10.2026 — Android-порог перед BLE-подключением
+
+- Исходная сборка `build-android.ps1`: PASS, build 123; предыдущий APK build 122 сохранён в `artifacts/android-main-build122-before-rssi-gate.apk` (SHA-256 `441BAD28C1B9C093FED0581D3A157B26CB9D4AB15E694F1DB797EE7893E04EAF`).
+- Сборка после изменения: PASS, build 124. `git diff --check` для изменённых исходников и `AUDIT.md`: PASS.
+- Проверка кода: обычное сканирование и сканирование после разрыва принимают UUID замка, затем сравнивают `ScanResult.rssi` с сохранённым порогом; путь `connectGatt(autoConnect=true)` больше не вызывается из `findAndConnect`.
+- Изменены `BleRepository.kt`, `MainActivity.kt`, `strings.xml`, `android_lock_beacon/BUILD_NUMBER`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`. Проверка на физическом телефоне выполняется отдельно ниже.
+- REDMI Note 15 (`192.168.1.65:34255`): APK build 124 установлен через `adb install -r` с сохранением данных. Перед установкой `accelerometer_rotation=0`, `user_rotation=0` сохранены в `artifacts/redmi-note15-rotation-before-rssi-gate-build124-20261001.json`; после установки и повторного запуска оба значения восстановлены и повторно прочитаны как `0/0`. Порог приложения остался `-72 dBm`.
+- Реальная проверка: при новом поиске после разрыва журнал показал `BLE_CONNECT_WAITING_FOR_RSSI` для `-99`, `-94` и `-86 dBm`; GATT-подключение не начиналось. При `-68 dBm` журнал показал принятие рекламного пакета и затем `GATT_CONNECTED`. Журнал сохранён в `artifacts/redmi-note15-rssi-gate-build124-20261001.log`.
+- При первом запуске через `monkey` после принудительной остановки HyperOS зафиксировала один ANR foreground service. Повторный запуск через `am start` прошёл: приложение дошло до READY и выполнило описанную выше проверку обоих значений RSSI. Отдельной проверки после длительной фоновой работы не было.
+
+## 01.10.2026 — BLE scan после выключения экрана
+
+- До изменения `build-android.ps1`: PASS, build 125. После замены двух нефильтрованных scan на фильтр по имени: PASS, build 126.
+- На REDMI Note 15 ранее приложение оставалось в `SCANNING` без новых `ScanResult` после разрыва. На ESP после этого было событие `BLE GATT advertising запущен`; watchdog не сообщал об остановке рекламы. Исправление сохраняет программную проверку UUID и порог `RSSI > threshold` до GATT.
+- Изменены `BleRepository.kt`, `android_lock_beacon/BUILD_NUMBER`, корневые и Android `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`. Проверка APK на устройстве записывается ниже.
+- Build 126 установлен на REDMI Note 15 с сохранением данных и ориентации `0/0` (`artifacts/redmi-note15-rotation-before-filtered-scan-build126-20261001.json`). При `mWakefulness=Dozing` получены рекламные пакеты `-90…-81 dBm`, при `-70…-67 dBm` телефон подключался и доходил до READY. Затем HyperOS зарегистрировала `App 'com.blelock.app' is scanning too frequently`; сканирование перестало давать результаты. Фильтр по имени исправил получение рекламы при выключенном экране, но выявил системное ограничение частоты scan.
+- После следующего этапа ограничения частоты `build-android.ps1`: PASS, build 127. В `BleRepository.kt` добавлены задержка перед повторным scan и watchdog молчащего scanner; в AUTO отдельный пассивный RSSI-scan отключён, существующий GATT RSSI опрашивается как прежде. Проверка build 127 на устройстве выполняется ниже.
+- Build 127 установлен с сохранением данных и ориентации `0/0` (`artifacts/redmi-note15-rotation-before-scan-throttle-build127-20261001.json`). При погашенном экране телефон получал рекламу, соблюдал порог и доходил до READY, но в 09:46:58 и 09:47:00 HyperOS всё ещё выдала `scanning too frequently`: при открытом UI продолжал запускаться дополнительный scan RSSI. Его остановка во всех режимах собрана как build 128: PASS. Физическая проверка build 128 — ниже.
+- Build 128 установлен на REDMI Note 15 с сохранением данных. Перед установкой ориентация `0/0` записана в `artifacts/redmi-note15-rotation-before-no-passive-scan-build128-20261001.json`; после установки и проверки оба значения снова `0/0`.
+- В течение более минуты после установки многократные циклы поиска получали рекламу: например, `-89 dBm` оставил поиск активным, `-68 dBm` вызвал GATT и READY. Повторный scan откладывался на 8–12 секунд для соблюдения интервала 15 секунд. Новых сообщений HyperOS `scanning too frequently` за время проверки build 128 не было; последние такие сообщения относятся к предыдущему процессу build 127 в 09:48. Журнал: `artifacts/redmi-note15-filtered-scan-build128-20261001.log`.
+- `git diff --check` для затронутых исходника и отчётов: PASS. Длительная фоновая работа за пределами этой проверки отдельно не проверялась. ESP-прошивка и её порог `-50 dBm` не менялись.
+
+## 01.10.2026 — установка последней сборки со старым auto-connect
+
+- REDMI Note 15 (`192.168.1.65:34255`): перед установкой сохранён APK текущего build 128 в `artifacts/android-main-build128-before-native-autoconnect-rollback.apk` (SHA-256 `BBB5667844388E2883EFACE84AD3F47567716A81808F94AB3044558A6768C7D3`). Выбран `artifacts/android-main-build122-before-rssi-gate.apk` — последний сохранённый APK основного проекта до изменения пути подключения (SHA-256 `441BAD28C1B9C093FED0581D3A157B26CB9D4AB15E694F1DB797EE7893E04EAF`).
+- До установки сохранены `accelerometer_rotation=0`, `user_rotation=0` в `artifacts/redmi-note15-rotation-before-native-autoconnect-build122-20261001.json`. `adb install -r` завершился `Success`; SHA-256 установленного `base.apk` совпал с APK build 122. `firstInstallTime` не изменился — данные приложения не удалялись.
+- При `mWakefulness=Dozing` лог показал `EXPERIMENT_AUTO_CONNECT_START`, `EXPERIMENT_AUTO_CONNECT_PENDING: gatt=true`, `GATT_CONNECTED` и `READY`. После установки и проверки оба параметра ориентации восстановлены и повторно прочитаны как `0/0`. Полу-часовой сценарий ухода/возврата в этом прогоне не воспроизводился.
+- Исходники проекта и ESP-прошивка не менялись; локальная исходная Android-сборка остаётся build 128, установленный телефон — build 122.
+## 01.10.2026 — диагностика BLE RSSI на замке
+
+- До правки `build-esp32.ps1`: PASS, версия 10.0.247; обязательная OTA выполнена, Agent подтвердил возврат и новую версию.
+- После правки `build-esp32.ps1`: PASS, версия 10.0.248; OTA выполнена, Agent подтвердил версию 10.0.248 и возврат устройства.
+- Живой журнал при телефоне рядом зафиксировал `BLE zone exit h=1 raw=-64 med=-67 lim=-60 ms=500`, затем `raw=-63 med=-63` при том же пороге; после обоих событий `BLE disconnect h=1 reason=534`. В NimBLE `534 = 0x200 + 0x16`, то есть локальное завершение соединения контроллером.
+- `/api/status` на исходной сборке показал RSSI от -68 до -55 dBm во время повторных подключений; после OTA при активном соединении значение менялось от -63 до -40 dBm. Числа объясняют срабатывание порога, но причина колебаний радиосигнала не установлена.
+- `git diff --check` для затронутых файлов: PASS. Порог, таймеры, алгоритм открытия и мощность BLE не менялись.
+## 01.10.2026 — Android: одно автооткрытие за присутствие
+
+- До правки `build-android.ps1`: PASS (build 129); после правки: PASS (build 130). `build-android.ps1 -Action test`: PASS.
+- Build 130 установлен на REDMI Note 15; ориентация до/после `0/0` сохранена и проверена. Native auto-connect, защищённое соединение и один OPEN в 13:45:22 подтверждены журналами телефона и ESP32. Реальный уход/возврат телефона не проверялся.
 ## 01.10.2026 — удаление таймера Б и выдержки слабого RSSI
 
 - До изменений `build-esp32.ps1`: PASS, firmware 10.0.249; `build-android.ps1`: PASS, build 133. Замок сначала был недоступен по Agent API, после возврата в сеть OTA 10.0.248 → 10.0.249 прошла успешно.
@@ -4539,3 +4765,429 @@ Baseline build-android.ps1 до изменений: PASS. Итоговая build
 - После изменений `build-android.ps1`: PASS, debug build 134; APK `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`, 2291236 байт. Установка на телефон отложена до окончания независимого опыта BLE Foreva.
 - Проверка `rg` не нашла действующих ссылок на удаленные таймеры в `main` и Android UI; `git diff --check`: PASS. Поведение физического замка при слабом RSSI после удаления выдержки не испытывалось; это изменение прекращает GATT-соединение при первом валидном медианном значении ниже порога.
 - Изменены: `main/app_config.h`, `main/app_config.c`, `main/lock_control.h`, `main/lock_control.c`, `main/ble_phone.c`, `main/web_ui.c`, `main/web/index.html`, `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt`, `android_lock_beacon/app/src/main/res/values/strings.xml`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+
+## 01.10.2026 — Web UI / ThingSpeak / GPIO6 / UART
+
+- Baseline перед изменениями: ESP32 10.0.251 собрана и загружена OTA; Android debug build 136 успешен.
+- ESP32 после изменений: `build-esp32.ps1` PASS, firmware 10.0.252; OTA через `device-agent.ps1 flash` PASS, устройство сообщило `previous_version=10.0.251`, `current_version=10.0.252`.
+- После OTA `/api/config` вернул `shunt_gpio=6`, `serial_log_enabled=true`; `/api/thingspeak` вернул пустые значения и `*_configured=false`. JavaScript Web UI прошёл `node --check`.
+- Один запрос `/api/status` с таймаутом 8 с сразу после OTA не успел завершиться; требуется повторная проверка после стабилизации устройства.
+- Android-кнопка пока не имеет обработчика и намеренно отключена. Сборка Android будет выполнена после правки.
+- Изменённые файлы ESP32: `main/CMakeLists.txt`, `main/app_config.h`, `main/app_config.c`, `main/remote_log.h`, `main/remote_log.c`, `main/ulp/shared_state.h`, `main/ulp_controller.c`, `main/web_ui.c`, `main/web/index.html`; созданы `main/thingspeak_config.h`, `main/thingspeak_config.c`. Документация: `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+
+## 02.10.2026 — итог проверки Web UI и Android
+
+- Android: `build-android.ps1` PASS, debug build 137; APK `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`. APK на телефон в этом этапе не устанавливался.
+- ESP32: финальная `build-esp32.ps1` PASS, firmware 10.0.255; `device-agent.ps1 flash` PASS, версия замка `10.0.254 → 10.0.255`.
+- После OTA `/api/status`: `version=10.0.255`, `state=LOCKED`, `fault_flags=0`; `/api/config`: `shunt_gpio=6`, `serial_log_enabled=true`.
+- Переключатель UART проверен через `/api/config/serial-log`: значение изменилось на `false` и было возвращено на `true`. ThingSpeak POST/GET прочитал пробные логин, номер и URL из NVS; исходные пустые значения восстановлены.
+- Совместимость проверена: старый POST `/api/config` без параметра serial log и с `shunt_gpio=7` возвращает успех; эффективный GPIO остаётся 6. JavaScript встроенной страницы прошёл `node --check`; старый UI-контрол GPIO и его setter отсутствуют.
+- Ручной осмотр Web UI в браузере и Android-кнопки на физическом телефоне ещё не выполнялся. ThingSpeak пока только хранит настройки и ничего не отправляет.
+- Изменённые Android-файлы: `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt`, `android_lock_beacon/app/src/main/res/values/strings.xml`; документация: `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`, `android_lock_beacon/CHANGELOG.md`, `android_lock_beacon/TEST_REPORT.md`.
+- Финальная пересборка после исправления диагностических подписей: `build-esp32.ps1` PASS, OTA PASS (`10.0.255 → 10.0.256`). После перезапуска `/api/status`: `LOCKED`, `fault_flags=0`, версия `10.0.256`; `/api/config`: GPIO6, UART-лог включён. HTTP-страница содержит панели ThingSpeak, управления пользователями и кнопку дополнительных настроек. Дополнительно изменён `main/lock_ai_adapter.c`.
+
+## 02.10.2026 — проверка ссылки ThingSpeak
+
+- Исходная сборка ESP32 10.0.257: PASS, OTA PASS. После изменения `build-esp32.ps1`: PASS, firmware 10.0.258; OTA через `device-agent.ps1 flash`: PASS, устройство подтвердило `10.0.257 → 10.0.258`.
+- POST `/api/thingspeak` с `channel_id=1863308` и заведомо чужим `channel_url` вернул через GET канонический адрес `https://thingspeak.mathworks.com/channels/1863308`. Исходные настройки после проверки восстановлены: канал 0, URL пустой.
+- После OTA `/api/status`: `version=10.0.258`, `state=LOCKED`, `fault_flags=0`. JavaScript прошёл `node --check`; отдельная проверка функции ссылки подтвердила корректный `href` для 1863308 и отсутствие ссылки при пустом номере.
+- Изменены `main/web/index.html`, `main/web_ui.c`, `main/thingspeak_config.c`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`. Android-проект не затрагивался.
+
+## 02.10.2026 — удаление полей логина и пароля ThingSpeak
+
+- Исходная ESP32-сборка: PASS, firmware 10.0.259; OTA PASS. После изменения `build-esp32.ps1`: PASS, firmware 10.0.260; OTA PASS (`10.0.259 → 10.0.260`).
+- Загруженная с устройства HTML-страница не содержит `tsLogin`, `tsPassword` и JS-ссылок на них; JS прошёл `node --check`.
+- POST `/api/thingspeak` без `login` и `password` успешно сохранил тестовый канал 1863308; GET вернул правильную автоматически созданную ссылку. Исходный канал 2675426 восстановлен. Логин и флаг наличия пароля до/после совпали.
+- После OTA `/api/status`: `version=10.0.260`, `state=LOCKED`, `fault_flags=0`. Изменены `main/web/index.html`, `main/web_ui.c`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+## 02.10.2026 — этап Android новой BLE-архитектуры
+
+- Исходные сборки: Android build 138 PASS; ESP32 firmware 10.0.261 PASS и OTA PASS (`10.0.260 → 10.0.261`). Аудит зафиксирован в `AUDIT.md` до правок.
+- После изменений `build-android.ps1`: PASS, debug build 139. APK: `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`. Установка отложена до готовности ESP32-части.
+- Создан `android_lock_beacon/app/src/main/java/com/blelock/app/PhoneBeacon.kt`; изменены `AndroidManifest.xml`, `BleLockService.kt`, `MainActivity.kt`, `CHANGELOG.md`, `TEST_REPORT.md`, `AUDIT.md`.
+- Физическая проверка защищённого соединения и автооткрытия ещё не выполнена.
+## 02.10.2026 — этап ESP32 scanner/central
+
+- Первая компиляция 10.0.262 остановилась на обращении к внутренней функции `lock_control_requested_open`; заменено публичным `lock_control_get_feedback`. Скрипт ошибочно напечатал `ESP32 BUILD SUCCESSFUL` после ошибки Ninja; бинарник 10.0.262 не прошивался.
+- Повторная компиляция `build-esp32.ps1` PASS, firmware 10.0.263. OTA через `device-agent.ps1 flash` PASS: `10.0.261 → 10.0.263`.
+- После перезагрузки `device-agent.ps1 discover/status/events`: версия 10.0.263, `LOCKED`, `fault_flags=0`, NimBLE host синхронизирован, старый GATT advertising запущен. Защищённое соединение с телефоном пока не проверено.
+- Изменены `main/ble_phone.c`, `sdkconfig`, `sdkconfig.defaults.esp32s3`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+## 02.10.2026 — проверка Android build 139 и исправление
+
+- APK build 139 установлен на физический телефон по ADB. Перед установкой `accelerometer_rotation=0`, `user_rotation=0` сохранены в `artifacts/android-rotation-before-architecture-install-20261002.json`; после установки оба значения восстановлены и проверены.
+- `BLUETOOTH_ADVERTISE` выдан через ADB. Android logcat подтвердил запуск маяка с сессией `D28EFD2C`.
+- ESP event log обнаружил нежелательную старую команду `OPEN` при входе в UI (старый Android GATT-клиент). После этой находки Android-код исправлен, `build-android.ps1` PASS, build 140. Исправленный APK ещё не установлен.
+- Дополнительно изменён `BleLockService.kt`; соответствующие записи внесены в `CHANGELOG.md`, `TEST_REPORT.md`, `android_lock_beacon/CHANGELOG.md`, `android_lock_beacon/TEST_REPORT.md`.
+## 02.10.2026 — диагностика scanner
+
+- `build-esp32.ps1` PASS, firmware 10.0.264; OTA PASS (`10.0.263 → 10.0.264`). Новые события scan/выбора маяка ожидают проверки после установки Android build 140.
+- Изменены `main/ble_phone.c`, `CHANGELOG.md`, `TEST_REPORT.md`.
+## 02.10.2026 — проверка перехода scanner → central
+
+- Android build 140 установлен с сохранением поворота экрана; файл исходных значений: `artifacts/android-rotation-before-architecture-build140-install-20261002.json` (`0/0` до и после). Logcat: маяк активен, session `13313A0B`.
+- ESP32 10.0.264 увидела `LOCK` beacon при RSSI −80 dBm, когда порог временно опускался с −60 до −90 dBm. Исходные `−60 dBm` и таймер А `1000 ms` восстановлены и прочитаны повторно.
+- Выявлено отсутствие `DISC_COMPLETE` после ручного `ble_gap_disc_cancel`; исправлено. `build-esp32.ps1` PASS, firmware 10.0.265; OTA PASS (`10.0.264 → 10.0.265`). Защищённый GATT путь ещё проверяется.
+- Изменены `main/ble_phone.c`, `CHANGELOG.md`, `TEST_REPORT.md`.
+## 02.10.2026 — защищённый GATT и мощность маяка
+
+- Firmware 10.0.265 при временном пороге −90 dBm несколько раз подтвердила encrypted/bonded GATT read и запросила открытие. Значит новый путь `Android advertiser → ESP scanner → secure GATT` работает. Исходный порог −60 dBm восстановлен.
+- При таймере А 1000 ms замок закрывался между циклами подключения примерно по 2 с. Это требует увеличения настраиваемого таймера А для устойчивого удержания.
+- Телефон позднее отправил старую `AUTO_OFF_CLOSE`; его текущее сохранённое `auto_open_enabled=false`. Это действие не переопределялось автоматически.
+- Android Tx power повышена до `ADVERTISE_TX_POWER_HIGH`; `build-android.ps1` PASS, build 141. Новый APK пока не установлен.
+- Изменены `PhoneBeacon.kt`, `CHANGELOG.md`, `TEST_REPORT.md`, `android_lock_beacon/CHANGELOG.md`, `android_lock_beacon/TEST_REPORT.md`.
+## 02.10.2026 — итог короткой интеграционной проверки
+
+- Android build 141 установлен по ADB. До установки сохранены `accelerometer_rotation=0`, `user_rotation=0` в `artifacts/android-rotation-before-architecture-build141-install-20261002.json`; после установки оба значения восстановлены и проверены. Разрешение `BLUETOOTH_ADVERTISE` выдано.
+- На замке 10.0.265 подтверждены обнаружение маркера `LOCK`, защищённое чтение по encrypted/bonded GATT, открытие, отключение и повторный цикл. Долгий тест новой архитектуры не выполнялся по желанию пользователя.
+- Рабочая настройка таймера А изменена на 5000 ms; итоговые параметры прочитаны: `phone_rssi_threshold=-60`, `timer_a_ms=5000`. После проверки замок `LOCKED`, `fault_flags=0`.
+- После build 141 AUTO включён на телефоне. При штатном пороге −60 dBm ESP принимала рекламу `ADVERTISE_TX_POWER_HIGH` с RSSI −51…−58 dBm; защищённое чтение подтверждалось. В одной серии был пропуск около 14 с: таймер А закрыл замок, следующий успешный контакт снова его открыл.
+- Изменены `README.md`, `CHANGELOG.md`, `TEST_REPORT.md`, `android_lock_beacon/TEST_REPORT.md`.
+
+## 02.10.2026 — ограничение частоты событий BLE central
+
+- Повторяющиеся advertisements и ожидаемые отключения после чтения больше не заполняют event log. Обнаружение маяка и успешное чтение фиксируются при смене session или не чаще одного раза за 30 с.
+- `build-esp32.ps1` PASS, firmware 10.0.266. OTA PASS (`10.0.265 → 10.0.266`). После OTA статус замка `LOCKED`, `fault_flags=0`.
+- После прошивки ADB-соединение с телефоном пропало; ESP32 ответила и продолжила scanner startup.
+- Изменены `main/ble_phone.c`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+## 02.10.2026 — канал кнопки постоянного открытия
+
+- `build-android.ps1`: PASS; APK: `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`.
+- Реальная проверка HTTP-команды на телефоне и замке не выполнялась. Сборка проверяет компиляцию; доступность сохранённого IP зависит от подключения телефона к той же локальной сети.
+## 02.10.2026 — исходные проверки перед BLE-переделкой
+
+- Android baseline: `build-android.ps1` PASS, debug build 143.
+- ESP32 baseline: `build-esp32.ps1` PASS, firmware 10.0.267; OTA PASS (`10.0.266 → 10.0.267`), устройство вернулось на Agent API `192.168.1.54`.
+- Архитектурный аудит выполнен и записан в `AUDIT.md`. Тесты нового pairing/AUTO ещё не выполнялись.
+## 02.10.2026 — Android этап независимых режимов
+
+- `build-android.ps1`: PASS, debug build 144. `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Unit tests покрывают 4 комбинации Auto/Always Open и подтверждают, что смена одного состояния не меняет другое; Auto UI не зависит от Wi-Fi-доступности.
+- Физическая установка не выполнена: ADB device отключился, список устройств пуст. Поведение рекламы/отсутствие scan на телефоне требует повторной проверки после восстановления ADB.
+## 02.10.2026 — ESP Central pairing
+
+- `build-esp32.ps1`: PASS, firmware 10.0.268. OTA PASS (`10.0.267 → 10.0.268`), Agent API подтвердил возврат устройства.
+- Pairing/owner ветки проверены компиляцией. Физический runtime pairing, owner NVS и system dialog не проверены: телефон отсутствовал в ADB.
+## 02.10.2026 — отмена pairing и таймауты ESP Central
+
+- `build-esp32.ps1`: PASS, firmware 10.0.270. OTA PASS (`10.0.269 → 10.0.270`).
+- Кодовая проверка: ветви timeout/reset компилируются; long BOOT LED/bond deletion не запускались физически, так как приёмочное удаление bonds деструктивно и требует подтверждённого тестового окна с телефоном.
+
+## 02.10.2026 — owner marker / ESP central transaction
+
+- ESP: `build-esp32.ps1` PASS, firmware 10.0.271; OTA PASS, устройство подтвердило переход 10.0.270 → 10.0.271.
+- Android: `build-android.ps1` PASS, debug build 146; `build-android.ps1 -Action test` PASS для debug/release unit tests.
+- Runtime BLE pairing, запись owner marker на телефоне и UI visibility не проверены: ADB устройство отсутствует. Физические проверки остаются обязательными.
+
+## 02.10.2026 — Web UI обращается по Wi-Fi
+
+- `build-android.ps1`: PASS, debug build 147; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- UI при отсутствии сохранённого IP просит ввести IPv4; сетевой вызов/браузер и реальная доступность ESP32 с телефона не тестировались без ADB/устройства.
+
+## 02.10.2026 — Android Central lifecycle gate
+
+- `build-android.ps1`: PASS, debug build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Проверка `adb devices -l`: список пуст. Установка APK, проверка Auto ON/OFF, background advertising и owner Web UI на физическом Android не выполнялись.
+
+## 02.10.2026 — Android Peripheral lifecycle
+
+- `build-android.ps1`: PASS, build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- `adb devices -l`: нет подключённых устройств. Boot/restart, Auto ON/OFF и отсутствие Android Central физически не проверены.
+
+## 02.10.2026 — лимит ESP bond store
+
+- `build-esp32.ps1`: PASS, firmware 10.0.272; OTA PASS, Agent API подтвердил переход 10.0.271 → 10.0.272.
+- Лимит проверен статически и компиляцией, заполненный до 20 записей bond store тест физически не выполнялся.
+
+## 02.10.2026 — Android foreground lifecycle
+
+- `build-android.ps1`: PASS, debug build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физическая проверка Auto ON/OFF и уведомления ожидает ADB-подключения телефона.
+
+## 02.10.2026 — Android callback guard
+
+- `build-android.ps1`: PASS, build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физический runtime test отсутствует: ADB устройство не подключено.
+
+## 02.10.2026 — Android Wi-Fi provisioning beacon
+
+- `build-android.ps1`: PASS, build 152; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физический hotspot/BLE provisioning не проверен: ADB телефон не виден; ESP пока не реализует protocol byte `0x81`/Wi-Fi GATT read.
+
+## 02.10.2026 — Android↔ESP hotspot provisioning протокол
+
+- Android `build-android.ps1`: PASS, build 152; debug/release unit tests PASS.
+- ESP `build-esp32.ps1`: PASS, firmware 10.0.273; OTA PASS (`10.0.272 → 10.0.273`), Agent API подтвердил новую версию.
+- End-to-end hotspot, bonded long-read, Wi-Fi DHCP и повторное AUTO не проверены: ADB phone недоступен. ESP runtime parser проверен сборкой; пароль не логируется.
+- Android не получает dynamic DHCP IP после разрыва GATT, поэтому автооткрытие URL Web UI остаётся непроверенным/незавершённым.
+# 02.10.2026 — baseline перед уточнением IP в Settings provisioning
+
+- `build-android.ps1`: PASS, debug APK собран.
+- `build-esp32.ps1`: PASS, firmware 10.0.274.
+- Обязательная OTA: PASS, устройство подтвердило обновление `10.0.273 → 10.0.274`.
+- Статическая проверка: SSID/password передаются после callback готовности hotspot; ESP использует DHCP после подключения. Невозможно подтвердить/передать заранее фактический DHCP IP без дополнительного обратного шага.
+
+## Hotspot IPv4 через защищённый PhoneBeacon — Android этап (02.10.2026)
+
+- После `LocalOnlyHotspotCallback.onStarted()` Android пытается определить текущий IPv4 по поднятым AP интерфейсам (`ap*`, `softap*`, `swlan*`); если AP интерфейс не обнаружен — использует единственный однозначный `wlan*` IPv4. При неоднозначности/ошибке IP не передаётся, фиксируется logcat warning, SSID/пароль provisioning продолжаются.
+- IP (4 bytes network-order; `00 00 00 00` = отсутствует) передаётся BleLockService в `PhoneBeacon`. В GATT добавлена encrypted-read характеристика `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3` к существующему сервису.
+- `PhoneBeacon` проверяет `BOND_BONDED`; `PERMISSION_READ_ENCRYPTED` оставляет фактическую проверку encryption стандартному Android Bluetooth stack. IP очищается при `onStopped`, `onFailed` и остановке reservation.
+- Android `build-android.ps1 -Action test`: PASS (debug/release compile и unit tests). Добавлены проверки выбора AP-интерфейса, неоднозначности WLAN-кандидатов и недопустимого IPv4.
+
+## HOTSPOT_IP — завершение Android/ESP (02.10.2026)
+
+- Android IPv4 lookup использует перечисление поднятых интерфейсов и адресов. В первую очередь рассматриваются интерфейсы с AP-названием `ap*`, `softap*`, `swlan*`; единственный `wlan*` кандидат допускается только если нет активной Wi-Fi station сети. Адреса loopback/link-local/multicast/unspecified/broadcast отбрасываются. Неоднозначность возвращает «нет данных» и сохраняет credential/DHCP fallback. Стандартный Android API не раскрывает стабильно имя SoftAP интерфейса, поэтому физическое подтверждение на целевой модели остаётся необходимым.
+- GATT characteristic: `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3`, в существующем PhoneBeacon service; 4 bytes IPv4 network-order, `00 00 00 00` означает отсутствие IP.
+- Android проверяет `device.bondState == BOND_BONDED`; characteristic имеет `PERMISSION_READ_ENCRYPTED`, так что enforcement шифрования остаётся системному Bluetooth stack. IP очищается по жизненному циклу reservation; session token не даёт позднему STOP старого hotspot очистить адрес новой сессии.
+- ESP использует единственный исходящий GATT connection: `connect → encrypted/bonded proof BLE_LOCK_V1 → Wi-Fi credentials → HOTSPOT_IP`. IP читается только при provisioning marker `0x81`; обычный AUTO proof не делает дополнительного чтения и соединения.
+- ESP проверяет unicast IPv4, хранит его только в RAM через `wifi_ota_set_runtime_phone_ip()` / `wifi_ota_get_runtime_phone_ip()`. На IP отсутствует/ошибке продолжается credential provisioning fallback. ESP DHCP/static-IP поведение не менялось; NVS не получает IP телефона.
+- Android `build-android.ps1 -Action test`: PASS, build 153 (debug/release и unit tests). ESP `build-esp32.ps1`: PASS, firmware 10.0.275; OTA PASS, device-agent подтвердил `10.0.274 → 10.0.275`.
+- Радио-тест характеристик на физическом телефоне и проверка фактического интерфейса hotspot не выполнялись. Resolver покрыт unit tests, но использует доступные интерфейсы Android и при ambiguity намеренно возвращает отсутствие адреса.
+
+## Hotspot provisioning race fix — 02.10.2026
+
+- `build-android.ps1 -Action test`: PASS, debug/release compile и unit tests, build 154.
+- Исходный радиопрогон был на установленном build 153: hotspot `AndroidShare_5591`, обычное AUTO подтверждение ESP и timeout примерно через 60 секунд. Промежуточный build 154 установили до последней lifecycle правки. Итоговый APK build 155 собран отдельно через `build-android.ps1 -Action debug`; SHA-256 `A7CB26C74B0E5C4E9ED486A83D7A94BB7F7F4CFF1F3D9814660E8AC64C3ECDB5`. Адрес AP IPv4/успешный provisioning не подтверждены.
+- Финальный APK build 155 не установлен: ADB wireless install не завершилась, телефон заблокирован; разблокировка нужна для завершения wireless ADB install. Rotation values после попыток проверены: `accelerometer_rotation=1`, `user_rotation=0`.
+- Базовая ESP сборка firmware 10.0.276: PASS. Обязательная OTA upload/reboot verification: FAIL — Agent API `192.168.1.54` не вернулся за 60 секунд. Установленная версия не подтверждена; ESP код этой правкой не менялся.
+- End-to-end критерии ожидают повтор после разблокировки телефона и возврата ESP в сеть: provisioning marker, encrypted reads `WIFI_SETUP` + `HOTSPOT_IP`, совпадение адреса hotspot, DHCP ESP и доступность Web UI.
+
+## Проверка BLE pairing (03.10.2026)
+
+- Android BLE advertiser/GATT подтверждён тестом ноутбука: `PhoneBeacon` найден, bond ноутбука создан, защищённое чтение вернуло `BLE_LOCK_V1`. Этот bond не является bond замка.
+- Исходная ESP firmware 10.0.276: build PASS. В Android logcat для `BLE Lock` виден `BONDING → BOND_NONE`, `SMP_CONN_TOUT`; ESP security timeout был 10 секунд.
+- После правки ESP build 278 PASS и OTA PASS (`10.0.276 → 10.0.278`, Agent API вернулся). Защита для нового кандидата ждёт до 55 секунд, не выходя за остаток registration window.
+- Актуальный статус ESP: firmware 10.0.278, lock `LOCKED`, `connected=false`. Телефон не показывает BONDED для ESP; bond сохраняется только с ноутбуком.
+- OTA сохраняет NVS, поэтому старый ESP bond от предыдущего неудачного pairing остаётся и текущий AUTO цикл не использует новый registration timeout. При чистом тесте сначала long BOOT reset с тремя вспышками, затем одно короткое BOOT; во время синего окна подтвердить Android системный запрос кнопкой «Сопрячь/Pair» без ввода PIN.
+- Pairing после очистки и прошивки 10.0.278 ещё не подтверждён; дождаться Android `BOND_STATE_BONDED` и события ESP `новый bond проверен и сохранён`.
+
+## Чистая попытка BLE pairing и защита первого повтора (03.10.2026)
+
+- Android через ADB по Wi-Fi и ESP Agent/monitor записаны одновременно в `artifacts/pair-clean-android-20261003.log` и `artifacts/pair-clean-esp-20261003.log`.
+- Android `08:46:51.162`: `BONDING → BONDED`. ESP: новый bond/owner сохранён, защищённый proof прочитан, замок открылся. Через ~1 секунду ESP начал следующий AUTO-сеанс; Android перешёл обратно в `BONDING`, затем `SMP_CONN_TOUT` и `BOND_NONE` с удалением ключей. ESP оставил локальную запись bond.
+- Значения ESP `status=7` и `reason=534` декодированы по установленному NimBLE 5.4.4 как `BLE_HS_ENOTCONN` и `0x216` (локальное завершение соединения). Они являются последствиями разрыва; отдельной ошибки `0x4xx/0x5xx` в этом прогоне нет.
+- До правки ESP build `10.0.279`: PASS, OTA PASS. После локальной правки retry build `10.0.280`: PASS, OTA PASS. Повторное физическое pairing и сохранение bond после первого AUTO-сеанса ещё требуют проверки.
+- Проверка firmware `10.0.280`: Android вновь перешёл `BONDED → BONDING → BOND_NONE` после первого повтора через 5 секунд. Пауза не устранила проблему, её удалили в `10.0.281`. Диагностика `PEER_SEC rc / LTK / SC` собрана и прошита (build/OTA PASS), радиопроверка следующая.
+
+## Чистый pairing с выдержкой первого соединения (03.10.2026)
+
+- После ошибочного выбора «Заблокувати» на Redmi Note 15 запись `BLE Lock` обнаружена в системном «Чёрном списке Bluetooth». Это вызывало `0x50C / SMP_NUMERIC_COMPAR_FAIL` без нового диалога; удалена только эта запись. Другие bonds телефона сохранены. Перезагрузка телефона сама запись не удаляла.
+- ESP baseline build `10.0.282`: PASS, OTA PASS. ESP build после изменения `10.0.283`: PASS, OTA PASS. Устройство вернулось с firmware `10.0.283`.
+- Перед тестом удалён ошибочный ESP bond; Android bond отсутствовал. В 60-секундном registration window Android показал системный запрос; выбран `Підключити` без доступа к контактам. ESP назначил первого owner, закрыл окно, прочитал encrypted proof и открыл замок через штатный автомат.
+- Первый защищённый GATT-сеанс удерживался 5 секунд и разорван. Следующий AUTO-сеанс использовал сохранённый `PEER_SEC rc=0 LTK=1 SC=1`, успешно прочитал proof и открыл/освежил замок. Android показывает `BLE Lock` как `Збережено`; новых `SMP_CONN_TOUT` / удаления ключей в проверенном интервале нет.
+- ESP reboot: firmware `10.0.283` вернулась, bond/owner сохранились, через 1 секунду после старта прошли encrypted proof и открытие через `lock_control`. `hold_open=false` и Wi-Fi/Web UI не менялись.
+- После reboot Android debug app хранит `owner_access_confirmed=true` в device-protected `ble_lock` preferences после owner-status записи ESP. В Bluetooth-настройках телефона `BLE Lock` показан как сохранённое устройство.
+- Длительная проверка нескольких часов, поведение при выключенном экране и проверка второго телефона в этом этапе не выполнены. Журналы: `artifacts/pair-283-android.log`, `artifacts/pair-283-esp.log`.
+
+## Имя телефона в NVS — Android этап (03.10.2026)
+
+- Baseline ESP build `10.0.284` PASS, OTA PASS; baseline Android build PASS.
+- `PhoneBeacon` предоставляет имя Bluetooth или fallback модели только bonded peer по encrypted-read характеристике; формат UTF-8, максимум 48 байт.
+- После изменения Android `build-android.ps1` PASS. APK ещё не установлен; end-to-end чтение ESP и запись в NVS ожидают ESP этапа.
+
+## Имя телефона в NVS — ESP этап (03.10.2026)
+
+- ESP build `10.0.285` PASS, OTA PASS; устройство подтвердило `firmware_version=10.0.285`.
+- Статически проверено: чтение имени требует успешного bonded+encrypted proof и выполняется только для bond без `ble_names`; сохранение идёт через существующий NVS механизм.
+- Физическая запись имени ожидает установки обновлённого Android APK; текущий bond остаётся без имени до первого успешного GATT-read новой версии.
+- Обновлённый APK установлен через ADB (`Success`), затем приложение запущено. `accelerometer_rotation=0` и `user_rotation=0` прочитаны и сохранены до установки, восстановлены и повторно проверены после неё. Foreground service и `PhoneBeacon` active подтверждены logcat; Auto Open остаётся ON.
+- ESP пока не видел телефон в разрешённой RSSI-зоне после установки, поэтому NVS по-прежнему сообщает `имя не сохранено`. Ожидается короткий физический тест с телефоном рядом с замком.
+
+## Имя телефона — физическая проверка (03.10.2026)
+
+- Android debug APK установлена; до/после ADB install ориентация экрана сохранена (`accelerometer_rotation=0`, `user_rotation=0`). `BleLockService` foreground и маяк активны; телефон `REDMI Note 15`, RSSI ESP `-38…-44 dBm`, порог `-60 dBm`.
+- Android Settings отображает `BLE Lock — Збережено`. ESP firmware `10.0.285`, API bonds показывает `4C:8E:19:3A:70:65`, имя — `имя не сохранено`.
+- На каждом AUTO соединении ESP находит LTK (`rc=0, LTK=1, SC=1`), затем получает `status=520`; Android logcat сообщает `SMP_CONN_TOUT`, bonded keys не удаляет. Proof и имя не читаются; запись имени по радио не подтверждена.
+- Результат: реализация скомпилирована/установлена, end-to-end проверка заблокирована рассогласованием/таймаутом BLE encryption на существующем bond. Требуется согласовать bond на обеих сторонах, затем проверить log `имя bonded телефона сохранено в NVS` и Web UI.
+
+## Auto Open после повторного pairing — диагностика (03.10.2026)
+
+- ESP baseline build `10.0.286`: PASS; OTA: PASS (`10.0.285 → 10.0.286`), устройство вернулось и подтвердило версию.
+- Android baseline build: PASS.
+- Android журнал: `BONDING`, через 10 секунд `SMP_CONN_TOUT`, Bluetooth stack удалил временные bonding keys. ESP журнал: `PEER_SEC rc=0 LTK=1 SC=1`, затем security phase timeout, `status=7`, disconnect `reason=534`; `/api/ble/bonds` содержал один bond `4C:8E:19:3A:70:65`, `REDMI Note 15`.
+- После подтверждения root cause, ESP запись bond удалена точечно; API вернул пустой bond list. Встроенная процедура также очищает соответствующий owner и сохранённое имя. Текущий lock state: LOCKED, hold_open=false. Повторное физическое pairing и проверка открытия ожидают BOOT short press и системное подтверждение на телефоне.
+# 03.10.2026 — Auto Open toggle / bond persistence check
+
+- Android baseline build via `build-android.ps1`: PASS; только существующие предупреждения deprecated API.
+- После включения Android PhoneBeacon ESP подключалась повторно; Android callback показывал `bondState=12`; чтение `PROOF_UUID` проходило (`status=0`, 11 bytes), ESP подтверждала ключ и открывала замок.
+- После перезапуска PhoneBeacon advertising session Android перешёл в `BONDING`, запросил системное pairing, затем выдал `SMP_CONN_TOUT` и `Removing ble bonding keys`. Системный список после этого не содержит `BLE Lock`.
+- ESP `/api/ble/bonds` при этом всё ещё содержит `REDMI Note 15`, `LTK=1`, `SC=1`. Последующие Android proof reads отклонены со статусом 257; ESP сообщает proof status 257/security status 7. Причина появления повторного SMP после Auto OFF/ON пока не подтверждена.
+- Никаких bond-записей не удаляли вручную, APK не устанавливали, код не меняли. Результат: проблема воспроизведена как системное удаление Android bond по timeout после повторного SMP; исправление ещё не внесено.
+
+# 03.10.2026 — ESP stale bond recovery stage
+
+- ESP baseline build 288 PASS и OTA `10.0.287 → 10.0.288` PASS.
+- После ESP изменения build 289 PASS; OTA `10.0.288 → 10.0.289` PASS. Проверено: новый firmware version отвечает, `LOCKED`, faults=0, BLE scanner запущен.
+- Изменённый путь пока не проверен радио-тестом: после OTA `/api/ble/bonds` вернул `[]`, телефонная сторона bond также отсутствует. Код теперь имеет условный путь повторного SMP вне регистрации, который требует согласованных ключей/физического BOOT теста для проверки.
+- Android GATT shutdown stage ожидает build/install; перед установкой будут сохранены и восстановлены `accelerometer_rotation` и `user_rotation`.
+
+## Повторные ESP подключения при Auto Open ON — 03.10.2026
+
+- На телефоне проверен Auto Open ON/OFF после установки Android debug build 163. При ON foreground service работал, `PhoneBeacon` рекламировал session `9d3e609e`; при OFF маяк остановлен, Auto Open и после теста возвращён в исходное OFF. Android logcat не показал удаления bond; в системном списке BLE Lock bond на момент теста отсутствовал.
+- До правки firmware 10.0.289 ESP повторяла цикл «подключиться → определить неизвестный peer вне pairing window → отключиться» на каждом новом advertising. Это подтверждено live `/api/events` и Android GATT callbacks (`bondState=10`).
+- ESP build 10.0.290: PASS; OTA PASS (`10.0.289 → 10.0.290`); `/api/status`: `firmware_version=10.0.290`, `LOCKED`, `fault_flags=0`, `bonded=false`. После первого отклонения неизвестный телефон подавлен; за 8 секунд повторных подключений не зарегистрировано.
+- Важное ограничение: этот физический прогон был без bond на обеих сторонах, поэтому он проверил устранение повторных подключений неизвестного peer, но не сохранение ранее состоявшейся пары. Для полного подтверждения требуется заново выполнить BOOT pairing, затем проверить Auto OFF/ON при наличии пары и отсутствие `BOND_BONDING`/`SMP_CONN_TOUT`.
+
+## Live bond loss после отказа proof — исправление обработки status 257 (03.10.2026)
+
+- Live ESP events: ESP имела `LTK=1, SC=1`, несколько раз успешно читала защищённый proof и открывала замок. Позже чтение вернулось с `status=257 secure=1`; прежний обработчик удалил bond и owner.
+- ESP build 10.0.291 изменяет только реакцию на такой ATT отказ: сохраняет bond/owner, отключает текущую сессию и подавляет peer до физического BOOT pairing window.
+- Сборка PASS; OTA PASS `10.0.290 → 10.0.291`. Проверка `/api/status`: версия `10.0.291`, `LOCKED`, `fault_flags=0`, disconnected. На следующем сканировании телефон обнаружен как неизвестный peer и отклонён вне BOOT окна.
+- Телефонный ADB logcat получить не удалось (`adb devices` пуст, mDNS сервис отсутствует), поэтому причина Android `status=257` осталась неподтверждённой. Bond был удалён до обновления 10.0.291; физическая проверка сохранения bond на новой обработке ещё не состоялась.
+
+## Android Auto OFF/ON — разбор и GATT lifecycle эксперимент (03.10.2026)
+
+- Live logcat поймал чистый повтор: новая пара успешно установилась, `bondState=12`, proof/name read status 0. После Auto OFF в 19:36:47 `PhoneBeacon` закрыл GATT Server при `0 peer(s)`; после ON в 19:37:04 создалась новая advertising session/server.
+- На первом reconnect телефон сначала сообщил `bondState=12`, затем перешёл в `BOND_BONDING` и показал системный SSP Consent. При proof read callback уже видел `bondState=11` и вернул status 257; через ~0.45 с Android зафиксировал `SMP_CONN_TOUT` и удалил ключ. ESP имела `LTK=1, SC=1`; текущая firmware 10.0.291 сохранила свой bond/owner при status 257.
+- Внесён экспериментальный Android lifecycle fix: быстрый Auto OFF/ON при живом bound service теперь приостанавливает advertising и разрывает peers, сохраняя GATT Server. Build 165 PASS; unit tests PASS; APK установлена, ориентация `accelerometer_rotation=1`, `user_rotation=0` восстановлена и проверена.
+- После установки Android Auto Open ON, foreground service активен; Android всё ещё без bond, ESP `/api/ble/bonds` содержит `REDMI Note 15`. Сам OFF/ON с обновлённой APK ещё не выполнен на paired состоянии; решение не считать подтверждённым до этой проверки.
+# Проверка Auto OFF во время активного GATT proof — 03.10.2026
+
+- Android baseline: `build-android.ps1` PASS перед правкой.
+- Анализ live логов: при Auto OFF уже начатый proof read получил status 257; ESP 10.0.291 подавила advertising device до следующего BOOT окна, поэтому после Auto ON подключения не было. Android GATT Server остался активен, callback видел `bondState=12`; в этом прогоне системное удаление ключа по `SMP_CONN_TOUT` не зарегистрировано.
+- Исправление: Android отвечает `GATT_READ_NOT_PERMITTED` (ATT 0x02) для proof request, пришедшего при `autoOpenWanted=false`; обычный AUTO proof и настройки защищённого доступа не изменены.
+- После правки: `build-android.ps1` PASS, `build-android.ps1 -Action test` PASS. ESP не менялась.
+- Требуется физически повторить OFF/ON с новой APK и убедиться по logcat, что отказ при OFF не вызывает ESP suppression, а после ON успешно читается proof без повторного SMP.
+
+## Повторное SMP после Auto OFF/ON — 03.10.2026
+
+- Установлена APK с отдельным GATT-ответом `GATT_READ_NOT_PERMITTED`; foreground service запущен, Auto Open ON, исходные значения ориентации `accelerometer_rotation=0`, `user_rotation=0` восстановлены и проверены.
+- После штатного restart ESP 10.0.291 заново подключилась к маяку. Android log: начало security обмена, `Unable to start encryption as already in progress`, `BOND_BONDING`, pairing UI, GATT callback `bondState=11`, затем `SMP_CONN_TOUT` и `Removing ble bonding keys`.
+- ESP `/api/ble/bonds` после теста содержит `REDMI Note 15` (`4C:8E:19:3A:70:65`); устройство `LOCKED`, faults=0. ESP временно подавляет этот device_id после status 257. Android сторона после timeout не bonded.
+- Android build: PASS; unit tests: PASS. APK install: PASS. ESP firmware не менялась.
+- Корневая причина пока не закрыта: сохранённые bond записи на сторонах не обеспечивают успешную повторную encryption/SMP. Удержание Android GATT Server проблему не устранило. Следующий этап — точечно диагностировать реиспользование bond key/address и SMP инициирование на ESP; не стирать оставшийся ESP bond до фиксации логов.
+- Логи: `artifacts/android-autooff-reconnect-failure-20261003.log`, `artifacts/esp-bonds-after-autooff-reconnect-20261003.json`.
+
+## Повторное pairing и AUTO proof — 03.10.2026
+
+- Короткое BOOT pairing выполнено, системный запрос сопряжения подтверждён. ESP firmware осталась 10.0.291; проектный код/прошивка не менялись.
+- В интервале Android 20:20:06–20:21:03 повторялись короткие central-сеансы. Android `PhoneBeacon` видел `bondState=12`, `bonded=true`; `PROOF_UUID` возвращал status 0 и 11 байт. ESP подтверждала `LTK=1, SC=1`, открывала замок и обновляла watchdog. Нового `SMP_CONN_TOUT`/`Removing ble bonding keys` в интервале нет.
+- `/api/ble/bonds` содержит `REDMI Note 15` (`4C:8E:19:3A:70:65`). `/api/status`: `OPEN`, `hold_open=false`, `fault_flags=0`; Auto Open остаётся ON.
+- OFF/ON после этого успешного pairing пока не проверен. Автоматическое переключение не выполнялось, поскольку сейчас замок открыт и выключение маяка позволит watchdog закрыть его.
+- Логи сохранены в `artifacts/android-repair-auto-proof-20261003.log`, `artifacts/esp-repair-auto-events-20261003.json`, `artifacts/esp-repair-auto-bonds-20261003.json`.
+
+## Bond удалён системой во время обычного AUTO — 03.10.2026
+
+- Android `20:25:02.673`: proof read `bondState=12`, `status=0`. Следующее подключение `20:25:04.374` вызвало повторный SMP и переход Android в `BOND_BONDING`; proof callback уже видел `bondState=11`, ответил `status=257`.
+- Android stack `20:25:05.407`: `SMP_CONN_TOUT` и `Removing ble bonding keys`; `20:25:06.322`: `BOND_NONE`. Android исходники приложения `removeBond()` не вызывают.
+- Auto OFF с `0 peer(s)` произошло позже, в `20:40:42`; поэтому этот конкретный случай не вызван переключателем Auto Open. Android маяк после Auto ON работает, ESP продолжает хранить `REDMI Note 15`; ESP lock `LOCKED`, faults=0.
+- Firmware 10.0.291 и APK не менялись на этом шаге. Причина повторного SMP при уже работающей bonded-сессии остаётся для дальнейшей диагностики; попытки сопряжения сейчас остановлены ESP suppression до BOOT.
+- Логи: `artifacts/android-bond-loss-spontaneous-20261003.log`, `artifacts/esp-bond-loss-spontaneous-20261003.json`, `artifacts/esp-bonds-bond-loss-spontaneous-20261003.json`.
+
+## 2026-10-04 — HCI security capture / baseline OTA
+
+- ESP build-esp32.ps1: PASS, firmware 10.0.296 (ESP-IDF 5.4.4, ESP32-S3).
+- OTA через device-agent.ps1 flash: PASS, 10.0.295 → 10.0.296; ESP вернулась, версия подтверждена, LOCKED, fault_flags=0 и AUTO mode.
+- После reboot BLE bond в NimBLE сохраняется (LTK=1, SC=1), но попытка security повторно завершается ESP ENC status=520; Android HCI сообщает 0x3D MIC failure после успешного LTK reply. Защищённый proof не достигнут.
+- Android HCI snoop: PASS, raw .log/.last содержат события. Raw captures не включены в shareable archive из-за LTK и данных bugreport.
+- В этой диагностической итерации исходный код не изменялся; Android build не требовался.
+- Дополнительная ESP fingerprint-проверка: сборка и OTA 10.0.297 PASS; fingerprint Android LTK reply и ESP peer bond LTK различается. Временная строка fingerprint удалена из source; чистая сборка и OTA 10.0.298 PASS. ESP вернулась, version подтверждена, lock LOCKED, faults 0, firmware/source соответствуют. Security fail сохраняется; phone bond не удалялся.
+
+## 2026-10-04 — проверка после чистого pairing
+
+- Android HCI: SMP pairing прошёл без Pairing Failed; DHKey Check и identity key exchange завершились; положительный LTK Reply и `ENC_CHANGE status=0 enabled=1`.
+- После pairing: 95 из 95 наблюдаемых коротких reconnect прошли encryption; ESP подтверждала `LTK=1`, `SC=1`, `enc=1`, `bond=1`, `proof valid=1`.
+- Bond store ESP содержит REDMI Note 15. Статус устройства: firmware 10.0.298, `OPEN`, `hold_open=false`, `fault_flags=0`.
+- PASS: новая привязка и защищённый AUTO proof работают в текущем состоянии.
+- NOT TESTED: Auto Open OFF/ON и reboot после этой привязки; первопричина прежнего исчезновения bond пока не установлена.
+- Исходники не менялись; сборка и прошивка для этого диагностического шага не выполнялись.
+
+## 2026-10-04 — приём слабых `LOCK` advertising packets
+
+- Baseline ESP build-esp32.ps1 без изменений: PASS, firmware 10.0.299.
+- ESP build после диагностики: PASS. Firmware 10.0.300 собрана и установлена OTA; при проверке обнаружено обрезание длинной строки event log. Исправленный ASCII формат собран и установлен как 10.0.301.
+- OTA: PASS, переход `10.0.300 → 10.0.301`; device-agent вернул ESP32-S3, boot_id и версию. Текущий статус: `OPEN`, `hold_open=false`, `fault_flags=0`.
+- Проверка диагностического сообщения: PASS — `BLE LOCK RSSI low n=1 min=-77 max=-77 threshold=-60/10s`. Ранее на первой версии диагностики наблюдалось `-79 dBm` (строка тогда была обрезана). Значит, совпавшая реклама телефона принимается ESP ниже настроенного порога.
+- После прошивки продолжаются успешные `ENC st=0`, bonded proof `valid=1`, соединения short-cycle.
+- Live capture ~90 секунд: повторные окна фиксировали `n=3..4`, RSSI слабых пакетов `−75…−77 dBm` при threshold `−60 dBm`; в тех же окнах ESP подключалась на сильных пакетах и читала proof. Замок всё время оставался OPEN, faults=0.
+- Условия следующего наблюдения: оставить телефон неподвижным в прежней зоне и анализировать `BLE LOCK RSSI low` вместе с `Замок: запрос закрытия по таймеру А` и следующими `proofRsp`. Это покажет, соответствует ли закрытие интервалу без рекламы выше порога.
+
+## 2026-10-04 — baseline и аудит AUTO bond/RSSI
+
+- Baseline `pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\build-esp32.ps1`: PASS; ESP-IDF 5.4.4; собран firmware build 10.0.302.
+- Требуемая baseline OTA выполнена через `device-agent.ps1 flash`: PASS, версия 10.0.301 → 10.0.302, reboot подтверждён Agent API. После OTA: `LOCKED`, `fault_flags=0`, `hold_open=false`.
+- После OTA ESP снова зафиксировала несколько `proofRsp status=0 enc=1 bond=1 valid=1`, затем `proofRsp status=257`; Android HCI ранее подтвердил: saved LTK успешно включал encryption, после Security Request `authReq=0x2D` начался новый SMP и завершился `SMP_CONN_TOUT` с удалением Android bond.
+- Статический аудит NimBLE 5.4.4 подтвердил, что `ble_sm_sec_req_rx()` может запустить новое pairing, когда MITM-request не удовлетворяется флагом сохранённого LTK. У приложения нет отдельного GAP callback для Security Request. Точная причинная связь повторной SMP с гонкой обработки Encryption Change зафиксирована в `AUDIT.md`.
+- PASS: scanner/RSSI gate и lock Timer A не требуют изменения для объяснения подпороговых интервалов. Код и NimBLE не изменялись на этом этапе.
+- NOT TESTED: исправление race, повторное pairing после исправления, 100 AUTO cycles, reboot и новый registration pairing. Следующий этап требует воспроизводимого точечного NimBLE guard, затем отдельной сборки/OTA и HCI runtime проверки.
+
+## 2026-10-04 — NimBLE Security Request guard, build 10.0.303
+
+- Baseline до изменения: `build-esp32.ps1` PASS, build 10.0.302; OTA 10.0.301 → 10.0.302 PASS.
+- После изменения: `build-esp32.ps1` PASS, ESP-IDF 5.4.4 / ESP32-S3, build 10.0.303. Вывод сборки подтвердил компиляцию patched NimBLE `ble_sm.c`.
+- OTA: PASS, 10.0.302 → 10.0.303; ESP вернулась через device-agent, версия 10.0.303 подтверждена, состояние `LOCKED`, `fault_flags=0`.
+- Patcher повторно запущен отдельно: распознал уже установленный guard (идемпотентность PASS).
+- Runtime acceptance: NOT TESTED. После OTA ESP логировала `LTK=1`, `SEC_START path=RESTORE_EXISTING`, но encryption завершилась timeout/status 7, потому что на Android bond к этому времени уже был `BOND_NONE`; это asymmetric bond state, не проверка поведения guard на сохранённой паре.
+- Ожидается чистое pairing через короткое BOOT окно, затем проверка Android `BOND_BONDED`, успешных `ENC_CHANGE`, encrypted proof и серии reconnect без нового SMP/потери bond. RSSI gating, Timer A и lock algorithm этим патчем не проверялись повторно и не менялись.
+
+## 2026-10-04 — физическая проверка кнопки «Настройки»
+
+- Android: PASS — кнопка начинает provisioning; активный hotspot `AndroidShare_6134`, IPv4 интерфейса `ap0=172.18.51.2`; bonded GATT ответы `WIFI_SETUP` status 0, фрагменты 22 и 12 байт. После BLE disconnect маяк вернулся в AUTO, UI-кнопка вернулась к «Настройки».
+- ESP: FAIL — журнал `BLE provisioning: Wi-Fi setup read failed status=14`. В NimBLE 5.4.4 это `BLE_HS_EDONE` («процедура завершена»), штатный завершающий callback `ble_gattc_read_long`, а не ошибка ATT.
+- Причина: callback `central_wifi_setup_read_cb` отключает соединение на любом ненулевом статусе, включая `BLE_HS_EDONE`. Поэтому следующий этап чтения hotspot IP и вызов Wi-Fi runtime config не происходят. AP зафиксировала 0 клиентов; переход ESP на hotspot не состоялся.
+- Не менялись: исходники, APK, прошивка. Установленная прошивка остаётся 10.0.303; замок `OPEN`, `hold_open=false`, `fault_flags=0`. Исправление и build/OTA после него не выполнялись.
+
+## 2026-10-04 — раздельная доступность Web UI и Agent API
+
+- Baseline ESP build 10.0.315: PASS; baseline OTA на основной замок подтверждена Agent API.
+- Android build 183: PASS.
+- ESP build 10.0.316: PASS; OTA PASS, Agent API подтвердил переход `10.0.315 → 10.0.316`.
+- Проверка HTTP доступа по домашней сети и повторный физический проход кнопки Settings выполняются после установки APK build 183; до этого этапа runtime ограничение не подтверждено.
+
+## 2026-10-04 — приёмочная проверка Web UI / Agent API
+
+- Firmware 10.0.316: домашний `GET /` возвращает 404; `/api/agent/status` и `/api/agent/monitor` доступны с HTTP 200. Проверены status/version 10.0.316 и чтение журнала.
+- Android debug build 183 собрана и установлена. Android orientation settings до и после: `accelerometer_rotation=0`, `user_rotation=0`.
+- Hotspot телефона поднялся, но runtime provisioning не прошёл: ESP приняла только рекламные пакеты ниже настроенного RSSI порога (−63…−66 dBm, threshold −60 dBm); watchdog остановил hotspot через 60 секунд.
+- Результат частичный: LAN блокировка UI и сохранность Agent API PASS; успешное открытие Web UI из phone hotspot и восстановление домашней сети после закрытия hotspot пока не проверены.
+
+## 2026-10-04 — исправление BLE discovery для Settings
+
+- `build-esp32.ps1`: PASS, firmware 10.0.317.
+- OTA: PASS, `10.0.316 → 10.0.317`; устройство вернулось, Agent API подтвердил версию.
+- Runtime повторного нажатия Settings и чтения `0x81` пока выполняется.
+
+## 2026-10-04 — итоговая проверка Settings / phone hotspot / LAN
+
+- Firmware 10.0.317 собрана и установлена OTA (`10.0.316 → 10.0.317`), Agent API подтвердил текущую версию.
+- PASS: Android build 183 на физическом Redmi Note 15 поднял hotspot `172.18.51.2`; ESP выполнила bonded/encrypted reads credentials `20+14` и hotspot IP; ESP подключилась к AP; IPv4 `172.18.51.177` передан по encrypted BLE; Chrome открыл Web UI с версией 10.0.317.
+- PASS: возврат из Chrome закрыл телефонный hotspot и ESP вернулась в домашнюю сеть. LAN `GET /` → 404; Agent `/api/agent/status` и `/api/agent/monitor` → 200.
+- PASS: lock `fault_flags=0`, `hold_open=false`; orientation settings до/после установки остались `accelerometer_rotation=0`, `user_rotation=0`.
+- Причина прежнего отказа: ESP подавляла тот же phone device ID после `proof status=257` и не принимала режимы provisioning/Web UI. Исправление исключает только explicit `0x81`/`0x82` маяки из этого suppression.
+
+## 2026-10-04 — Android build 185: адаптивный таймер Settings
+
+- Baseline `build-android.ps1`: PASS, build 184.
+- После правки `build-android.ps1`: PASS, build 185.
+- APK установлена на Redmi Note 15; до/после ориентация совпала: `accelerometer_rotation=0`, `user_rotation=0` (`artifacts/android-rotation-before-adaptive-settings-timer-build185-install-20261004.json`).
+- Устройство содержало сохранённую длительность `web_ui_countdown_seconds=1`; код использует её на следующем запуске. Default 6 сек. применяется, если ключ ещё отсутствует. Runtime обновление длительности после очередного открытия Web UI не проверялось.
+
+## 2026-10-04 — физическая проверка адаптивного таймера Settings
+
+- PASS: Android build 185 установлен на Redmi Note 15; перед установкой и после неё `accelerometer_rotation=0`, `user_rotation=0`.
+- PASS: до первого проверочного нажатия приложение хранило 1 сек. После нажатия Chrome открыл `http://172.18.51.177/` примерно через 7,3 сек.; сохранённое значение стало 8 сек. (ceil).
+- PASS: при повторном нажатии таймер использовал предыдущие 8 сек. — UI-снимок во время отсчёта показывает оставшиеся 5 сек. После следующего открытия URL сохранённое значение стало 5 сек.
+- Артефакты: `artifacts/adaptive-settings-timer-build185-next-countdown.png`, `artifacts/adaptive-settings-timer-build185-next-countdown.xml`, `artifacts/adaptive-settings-timer-build185-second-open.png`.
+- Итог: адаптивный таймер подтверждён физически. Хранилище — Android device-protected SharedPreferences; default 6 сек. применяется только при отсутствии сохранённого значения. 60-секундный hotspot watchdog отдельный и не менялся.
+## 2026-10-04 — проверка кнопок и ползунка мощности BLE
+
+- PASS: исходная Android-сборка `build-android.ps1` завершилась до изменений.
+- PASS: итоговая Android-сборка `build-android.ps1`, build 188; Kotlin и ресурсы успешно скомпилированы и APK собран.
+- PASS: `git diff --check` для изменённых Android исходников и ресурсов.
+- Не выполнялись: unit-тесты, установка APK и физическая проверка рекламной мощности; Android runtime не запускался в этой задаче.
+- Изменены: `MainActivity.kt`, `LockSettings.kt`, `PhoneBeacon.kt`, `BleLockService.kt`, `VerticalRssiSlider.kt`, `strings.xml`, `android_lock_beacon/BUILD_NUMBER`; обновлены `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md` в корне и `android_lock_beacon`.
+- ESP32 исходники не менялись, ESP-сборка не требовалась.
+## 2026-10-04 — установка Android build 188 на телефон
+
+- PASS: ADB подключён к `192.168.1.65:37521`; Android сообщил об успешной установке APK (`Success`).
+- PASS: пакет `com.blelock.app` присутствует на устройстве (`pm path` вернул APK path).
+- PASS: прочитанные перед установкой `accelerometer_rotation=0` и `user_rotation=0` восстановлены и повторно прочитаны как `0` и `0`.
+- Устройство: модель `2510DRA23E`; APK build 188, SHA-256 записан в `artifacts/android-rotation-before-beacon-tx-power-build188-install-20261004.json`.
+
+## 2026-10-04 — фиксированная мощность BLE-маяка замка
+
+- PASS: baseline ESP `build-esp32.ps1`, build 318; исходный артефакт загружен на замок, Agent API подтвердил `10.0.317 → 10.0.318`.
+- PASS: baseline Android `build-android.ps1 -Action debug`, build 189.
+- PASS: после изменения ESP `build-esp32.ps1`, build 319; OTA подтвердила возврат замка и `10.0.318 → 10.0.319`.
+- PASS: финальная ESP-сборка после уточнения комментария, build 320; OTA подтвердила возврат замка и `10.0.319 → 10.0.320`.
+- PASS: `git diff --check` для затронутых исходников Web UI и ESP32.
+- Статически подтверждено: BLE TX power задаётся макросом `APP_BLE_TX_POWER_DBM=9`; загрузка и запись NVS `ble_tx_power` удалены, legacy GATT шестое поле не записывает мощность; Web UI больше не отправляет и не принимает настройку мощности.
+- Не выполнялись: unit-тесты и физическое измерение RF мощности. Android baseline build 189 запускался только до изменений; исходники приложения не менялись и build number восстановлен к 188.

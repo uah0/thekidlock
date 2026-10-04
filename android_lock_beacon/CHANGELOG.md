@@ -1,5 +1,63 @@
 # Журнал изменений Android-приложения
 
+## Обновление IP Web UI при каждой кнопке «Настройки» — 04.10.2026
+
+- При нажатии приложение запрашивает свежий IP ESP32 по encrypted BLE и больше не открывает сохранённый адрес из домашней Wi-Fi сети.
+- Если адрес не пришёл за 5 секунд, приложение создаёт LocalOnlyHotspot. ESP получает Wi-Fi параметры через BLE, подключается и передаёт IP hotspot обратно; Chrome открывает актуальный Web UI.
+- Redmi Note 15 runtime PASS без домашнего Wi-Fi: hotspot `172.18.51.2`, IP ESP `172.18.51.177`, firmware 10.0.314. Android build 182 и debug/release unit tests прошли.
+
+## Получение Web UI IP от ESP — 04.10.2026
+
+- Добавлена encrypted PhoneBeacon характеристика для IPv4, передаваемого ESP. Корректный адрес сохраняется в `lock_wifi_ip` и передаётся экрану через broadcast.
+- Кнопка открывает только свежеполученный IP; если его нет, приложение 5 секунд ждёт BLE push и затем включает существующую точку доступа с Wi-Fi provisioning.
+- Для BLE markers `0x81`/`0x82` ESP игнорирует RSSI-порог открытия; обычный режим lock beacon не менялся.
+- Android build 182 установлен, debug/release unit tests прошли; ESP 10.0.314 прошита OTA. Runtime IP push по домашней сети и через hotspot телефона подтверждены.
+
+## Открытие Web UI по кнопке «Настройки» — 04.10.2026
+
+- Исправлен неработающий статусный BLE маршрут: service отклоняет legacy Android Central connect, поэтому кнопка больше не запускает provisioning hotspot и не ждёт несуществующий `OTA_STATUS`.
+- При первом нажатии приложение запрашивает IPv4 ESP32, проверяет и сохраняет его; последующие нажатия сразу открывают `http://<ip>/`.
+- Android build 176 собран и установлен на Redmi Note 15; настройки ориентации `1/0` после установки восстановлены и проверены.
+- Runtime проверка прошла: после первого ввода `192.168.1.54` Chrome открыл страницу замка «Мастер настройки»; значение IP сохранено для повторного открытия.
+- Следующее нажатие открыло Web UI сразу, без диалога.
+
+## Исправление Wi-Fi credentials long read — 04.10.2026
+
+- Android и ESP сохраняют существующий length-prefixed credentials payload, но передают его блоками по 20 байт через пять encrypted bonded GATT characteristics. Это исключает проблемный offset 22 длинного чтения.
+- В лог добавлены только размеры полей и индекс NUL исходного byte array; значение credentials не выводится.
+- Кнопка «Настройки» сохраняет активный Web UI запрос, проверяет `WEB_READY` по текущему BLE соединению до создания hotspot и не отменяет запрос при штатном отключении после чтения credentials.
+- `MainActivity` подключает `OTA_STATUS` polling к pending-запросу; физическая установка Android build 175 выполнена с восстановлением экранной ориентации.
+
+## Proof во время Wi-Fi provisioning — 04.10.2026
+
+- `PhoneBeacon` теперь выдаёт encrypted proof bonded peer как при включённом Auto Open, так и в активном Wi-Fi provisioning. Вне provisioning Auto Open OFF по-прежнему запрещает proof; системное encrypted permission и проверка `BOND_BONDED` сохранены.
+- `build-android.ps1`: PASS, debug APK build 171. APK установлена на Redmi Note 15; ориентация до/после сохранена и проверена (`accelerometer_rotation=0`, `user_rotation=0`).
+- Runtime-проверка на кнопке «Настройки» ожидает разблокировки телефона.
+
+## Восстановление зависшего BLE autoConnect — 01.10.2026
+
+- Build 132: после 90 секунд без события подключения нативный запрос к сохранённому bonded-замку заменяется одной прямой GATT-попыткой. Её штатный таймаут оставлен 8 секунд; затем сервис повторяет нативный запрос.
+- Повторное ожидание после GATT-разрыва контролируется тем же таймером. Если OPEN уже отправлен для текущего присутствия, прямой запрос не запускается.
+
+## Исправление BLE-обнаружения на Xiaomi — 28.09.2026
+
+- Убран аппаратный `ScanFilter` для основного поиска замка: Xiaomi не возвращал
+  приложению совпадающую рекламу по 128-битному UUID. Поиск принимает BLE-пакеты,
+  а соединение разрешается только если в записи рекламы есть UUID замка.
+- Build 112 установлен на Xiaomi 2510DRA23E. Logcat подтвердил рекламу и
+  `GATT_CONNECTED`; замок подтвердил защищённое bonded-соединение.
+
+## Owner-сессия BLE и один сигнал рекламы — 28.09.2026
+
+- При выключенном AUTO приложение инициирует BLE-соединение при запуске.
+- Успешное защищённое чтение `ADMIN_STATE` подтверждает телефон владельца;
+  только на нём показывается кнопка Web UI «Настройки».
+- Owner-сессия сохраняется в foreground service и восстанавливается после
+  перезапуска приложения/телефона, даже когда AUTO выключен.
+- Оставлен только звуковой beep при обнаружении BLE-рекламы замка; сигналы
+  слабого RSSI, подключения и отключения убраны.
+- Android build 111 через проектный `build-android.ps1` — успешно.
+
 ## Закрытие замка при отключении Always Open — 28.09.2026
 
 - При выключении подтверждённого Always Open теперь отправляется команда
@@ -498,8 +556,182 @@ MainActivity: FAULT/STARTING/CALIBRATING/CLOSE_REJECTED не интерпрет�
 - Отдельная кнопка «Настройки» снова доступна при BLE-разрешениях, чтобы пользователь мог запустить открытие Web UI/служебного подключения.
 - Кнопка «Настройки замка» остаётся удалённой.
 - Сборка успешна; установка отложена из-за offline ADB-устройства.
+## 2026-09-28 — владелец и BLE advertising tone
 
+- Исправлено отображение «Настройки» для подтверждённого владельца: текущая административная GATT-сессия больше не скрывает кнопку; BLE-разрешения по-прежнему обязательны.
+- Сигнал запускается на первом advertising-пакете, принятом в departure scan при native auto-connect. Аппаратный UUID-фильтр для этого scan удалён, поскольку он может терять пакеты на прошивках Android вендора; UUID проверяется в callback.
+- Сохраняется один короткий beep, повторные пакеты в том же цикле звука не дают.
+## 2026-09-28 — сигнал при выключенном экране
+
+Для BLE advertisement tone добавлен короткий timed partial wake lock и лог результата ToneGenerator.startTone().
+
+Дополнение: native auto-connect GATT_CONNECTED теперь также является путём запуска единственного BLE presence tone; повторы соединения внутри одного присутствия приглушены.
+
+Screen-off проверка подтвердила native auto-connect запускает единственный presence tone; повторы соединения за то же присутствие подавлены.
+
+## 2026-10-01 — порог RSSI перед подключением
+
+- `scanCallback` начинает GATT только после рекламного пакета замка с `RSSI >` значению ползунка; слабые пакеты оставляют сканирование активным. Прямой native auto-connect в AUTO отключён.
+- Описание ползунка обновлено. APK build 124 собран и установлен на REDMI Note 15; алгоритм отправки OPEN после подключения сохранён.
+
+## 2026-10-01 — scan с фильтром по имени
+
+- Обычный scan и scan после разрыва используют `ScanFilter` по имени `BLE Lock`, которое уже рекламирует ESP. UUID и RSSI проверяются в callback. APK build 126 собран успешно.
+- После физической проверки добавлены ограничение частоты повторного основного scan (15 секунд), восстановление при отсутствии результатов или системном throttling (60 секунд) и отказ от лишнего пассивного scan RSSI в AUTO. Сборка build 127 успешна.
+- Открытый UI всё ещё вызывал отдельный RSSI scan после READY. Его запуск остановлен во всех режимах; GATT-опрос RSSI остался. Android build 128 успешен.
+
+## 2026-10-01 — установка старого auto-connect на REDMI Note 15
+
+- На телефон установлен сохранённый APK build 122 из `android_lock_beacon` с native `connectGatt(autoConnect=true)`. Текущий APK build 128 сохранён отдельно. Исходники не изменялись.
+
+## 2026-09-29 — установка базового Android приложения
+По просьбе пользователя собран и установлен debug APK из `android_lock_beacon`. ADB подтвердил успешную установку версии 1.0.0 (versionCode 1); ориентация экрана сохранена и восстановлена (`0/0`). Это отдельная сборка от текущей диагностической ветки v2.
+## 2026-10-01 — одно автоматическое открытие за присутствие, build 130
+
+- Защита от повторного автоматического OPEN теперь сохраняется после таймерного закрытия замка; новый цикл разрешается при подтверждённом уходе (`DEPARTED`).
+- Для сохранённого привязанного замка в AUTO восстановлен системный `connectGatt(autoConnect=true)`; поиск рекламных пакетов остаётся резервом, если сохранённого bond нет.
+- Ручные команды, ползунок RSSI, алгоритм замка и прошивка ESP32 не менялись.
 ## 01.10.2026 — убран таймер Б из административной панели
 
 - Удалены поле и строковый ресурс таймера Б. При сохранении настроек приложение передает `0` в зарезервированном пятом поле прежнего GATT-формата.
 - Debug build 134 успешно собран. APK не установлен на телефон во время независимого BLE Foreva теста.
+
+## 02.10.2026 — кнопка открытия через интернет
+
+- На главном экране под «Замок постоянно открыт» добавлена неактивная кнопка «Открыть через интернет». Обработчик и сетевой вызов пока не реализованы.
+## 02.10.2026 — Android beacon для новой схемы
+
+- AUTO теперь публикует connectable advertising с `LOCK` и поднимает GATT server с защищённым чтением; ADMIN продолжает использовать прежний BLE-клиент.
+- Запрошено разрешение `BLUETOOTH_ADVERTISE`. Debug build 139 собран.
+## 02.10.2026 — исключение старого AUTO OPEN
+
+- Запрос доступа владельца переводит сервис в ADMIN; устаревший GATT RSSI callback в AUTO не отправляет `OPEN`. Build 140 собран.
+## 02.10.2026 — мощность маяка
+
+- Мощность рекламы в AUTO увеличена до `ADVERTISE_TX_POWER_HIGH`, чтобы действующий порог ESP32 −60 dBm можно было применять на близкой дистанции. Build 141 собран.
+## 02.10.2026 — канал кнопки постоянного открытия
+
+- Кнопка постоянного открытия управляет ESP через Wi‑Fi Agent API. Кнопка автооткрытия оставлена на существующем BLE-пути.
+- IP замка запоминается из BLE статуса `WEB_READY;IP=...`; само переключение отправляется по HTTP и подтверждается ответом статуса.
+## 02.10.2026 — baseline новой BLE-архитектуры
+
+- Выполнена Android исходная сборка через `build-android.ps1`, build 143: PASS. Текущие несвязанные изменения сохранены.
+## 02.10.2026 — независимое управление BLE-маяком
+
+- Auto Open отделён от Wi-Fi Always Open и доступен независимо от состояния BLE-клиента к замку; в AUTO foreground service запускает PhoneBeacon.
+- Убран автоматический вызов старого BLE owner/client подключения при старте и возврате на экран. Build 144; unit tests PASS.
+## 02.10.2026 — Android build 144
+
+- Unit tests для независимых Auto Open и Always Open прошли. ESP firmware 10.0.268 теперь может инициировать bonding в registration window; Android системный pairing пока не проверен на физическом устройстве.
+## 02.10.2026 — новая схема регистрации требует central ESP
+
+- Android foreground service сохраняет PhoneBeacon; ESP firmware 10.0.270 поддерживает инициированный ESP SMP pairing и конечные таймауты. Физическое pairing не подтверждено.
+
+## 02.10.2026 — защищённая синхронизация owner в PhoneBeacon
+
+- После успешного bonded proof ESP отправляет Android encrypted GATT write с owner/guest статусом. Android принимает его только от bonded peer и обновляет owner-only признак UI. Совместимость сохранена с ранее установленной версией без этой дополнительной characteristic.
+- Long BOOT reset дополнительно закрывает окно регистрации до отмены BLE операции.
+- Изменены: `main/ble_phone.c`, `android_lock_beacon/app/src/main/java/com/blelock/app/PhoneBeacon.kt`, `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt`, корневые и Android отчётные документы.
+- ESP firmware 10.0.271 собрана и OTA подтверждена; Android build 146 и unit tests PASS.
+
+## 02.10.2026 — Web UI и Always Open без запроса IP по BLE
+
+- Кнопки Web UI и Always Open при неизвестном Wi-Fi IP запрашивают адрес у владельца и используют Wi-Fi HTTP. Открытие Web UI больше не запускает legacy Android central, чтобы получить IP.
+- Android build 147 и debug/release unit tests PASS. Физическая проверка на телефоне не выполнена.
+- Изменено: `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt` и отчётная документация. Предыдущие user changes сохранены.
+
+## 02.10.2026 — Android Central отключён для AUTO/администрирования
+
+- Boot и recovery запускают BLE foreground service только при Auto Open ON. Сохранённый owner-флаг больше не поднимает старый Android Central; legacy ADMIN actions и binder request отклоняются.
+- Auto Open OFF останавливает beacon без старой BLE-команды закрытия. Always Open и Auto остаются независимыми.
+- Android build 148 и unit tests PASS. Физический APK install/runtime test не выполнен: `adb devices -l` не обнаружил устройство.
+- Изменены `BleLockService.kt`, `BootReceiver.kt`, `ServiceRestartReceiver.kt` и отчётные документы.
+
+## 02.10.2026 — Auto-only lifecycle Android Peripheral
+
+- При старте, reboot и восстановлении сервиса Android запускает beacon/GATT server только при Auto Open ON. Owner статус не поднимает Android Central; legacy ADMIN BLE actions отклоняются.
+- Auto OFF только останавливает PhoneBeacon и сервис, не отправляя lock command. При включении Bluetooth beacon восстанавливается только при Auto ON.
+- Android build 148 и debug/release unit tests PASS; APK runtime test не выполнен (ADB device отсутствует).
+- Изменены `BleLockService.kt`, `BootReceiver.kt`, `ServiceRestartReceiver.kt` и отчёты.
+
+## 02.10.2026 — ESP Central учитывает лимит bonds
+
+- Перед SMP ESP отклоняет новый телефон, если NimBLE bond store уже содержит 20 peer; существующие bonded телефоны продолжают проходить.
+- Firmware 10.0.272 собрана и OTA подтверждена (`10.0.271 → 10.0.272`). Изменён `main/ble_phone.c`.
+
+## 02.10.2026 — FGS только при включённом Auto Open
+
+- UI-only bind с Auto OFF не оставляет лишний foreground notification. Сервис немедленно поднимает FGS при включённом Auto и держит PhoneBeacon в нём.
+- Android build 148 и debug/release unit tests PASS; физический runtime test недоступен.
+
+## 02.10.2026 — блокировка отложенных Android Central callback
+
+- В AUTO/IDLE Android игнорирует callback-и закрытого legacy GATT клиента, чтобы они не вызывали RSSI запрос, reconnect или старую OPEN orchestration.
+- Android build 148 и unit tests PASS.
+
+## 02.10.2026 — кнопка Настройки передаёт hotspot через PhoneBeacon
+
+- Нажатие кнопки создаёт Android LocalOnlyHotspot и запускает специальный режим существующего PhoneBeacon: manufacturer version byte `0x81`, encrypted GATT read с SSID/password. BLE-подключение к ESP не инициирует Android.
+- После отключения ESP кнопка возвращается к обычному состоянию; Auto Open продолжает работать независимо. Credentials остаются runtime значениями.
+- Изменены Android `PhoneBeacon.kt`, `BleLockService.kt`, `MainActivity.kt` и отчёты. Android build 152/unit tests PASS; ожидается ESP поддержка маркера и физический тест.
+
+## 02.10.2026 — ESP получает hotspot credentials из специального PhoneBeacon
+
+- ESP отличает manufacturer protocol `0x81` от обычного `0x01`, устанавливает encrypted bonded link, читает SSID/password через long GATT read и запускает существующий runtime Wi-Fi/Web механизм.
+- Runtime credentials не перезаписывают NVS домашней сети. Пароль не попадает в журнал; Wi-Fi ошибка не открывает замок и не освежает watchdog.
+- Изменён `main/ble_phone.c`. Firmware 10.0.273 собрана, OTA подтверждена (`10.0.272 → 10.0.273`). Android build 152/unit tests PASS.
+- Радио provisioning ещё не проверен на телефоне. IP ESP, назначенный hotspot DHCP, после раннего BLE disconnect не возвращается в Android; автоматическое открытие Web UI по этому IP пока не реализовано.
+
+## Hotspot IPv4 через защищённый PhoneBeacon — Android этап (02.10.2026)
+
+- После `LocalOnlyHotspotCallback.onStarted()` Android пытается определить текущий IPv4 по поднятым AP интерфейсам (`ap*`, `softap*`, `swlan*`); если AP интерфейс не обнаружен — использует единственный однозначный `wlan*` IPv4. При неоднозначности/ошибке IP не передаётся, фиксируется logcat warning, SSID/пароль provisioning продолжаются.
+- IP (4 bytes network-order; `00 00 00 00` = отсутствует) передаётся BleLockService в `PhoneBeacon`. В GATT добавлена encrypted-read характеристика `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3` к существующему сервису.
+- `PhoneBeacon` проверяет `BOND_BONDED`; `PERMISSION_READ_ENCRYPTED` оставляет фактическую проверку encryption стандартному Android Bluetooth stack. IP очищается при `onStopped`, `onFailed` и остановке reservation.
+- Android `build-android.ps1 -Action test`: PASS (debug/release compile и unit tests). Добавлены проверки выбора AP-интерфейса, неоднозначности WLAN-кандидатов и недопустимого IPv4.
+
+## HOTSPOT_IP — завершение Android/ESP (02.10.2026)
+
+- Android IPv4 lookup использует перечисление поднятых интерфейсов и адресов. В первую очередь рассматриваются интерфейсы с AP-названием `ap*`, `softap*`, `swlan*`; единственный `wlan*` кандидат допускается только если нет активной Wi-Fi station сети. Адреса loopback/link-local/multicast/unspecified/broadcast отбрасываются. Неоднозначность возвращает «нет данных» и сохраняет credential/DHCP fallback. Стандартный Android API не раскрывает стабильно имя SoftAP интерфейса, поэтому физическое подтверждение на целевой модели остаётся необходимым.
+- GATT characteristic: `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3`, в существующем PhoneBeacon service; 4 bytes IPv4 network-order, `00 00 00 00` означает отсутствие IP.
+- Android проверяет `device.bondState == BOND_BONDED`; characteristic имеет `PERMISSION_READ_ENCRYPTED`, так что enforcement шифрования остаётся системному Bluetooth stack. IP очищается по жизненному циклу reservation; session token не даёт позднему STOP старого hotspot очистить адрес новой сессии.
+- ESP использует единственный исходящий GATT connection: `connect → encrypted/bonded proof BLE_LOCK_V1 → Wi-Fi credentials → HOTSPOT_IP`. IP читается только при provisioning marker `0x81`; обычный AUTO proof не делает дополнительного чтения и соединения.
+- ESP проверяет unicast IPv4, хранит его только в RAM через `wifi_ota_set_runtime_phone_ip()` / `wifi_ota_get_runtime_phone_ip()`. На IP отсутствует/ошибке продолжается credential provisioning fallback. ESP DHCP/static-IP поведение не менялось; NVS не получает IP телефона.
+- Android `build-android.ps1 -Action test`: PASS, build 153 (debug/release и unit tests). ESP `build-esp32.ps1`: PASS, firmware 10.0.275; OTA PASS, device-agent подтвердил `10.0.274 → 10.0.275`.
+- Радио-тест характеристик на физическом телефоне и проверка фактического интерфейса hotspot не выполнялись. Resolver покрыт unit tests, но использует доступные интерфейсы Android и при ambiguity намеренно возвращает отсутствие адреса.
+
+### Hotspot provisioning race fix (02.10.2026)
+
+- Settings provisioning теперь сразу приостанавливает обычный AUTO beacon, пока телефон поднимает hotspot и до 5 секунд определяет реальный IPv4 интерфейса.
+- Обычный AUTO disconnect больше не завершает provisioning: сессия заканчивается только после защищённого чтения SSID/password тем же bonded peer. Остановка hotspot отменяет незавершённый запрос и возвращает состояние маяка согласно Auto Open.
+- Android build 155 и debug/release unit tests PASS. ESP firmware source не менялся. APK build 155 собран; установка ждёт разблокировки телефона; ESP Agent API после отдельной обязательной OTA попытки baseline сборки недоступен, версия 10.0.276 не подтверждена.
+
+
+
+
+## Web UI только через hotspot телефона — 04.10.2026
+
+- Кнопка настроек создаёт точку доступа телефона и ждёт свежий IP ESP, полученный после подключения к этой точке. Сохранённый домашний IP не открывает Web UI автоматически.
+- Android debug build 183 собран успешно.
+
+## 2026-10-04 — возвращён адаптивный счётчик настроек
+
+- Кнопка берёт предыдущую сохранённую длительность; если её ещё нет, отсчёт начинается с 6 секунд.
+- При открытии URL после получения IP ESP в persistent Android settings записывается фактическое время до открытия, округлённое вверх до секунд. Hotspot watchdog на 60 секунд отдельный.
+- Android build 185: PASS.
+
+## 2026-10-04 — адаптивный таймер Settings: физическая проверка
+
+- На Redmi Note 15 подтверждён цикл сохранения и повторного использования: 1 сек. → фактическое открытие примерно за 7,3 сек. → сохранено 8 сек.; следующий отсчёт начинался с 8 сек., следующий успешный цикл сохранил 5 сек.
+- Android build 185; значение хранится в SharedPreferences телефона. Default 6 сек. нужен только до первого успешного измерения.
+## 2026-10-04 — компактные кнопки и мощность BLE-маяка
+
+- Высота каждой из четырёх кнопок главного экрана уменьшена с 148 до 118 dp (около 20%); высота задана отдельно для каждого элемента.
+- Свайп вверх открывает экран настройки мощности BLE-маяка телефона. Ползунок выбирает один из четырёх Android TX power presets и применяет его к активной рекламе; выбранный уровень сохраняется, исходный default `HIGH` сохранён.
+- Подписи обновлены: уровни относительные, точный dBm зависит от модели телефона. Настройка RSSI-порога сканирования остаётся отдельной.
+- Android `build-android.ps1`: baseline PASS, итоговая сборка build 188 PASS. Unit/runtime проверки и установка APK не выполнялись.
+- Файлы: `MainActivity.kt`, `LockSettings.kt`, `PhoneBeacon.kt`, `BleLockService.kt`, `VerticalRssiSlider.kt`, `strings.xml`; обновлены корневые и Android `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`; проектный `android_lock_beacon/BUILD_NUMBER` — 188.
+## 2026-10-04 — установлен Android build 188
+
+- Debug APK установлена через ADB Wi-Fi на телефон `2510DRA23E` (`192.168.1.65:37521`).
+- Исходная и итоговая ориентация совпала: `accelerometer_rotation=0`, `user_rotation=0`.
+- Артефакт до/после установки: `artifacts/android-rotation-before-beacon-tx-power-build188-install-20261004.json`.

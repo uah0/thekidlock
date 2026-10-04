@@ -6,39 +6,20 @@ import org.junit.Test
 
 class AutoOpenPresenceGateTest {
     @Test
-    fun lockedStatusBeforeOpenDoesNotRearm() {
+    fun openingBlocksAnotherAutomaticOpen() {
         val gate = AutoOpenPresenceGate()
         gate.onOpenCommandAccepted()
 
-        assertFalse(gate.onLockStatus("LOCKED"))
+        assertTrue(gate.isBlocked)
     }
 
     @Test
-    fun confirmedOpenThenLockedRearmsExactlyOnce() {
+    fun onlyConfirmedDepartureRearms() {
         val gate = AutoOpenPresenceGate()
         gate.onOpenCommandAccepted()
 
-        assertFalse(gate.onLockStatus("OPEN"))
-        assertTrue(gate.onLockStatus("LOCKED"))
-        assertFalse(gate.onLockStatus("LOCKED"))
-    }
-
-    @Test
-    fun statusNamesAreNormalized() {
-        val gate = AutoOpenPresenceGate()
-        gate.onOpenCommandAccepted()
-
-        assertFalse(gate.onLockStatus(" open "))
-        assertTrue(gate.onLockStatus("locked"))
-    }
-
-    @Test
-    fun unrelatedStatusDoesNotConfirmCycle() {
-        val gate = AutoOpenPresenceGate()
-        gate.onOpenCommandAccepted()
-
-        assertFalse(gate.onLockStatus("OPEN_HOLD"))
-        assertFalse(gate.onLockStatus("ERROR"))
-        assertFalse(gate.onLockStatus("LOCKED"))
+        assertTrue(gate.isBlocked)
+        gate.onDepartureConfirmed()
+        assertFalse(gate.isBlocked)
     }
 }

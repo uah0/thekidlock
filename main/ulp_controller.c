@@ -120,8 +120,7 @@ static esp_err_t init_adc(void)
     app_config_t app_cfg;
     app_config_get(&app_cfg);
     adc_channel_t sense_channel;
-    if (!app_config_shunt_gpio_valid(app_cfg.shunt_gpio) ||
-        !shunt_gpio_to_adc_channel(app_cfg.shunt_gpio, &sense_channel)) {
+    if (!shunt_gpio_to_adc_channel(app_cfg.shunt_gpio, &sense_channel)) {
         app_cfg.shunt_gpio = APP_DEFAULT_SHUNT_GPIO;
         if (!shunt_gpio_to_adc_channel(app_cfg.shunt_gpio, &sense_channel)) {
             return ESP_ERR_INVALID_ARG;
@@ -277,21 +276,27 @@ esp_err_t ulp_controller_calibration_verify(void)
     return err;
 }
 
-esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
-                                          int32_t paper1_raw,
+esp_err_t ulp_controller_calibration_save(int32_t closed_raw,
                                           int32_t open_raw,
                                           int32_t verify_contact_raw)
 {
+    const int64_t span = (int64_t)open_raw - closed_raw;
+    /* Estimate one-sheet offset as 1/6.14 of the closed-to-open ADC span. */
+    const int64_t paper1_calculated = closed_raw + span * 100 / 614;
     const int64_t paper2_calculated =
-        (int64_t)paper1_raw + ((int64_t)paper1_raw - contact_raw);
-    if (!s_initialized || contact_raw < 0 || paper1_raw <= contact_raw ||
-        paper2_calculated > 4095 || open_raw <= paper2_calculated || open_raw > 4095 ||
+        paper1_calculated + (paper1_calculated - closed_raw);
+    if (!s_initialized || closed_raw < 0 || closed_raw > 4095 ||
+        open_raw <= closed_raw || open_raw > 4095 ||
+        paper1_calculated <= closed_raw ||
+        paper2_calculated >= open_raw || paper2_calculated > 4095 ||
         verify_contact_raw < 0 || verify_contact_raw > 4095) {
-        event_log_add("CAL save rejected contact=%ld paper=%ld open=%ld verify=%ld",
-                      (long)contact_raw, (long)paper1_raw, (long)open_raw,
+        event_log_add("CAL save rejected closed=%ld open=%ld verify=%ld",
+                      (long)closed_raw, (long)open_raw,
                       (long)verify_contact_raw);
         return ESP_ERR_INVALID_ARG;
     }
+    const int32_t contact_raw = closed_raw;
+    const int32_t paper1_raw = (int32_t)paper1_calculated;
     const int32_t paper2_raw = (int32_t)paper2_calculated;
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
     calibration_expire();
@@ -322,8 +327,8 @@ esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
     ulp_calibration_verify_contact_raw = verify_contact_raw;
     calibration_end();
     xSemaphoreGive(s_calibration_mutex);
-    event_log_add("CAL saved contact=%ld paper=%ld open=%ld verify=%ld",
-                  (long)contact_raw, (long)paper1_raw, (long)open_raw,
+    event_log_add("CAL saved closed=%ld paper1=%ld paper2=%ld open=%ld verify=%ld",
+                  (long)contact_raw, (long)paper1_raw, (long)paper2_raw, (long)open_raw,
                   (long)verify_contact_raw);
     return ESP_OK;
 }

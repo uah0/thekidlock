@@ -3,6 +3,7 @@ idf_component_register(
         "main.c"
         "ap_mode.c"
         "app_config.c"
+        "thingspeak_config.c"
         "event_log.c"
         "remote_log.c"
         "led.c"

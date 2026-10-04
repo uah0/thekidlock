@@ -11,6 +11,7 @@
 #include "ble_phone.h"
 #include "event_log.h"
 #include "lock_control.h"
+#include "thingspeak_config.h"
 #include "ulp_controller.h"
 #include "wifi_ota.h"
 #include "esp_http_server.h"
@@ -106,17 +107,16 @@ static esp_err_t ulp_calibration_post(httpd_req_t *req)
                httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     }
     if (strcmp(action, "save") == 0) {
-        char contact[16], paper1[16], open[16], verify[16];
-        if (httpd_query_key_value(query, "contact", contact, sizeof(contact)) != ESP_OK ||
-            httpd_query_key_value(query, "paper1", paper1, sizeof(paper1)) != ESP_OK ||
+        char closed[16], open[16], verify[16];
+        if (httpd_query_key_value(query, "closed", closed, sizeof(closed)) != ESP_OK ||
             httpd_query_key_value(query, "open", open, sizeof(open)) != ESP_OK ||
             httpd_query_key_value(query, "verify", verify, sizeof(verify)) != ESP_OK) {
             event_log_add("CAL save rejected: missing points");
             return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Missing calibration points");
         }
-        const char *points[] = {contact, paper1, open, verify};
-        int32_t raw[4];
-        for (int i = 0; i < 4; i++) {
+        const char *points[] = {closed, open, verify};
+        int32_t raw[3];
+        for (int i = 0; i < 3; i++) {
             char *end;
             errno = 0;
             long value = strtol(points[i], &end, 10);
@@ -126,7 +126,7 @@ static esp_err_t ulp_calibration_post(httpd_req_t *req)
             }
             raw[i] = (int32_t)value;
         }
-        esp_err_t err = ulp_controller_calibration_save(raw[0], raw[1], raw[2], raw[3]);
+        esp_err_t err = ulp_controller_calibration_save(raw[0], raw[1], raw[2]);
         return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
     }
@@ -140,47 +140,30 @@ static esp_err_t config_get(httpd_req_t *req)
     char json[320];
     snprintf(json, sizeof(json),
              "{\"phone_rssi_threshold\":%d,"
-             "\"ble_tx_power_dbm\":%d,"
              "\"shunt_gpio\":%u,"
+             "\"serial_log_enabled\":%s,"
              "\"timer_a_ms\":%lu}",
              cfg.phone_rssi_threshold,
-             cfg.ble_tx_power_dbm,
              cfg.shunt_gpio,
+             cfg.serial_log_enabled ? "true" : "false",
              (unsigned long)cfg.timer_a_ms);
     return send_json(req, json);
 }
 
 static esp_err_t config_post(httpd_req_t *req)
 {
-    char query[500], rssi[16], timer_a[16], shunt[8];
+    char query[500], rssi[16], timer_a[16];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "phone_rssi_threshold", rssi, sizeof(rssi)) != ESP_OK ||
         httpd_query_key_value(query, "timer_a_ms", timer_a, sizeof(timer_a)) != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, отсутствуют параметры; query='%s'", query);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing parameters");
     }
-    app_config_t current;
-    app_config_get(&current);
-    uint32_t shunt_gpio = current.shunt_gpio;
-    if (httpd_query_key_value(query, "shunt_gpio", shunt, sizeof(shunt)) == ESP_OK) {
-        char *end = NULL;
-        unsigned long parsed = strtoul(shunt, &end, 10);
-        if (end == shunt || *end != '\0' || !app_config_shunt_gpio_valid(parsed)) {
-            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid shunt_gpio");
-        }
-        shunt_gpio = (uint32_t)parsed;
-    }
-    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s shunt_gpio=%lu A=%s",
-             rssi, (unsigned long)shunt_gpio, timer_a);
+    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s A=%s", rssi, timer_a);
     esp_err_t err = app_config_set_logic(atoi(rssi),
                                          strtoul(timer_a, NULL, 10));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, app_config_set_logic отказал: %s", esp_err_to_name(err));
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
-    }
-    err = app_config_set_shunt_gpio((uint8_t)shunt_gpio);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Настройки замка: не удалось сохранить shunt_gpio: %s", esp_err_to_name(err));
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
     }
     ESP_LOGI(TAG, "Настройки замка: NVS запись успешна, HTTP 200");
@@ -294,23 +277,91 @@ static esp_err_t wifi_post(httpd_req_t *req)
     return send_json(req, "{\"ok\":true}");
 }
 
-static esp_err_t ble_power_post(httpd_req_t *req)
+static esp_err_t serial_log_post(httpd_req_t *req)
 {
-    char query[80], power[16];
+    char query[48], enabled[8];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, "power_dbm", power, sizeof(power)) != ESP_OK) {
-        ESP_LOGE(TAG, "BLE power: HTTP 400, отсутствует power_dbm; query='%s'", query);
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing power_dbm");
+        httpd_query_key_value(query, "enabled", enabled, sizeof(enabled)) != ESP_OK ||
+        (strcmp(enabled, "0") != 0 && strcmp(enabled, "1") != 0)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid enabled");
     }
-    ESP_LOGI(TAG, "BLE power: запрос power_dbm=%s", power);
-    esp_err_t err = app_config_set_ble_tx_power(atoi(power));
-    if (err == ESP_OK) err = ble_phone_apply_tx_power();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "BLE power: HTTP 400, ошибка сохранения/применения: %s", esp_err_to_name(err));
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
+    esp_err_t err = app_config_set_serial_log_enabled(strcmp(enabled, "1") == 0);
+    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Serial log save failed");
+}
+
+static bool thingspeak_field(const char *form, const char *key, char *out,
+                             size_t capacity, bool optional)
+{
+    char encoded[THINGSPEAK_URL_MAX * 3 + 1];
+    esp_err_t err = httpd_query_key_value(form, key, encoded, sizeof(encoded));
+    if (optional && err == ESP_ERR_NOT_FOUND) return true;
+    if (err != ESP_OK || !form_url_decode(encoded) ||
+        strlen(encoded) >= capacity) return false;
+    strcpy(out, encoded);
+    return true;
+}
+
+static esp_err_t thingspeak_get(httpd_req_t *req)
+{
+    thingspeak_config_t cfg;
+    if (thingspeak_config_get(&cfg) != ESP_OK)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak config unavailable");
+    char json[1536];
+    size_t pos = 0;
+    json[pos++] = '{';
+    memcpy(json + pos, "\"login\":", 8); pos += 8;
+    if (!json_append_string(json, sizeof(json), &pos, cfg.login))
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak login too long");
+    int n = snprintf(json + pos, sizeof(json) - pos, ",\"channel_id\":%lu,\"channel_url\":",
+                     (unsigned long)cfg.channel_id);
+    if (n < 0 || (size_t)n >= sizeof(json) - pos)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
+    pos += (size_t)n;
+    if (!json_append_string(json, sizeof(json), &pos, cfg.channel_url))
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak URL too long");
+    n = snprintf(json + pos, sizeof(json) - pos,
+                 ",\"password_configured\":%s,\"read_key_configured\":%s,\"write_key_configured\":%s}",
+                 cfg.password[0] ? "true" : "false",
+                 cfg.read_api_key[0] ? "true" : "false",
+                 cfg.write_api_key[0] ? "true" : "false");
+    if (n < 0 || (size_t)n >= sizeof(json) - pos)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
+    return send_json(req, json);
+}
+
+static esp_err_t thingspeak_post(httpd_req_t *req)
+{
+    char form[1800];
+    if (req->content_len <= 0 || (size_t)req->content_len >= sizeof(form))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ThingSpeak form too long");
+    size_t received = 0;
+    while (received < (size_t)req->content_len) {
+        int count = httpd_req_recv(req, form + received, req->content_len - received);
+        if (count <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ThingSpeak form incomplete");
+        received += (size_t)count;
     }
-    ESP_LOGI(TAG, "BLE power: NVS запись успешна, HTTP 200");
-    return send_json(req, "{\"ok\":true}");
+    form[received] = '\0';
+    thingspeak_config_t cfg;
+    if (thingspeak_config_get(&cfg) != ESP_OK)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak config unavailable");
+    char channel[16];
+    if (!thingspeak_field(form, "login", cfg.login, sizeof(cfg.login), true) ||
+        !thingspeak_field(form, "password", cfg.password, sizeof(cfg.password), true) ||
+        !thingspeak_field(form, "channel_id", channel, sizeof(channel), false) ||
+        !thingspeak_field(form, "read_key", cfg.read_api_key, sizeof(cfg.read_api_key), false) ||
+        !thingspeak_field(form, "write_key", cfg.write_api_key, sizeof(cfg.write_api_key), false))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak fields");
+    char *end = NULL;
+    errno = 0;
+    unsigned long number = strtoul(channel, &end, 10);
+    if (errno || end == channel || *end ||
+        strspn(channel, "0123456789") != strlen(channel) || number > UINT32_MAX)
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak channel");
+    cfg.channel_id = (uint32_t)number;
+    esp_err_t err = thingspeak_config_save(&cfg);
+    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak save failed");
 }
 
 static esp_err_t wifi_auto_post(httpd_req_t *req)
@@ -461,6 +512,43 @@ static esp_err_t lock_test_post(httpd_req_t *req)
     return send_json(req, "{\"ok\":true}");
 }
 
+static esp_err_t phone_only_route(httpd_req_t *req)
+{
+    if (wifi_ota_is_runtime_phone_session()) return ESP_OK;
+    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
+}
+
+#define PHONE_ONLY_HANDLER(name) \
+    static esp_err_t name##_phone_only(httpd_req_t *req) \
+    { \
+        esp_err_t access = phone_only_route(req); \
+        return access == ESP_OK ? name(req) : access; \
+    }
+
+PHONE_ONLY_HANDLER(index_get)
+PHONE_ONLY_HANDLER(calibration_get)
+PHONE_ONLY_HANDLER(status_get)
+PHONE_ONLY_HANDLER(ulp_get)
+PHONE_ONLY_HANDLER(ulp_calibration_post)
+PHONE_ONLY_HANDLER(config_get)
+PHONE_ONLY_HANDLER(config_post)
+PHONE_ONLY_HANDLER(serial_log_post)
+PHONE_ONLY_HANDLER(thingspeak_get)
+PHONE_ONLY_HANDLER(thingspeak_post)
+PHONE_ONLY_HANDLER(wifi_get)
+PHONE_ONLY_HANDLER(wifi_post)
+PHONE_ONLY_HANDLER(wifi_auto_post)
+PHONE_ONLY_HANDLER(wifi_auto_update_post)
+PHONE_ONLY_HANDLER(registration_get)
+PHONE_ONLY_HANDLER(registration_post)
+PHONE_ONLY_HANDLER(bonds_get)
+PHONE_ONLY_HANDLER(bonds_delete)
+PHONE_ONLY_HANDLER(lock_test_post)
+PHONE_ONLY_HANDLER(ai_agent_http_restart)
+PHONE_ONLY_HANDLER(ai_agent_http_ota)
+
+#undef PHONE_ONLY_HANDLER
+
 esp_err_t web_ui_start(void)
 {
     if (s_server) return ESP_OK;
@@ -475,25 +563,27 @@ esp_err_t web_ui_start(void)
     err = httpd_start(&s_server, &config);
     if (err != ESP_OK) return err;
     const httpd_uri_t uris[] = {
-        {.uri="/", .method=HTTP_GET, .handler=index_get},
-        {.uri="/calibration", .method=HTTP_GET, .handler=calibration_get},
-        {.uri="/api/status", .method=HTTP_GET, .handler=status_get},
-        {.uri="/api/ulp", .method=HTTP_GET, .handler=ulp_get},
-        {.uri="/api/ulp/calibration", .method=HTTP_POST, .handler=ulp_calibration_post},
-        {.uri="/api/config", .method=HTTP_GET, .handler=config_get},
-        {.uri="/api/config", .method=HTTP_POST, .handler=config_post},
-        {.uri="/api/ble/power", .method=HTTP_POST, .handler=ble_power_post},
-        {.uri="/api/wifi", .method=HTTP_GET, .handler=wifi_get},
-        {.uri="/api/wifi", .method=HTTP_POST, .handler=wifi_post},
-        {.uri="/api/wifi/auto", .method=HTTP_POST, .handler=wifi_auto_post},
-        {.uri="/api/wifi/auto-update", .method=HTTP_POST, .handler=wifi_auto_update_post},
-        {.uri="/api/system/restart", .method=HTTP_POST, .handler=ai_agent_http_restart},
-        {.uri="/api/ble/registration", .method=HTTP_GET, .handler=registration_get},
-        {.uri="/api/ble/registration", .method=HTTP_POST, .handler=registration_post},
-        {.uri="/api/ble/bonds", .method=HTTP_GET, .handler=bonds_get},
-        {.uri="/api/ble/bonds", .method=HTTP_DELETE, .handler=bonds_delete},
-        {.uri="/api/lock/test", .method=HTTP_POST, .handler=lock_test_post},
-        {.uri="/api/ota", .method=HTTP_POST, .handler=ai_agent_http_ota},
+        {.uri="/", .method=HTTP_GET, .handler=index_get_phone_only},
+        {.uri="/calibration", .method=HTTP_GET, .handler=calibration_get_phone_only},
+        {.uri="/api/status", .method=HTTP_GET, .handler=status_get_phone_only},
+        {.uri="/api/ulp", .method=HTTP_GET, .handler=ulp_get_phone_only},
+        {.uri="/api/ulp/calibration", .method=HTTP_POST, .handler=ulp_calibration_post_phone_only},
+        {.uri="/api/config", .method=HTTP_GET, .handler=config_get_phone_only},
+        {.uri="/api/config", .method=HTTP_POST, .handler=config_post_phone_only},
+        {.uri="/api/config/serial-log", .method=HTTP_POST, .handler=serial_log_post_phone_only},
+        {.uri="/api/thingspeak", .method=HTTP_GET, .handler=thingspeak_get_phone_only},
+        {.uri="/api/thingspeak", .method=HTTP_POST, .handler=thingspeak_post_phone_only},
+        {.uri="/api/wifi", .method=HTTP_GET, .handler=wifi_get_phone_only},
+        {.uri="/api/wifi", .method=HTTP_POST, .handler=wifi_post_phone_only},
+        {.uri="/api/wifi/auto", .method=HTTP_POST, .handler=wifi_auto_post_phone_only},
+        {.uri="/api/wifi/auto-update", .method=HTTP_POST, .handler=wifi_auto_update_post_phone_only},
+        {.uri="/api/system/restart", .method=HTTP_POST, .handler=ai_agent_http_restart_phone_only},
+        {.uri="/api/ble/registration", .method=HTTP_GET, .handler=registration_get_phone_only},
+        {.uri="/api/ble/registration", .method=HTTP_POST, .handler=registration_post_phone_only},
+        {.uri="/api/ble/bonds", .method=HTTP_GET, .handler=bonds_get_phone_only},
+        {.uri="/api/ble/bonds", .method=HTTP_DELETE, .handler=bonds_delete_phone_only},
+        {.uri="/api/lock/test", .method=HTTP_POST, .handler=lock_test_post_phone_only},
+        {.uri="/api/ota", .method=HTTP_POST, .handler=ai_agent_http_ota_phone_only},
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         err = httpd_register_uri_handler(s_server, &uris[i]);

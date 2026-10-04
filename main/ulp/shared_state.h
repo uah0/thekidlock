@@ -6,7 +6,7 @@
 
 // Existing hardware mapping; these are RTC-capable on ESP32-S3.
 #define LOCK_GATE_GPIO       9
-#define ADC_SENSE_CHANNEL_DEFAULT 6  // GPIO7 -> ADC1_CH6
+#define ADC_SENSE_CHANNEL_DEFAULT 5  // GPIO6 -> ADC1_CH5
 #define ADC_VBAT_CHANNEL     4  // GPIO5 -> ADC1_CH4
 
 #define ULP_MEASURE_PERIOD_US ULP_EXPERIMENT_PERIOD_US
@@ -39,7 +39,7 @@ static inline bool ulp_calibration_values_valid(int32_t contact, int32_t paper1,
  * visible but cannot block or rescale a close decision. */
 #define ULP_TEST_IGNORE_VBAT_FOR_LOCK 0
 
-/* GPIO7 calibration anchors. Feature values are reconstructed from four
+/* GPIO6 calibration anchors. Feature values are reconstructed from four
  * cold raw delta points without using the battery measurement on GPIO5. */
 #define ULP_CAL_CONTACT_FEATURE 6000U
 #define ULP_CAL_PAPER1_FEATURE  15000U

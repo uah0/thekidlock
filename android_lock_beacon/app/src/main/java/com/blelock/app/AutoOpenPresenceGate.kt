@@ -1,26 +1,15 @@
 package com.blelock.app
 
-/** Tracks lock confirmations after an accepted automatic OPEN write. */
+/** Allows one automatic OPEN until BLE departure is confirmed. */
 internal class AutoOpenPresenceGate {
-    private var awaitingLockCycle = false
-    private var openConfirmed = false
+    var isBlocked = false
+        private set
 
     fun onOpenCommandAccepted() {
-        awaitingLockCycle = true
-        openConfirmed = false
+        isBlocked = true
     }
 
-    /** Returns true once the lock has confirmed OPEN and then LOCKED. */
-    fun onLockStatus(status: String?): Boolean {
-        if (!awaitingLockCycle) return false
-        when (status?.trim()?.uppercase()) {
-            "OPEN" -> openConfirmed = true
-            "LOCKED" -> if (openConfirmed) {
-                awaitingLockCycle = false
-                openConfirmed = false
-                return true
-            }
-        }
-        return false
+    fun onDepartureConfirmed() {
+        isBlocked = false
     }
 }

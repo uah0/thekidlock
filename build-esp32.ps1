@@ -50,6 +50,10 @@ function Invoke-EimIdf {
     }
 }
 
+function Apply-NimbleSecurityGuard {
+    Invoke-EimIdf "python tools/apply_nimble_sec_req_guard.py"
+}
+
 function Resolve-EspPort {
     if (-not [string]::IsNullOrWhiteSpace($Port)) {
         return $Port.ToUpperInvariant()
@@ -79,6 +83,7 @@ function Invoke-DirectFlash {
     $flashArgs = Join-Path $BuildDir "flash_args"
 
     if (-not (Test-Path $flashArgs)) {
+        Apply-NimbleSecurityGuard
         Invoke-EimIdf "idf.py build"
     }
     if (-not (Test-Path $flashArgs)) {
@@ -115,6 +120,7 @@ function Invoke-DirectFlash {
 
 switch ($Action) {
     "build" {
+        Apply-NimbleSecurityGuard
         Invoke-EimIdf "idf.py build"
         Write-Host "ESP32 BUILD SUCCESSFUL"
     }

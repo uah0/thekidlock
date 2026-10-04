@@ -10,11 +10,19 @@
     <string name="control_settings">Настройки</string>
     <string name="mode_auto">Автоматический режим</string>
     <string name="mode_always_open">Замок постоянно открыт</string>
+    <string name="open_via_internet">Открыть через интернет</string>
     <string name="settings_waiting_esp">Настройки · ожидание ESP32</string>
     <string name="auto_open">Автоматический режим</string>
     <string name="manual_open">Открыть</string>
     <string name="manual_keep_open">Не закрывать</string>
-    <string name="rssi_threshold_title">Порог сигнала для отправки OPEN</string>
+    <string name="phone_beacon_tx_power_title">Мощность BLE-маяка телефона</string>
+    <string name="phone_beacon_tx_power_description">Ползунок задаёт один из четырёх уровней мощности передачи BLE-маяка телефона. Более низкий уровень может уменьшить дальность обнаружения и расход батареи. Фактическая мощность зависит от модели телефона и не задаётся точным значением в dBm.</string>
+    <string-array name="phone_beacon_tx_power_levels">
+        <item>Минимальная</item>
+        <item>Низкая</item>
+        <item>Средняя</item>
+        <item>Высокая</item>
+    </string-array>
     <string name="lock_signal">%1$d dBm</string>
     <string name="lock_signal_unavailable">—</string>
     <string name="battery_notice_title">Настройка работы в фоне</string>

@@ -19,6 +19,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
 import android.os.SystemClock
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.net.wifi.WifiManager
 import android.location.LocationManager
@@ -60,7 +61,9 @@ class MainActivity : Activity() {
     private lateinit var mainContentView: View
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
-    private var rssiThresholdScreenVisible = false
+    private var wifiHoldOpenCommandPending = false
+    private var waitingForWifiIpForHoldOpen = false
+    private var beaconPowerScreenVisible = false
     private lateinit var permissionButton: Button
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
@@ -94,7 +97,7 @@ class MainActivity : Activity() {
     private var manualConnectionActive = false
     private var lastBleState = BleRepository.State.IDLE
     private var activityResumed = false
-    private var rssiThresholdSlider: View? = null
+    private var beaconPowerSlider: View? = null
     private var swipeStartX = 0f
     private var swipeStartY = 0f
     private var swipeStartedOnSlider = false
@@ -104,6 +107,7 @@ class MainActivity : Activity() {
     private var runtimeWebPending = false
     private var webUiRequestPending = false
     private var hotspotProvisioningStarted = false
+    private var webUiBrowserOpen = false
     private var otaStartToastShown = false
     private var adminProbeRetries = 0
     private var manualOpenCommandPending = false
@@ -111,11 +115,12 @@ class MainActivity : Activity() {
     private var keepOpenStatusExpected = false
     private var manualCommandWaitingForReady = false
     private var workingModeState = WorkingModeState()
-    private var workingModeTimeout: Runnable? = null
+    private var autoOpenPermissionPending = false
     private var hotspotCredentialWriteInFlight = false
+    private var webUiBlePermissionPending = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
-    private var webUiCountdownStartSeconds = 10
+    private var webUiCountdownStartSeconds = 6
     private val signalHandler = Handler(Looper.getMainLooper())
     private val webUiCountdown = object : Runnable {
         override fun run() {
@@ -145,6 +150,7 @@ class MainActivity : Activity() {
     }
     private var backgroundReceiverRegistered = false
     private var localHotspotReservation: WifiManager.LocalOnlyHotspotReservation? = null
+    private var hotspotSessionId: String? = null
     private var pendingHotspotWifi: String? = null
     private var hotspotExpectedEspIp: String? = null
     private var hotspotOpenedEspIp: String? = null
@@ -152,21 +158,14 @@ class MainActivity : Activity() {
     private val hotspotNoClientWatchdog = object : Runnable {
         override fun run() {
             if (localHotspotReservation == null) return
-            if (hotspotOpenedEspIp == null) {
-                closeLocalHotspot("IP открытой страницы ESP32 неизвестен")
+            if (webUiBrowserOpen) {
+                signalHandler.postDelayed(this, HOTSPOT_IP_CHECK_INTERVAL_MS)
                 return
             }
-            if (hotspotIpCheckPending) {
-                closeLocalHotspot("ESP32 не подтвердила IP за 10 секунд")
-                return
-            }
-            hotspotIpCheckPending = true
-            if (!repository.readOtaStatus()) {
-                hotspotIpCheckPending = false
-                closeLocalHotspot("Не удалось проверить IP ESP32")
-                return
-            }
-            signalHandler.postDelayed(this, HOTSPOT_IP_CHECK_INTERVAL_MS)
+            if (hotspotCredentialWriteInFlight)
+                closeLocalHotspot("ESP32 не подключилась к provisioning маяку за 60 секунд")
+            else
+                closeLocalHotspot("Истекло время настройки Wi-Fi")
         }
     }
     private val backgroundConnectionReceiver = object : BroadcastReceiver() {
@@ -176,11 +175,31 @@ class MainActivity : Activity() {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
                 }
                 BleLockService.ACTION_AUTOMATIC_MODE -> {
-                    dispatchWorkingModeEvent(
-                        WorkingModeEvent.AutomaticModeConfirmed(
-                            intent.getBooleanExtra(BleLockService.EXTRA_AUTOMATIC_MODE, false)
-                        )
-                    )
+                    renderWorkingMode()
+                }
+                PhoneBeacon.ACTION_OWNER_STATUS_CHANGED -> {
+                    updateAdminEntryState()
+                    renderWorkingMode()
+                    appendLog(if (settings.ownerAccessConfirmed) "ESP32 подтвердила роль владельца" else "ESP32 подтвердила роль ключа без owner-доступа")
+                }
+                PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED -> {
+                    pendingHotspotWifi = null
+                    hotspotCredentialWriteInFlight = false
+                    runtimeWebPending = true
+                    setWebUiConnectionState(WebUiConnectionState.ESP_CONNECTING)
+                    hotspotStatusView.text = "ESP32 получила параметры сети и подключается к Wi-Fi"
+                    appendLog("ESP32 прочитала параметры hotspot; BLE-сеанс настройки завершён")
+                    signalHandler.removeCallbacks(otaStatusPoll)
+                }
+                PhoneBeacon.ACTION_WEB_UI_IP_RECEIVED -> {
+                    val ip = intent.getStringExtra(PhoneBeacon.EXTRA_WEB_UI_IP).orEmpty()
+                    if (!ip.isValidIpv4()) return
+                    if (!webUiRequestPending || localHotspotReservation == null || !runtimeWebPending) {
+                        appendLog("Пропускаю IP ESP32 вне текущего подключения к точке телефона")
+                        return
+                    }
+                    settings.lockWifiIp = ip
+                    openWebUiAt(ip)
                 }
             }
         }
@@ -191,11 +210,6 @@ class MainActivity : Activity() {
         bleListener = object : BleRepository.Listener {
             override fun onBleState(state: BleRepository.State, detail: String) {
                 lastBleState = state
-                if (state == BleRepository.State.ERROR && detail.startsWith("ESP32 отклони")) {
-                    dispatchWorkingModeEvent(WorkingModeEvent.WorkingModeCommandFailed)
-                } else {
-                    dispatchWorkingModeEvent(WorkingModeEvent.BleStateSynced(state))
-                }
                 when (state) {
                     BleRepository.State.OPEN_SENT -> {
                         if (manualOpenCommandPending) {
@@ -236,7 +250,6 @@ class MainActivity : Activity() {
                     setWebUiConnectionState(WebUiConnectionState.ESP_CONNECTING)
                     runtimeWebPending = true
                     signalHandler.removeCallbacks(otaStatusPoll)
-                    signalHandler.post(otaStatusPoll)
                 }
                 if (detail.contains("Wi-Fi/OTA настройки сохранены") ||
                     detail.contains("Wi-Fi/OTA настройки отклонены") ||
@@ -256,7 +269,6 @@ class MainActivity : Activity() {
                 keepOpenCommandPending = false
                 keepOpenStatusExpected = false
                 manualCommandWaitingForReady = false
-                dispatchWorkingModeEvent(WorkingModeEvent.ConnectionLost)
                 resetManualButtonStates()
                 updateAdminEntryState()
                 updateMainControlsEnabled()
@@ -278,6 +290,7 @@ class MainActivity : Activity() {
                     return
                 }
                 adminModeAvailable = available
+                if (available) settings.ownerAccessConfirmed = true
                 updateAdminEntryState()
                 val showAdmin = available && serviceMenuRequested
                 setAdminPanelVisible(showAdmin)
@@ -286,18 +299,21 @@ class MainActivity : Activity() {
                     signalHandler.postDelayed(adminSignalPoll, ADMIN_SIGNAL_POLL_INTERVAL_MS)
                     if (otaStartPending) signalHandler.postDelayed({ repository.readOtaStatus() }, 500)
                 }
-                if (available && webUiRequestPending && repository.currentState == BleRepository.State.READY) {
-                    signalHandler.postDelayed({
-                        if (webUiRequestPending) repository.readOtaStatus()
-                    }, 300L)
-                }
                 updateAdminButtonsEnabled()
                 appendLog(if (available) "Режим настройки доступен" else "Обычный режим: настройки недоступны")
             }
 
             override fun onLockData(info: String?, status: String?) {
                 if (!status.isNullOrBlank()) {
-                    dispatchWorkingModeEvent(WorkingModeEvent.LockStatusReported(status))
+                    val holdOpen = when (status.trim().uppercase()) {
+                        "OPEN_HOLD" -> true
+                        "OPEN", "LOCKED" -> false
+                        else -> workingModeState.alwaysOpenEnabled
+                    }
+                    workingModeState = WorkingModeReducer.reduce(
+                        workingModeState, WorkingModeEvent.AlwaysOpenConfirmed(holdOpen)
+                    )
+                    renderWorkingMode()
                 }
                 if (!status.isNullOrBlank() && keepOpenStatusExpected) keepOpenStatusExpected = false
             }
@@ -410,10 +426,19 @@ class MainActivity : Activity() {
 
             override fun onOtaStatus(value: String) {
                 if (value.startsWith("WEB_READY;IP=")) {
+                    if (webUiRequestPending && localHotspotReservation != null) {
+                        appendLog("Ожидаю IP ESP32, переданный по BLE после подключения к точке телефона")
+                        return
+                    }
                     hotspotIpCheckPending = false
                     signalHandler.removeCallbacks(hotspotNoClientWatchdog)
                     val ip = value.substringAfter("WEB_READY;IP=").trim()
                     if (ip.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) {
+                        if (localHotspotReservation == null) settings.lockWifiIp = ip
+                        if (waitingForWifiIpForHoldOpen) {
+                            waitingForWifiIpForHoldOpen = false
+                            toggleHoldOpenOverWifi(ip)
+                        }
                         if (localHotspotReservation != null) {
                             val openedIp = hotspotOpenedEspIp
                             if (openedIp != null && openedIp != ip) {
@@ -432,25 +457,7 @@ class MainActivity : Activity() {
                         hotspotOpenButton.visibility = View.VISIBLE
                         hotspotWebUrlView.tag = url
                         appendLog("Web UI ESP32 доступен: $url")
-                        if (webUiRequestPending) {
-                            setWebUiConnectionState(WebUiConnectionState.OPENING_BROWSER)
-                            webUiRequestPending = false
-                            hotspotProvisioningStarted = false
-                            val elapsedMs = SystemClock.elapsedRealtime() - webUiStartedAtMs
-                            settings.webUiCountdownSeconds =
-                                ((elapsedMs + 999L) / 1000L).toInt().coerceIn(1, 60)
-                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                            if (localHotspotReservation != null) {
-                                hotspotOpenedEspIp = ip
-                                signalHandler.removeCallbacks(hotspotNoClientWatchdog)
-                                signalHandler.postDelayed(
-                                    hotspotNoClientWatchdog, HOTSPOT_IP_CHECK_INTERVAL_MS)
-                            }
-                            setWebUiConnectionState(WebUiConnectionState.COMPLETE)
-                            signalHandler.postDelayed({
-                                if (!webUiRequestPending) setWebUiConnectionState(WebUiConnectionState.IDLE)
-                            }, 1000L)
-                        }
+                        if (webUiRequestPending) openWebUiAt(ip)
                     }
                     runtimeWebPending = false
                     signalHandler.removeCallbacks(otaStatusPoll)
@@ -514,10 +521,11 @@ class MainActivity : Activity() {
         }
         mainContentView = createContent()
         setContentView(mainContentView)
-        if (savedInstanceState?.getBoolean(KEY_RSSI_SCREEN_VISIBLE) == true) {
-            showRssiThresholdScreen(animated = false)
+        if (savedInstanceState?.getBoolean(KEY_BEACON_POWER_SCREEN_VISIBLE) == true) {
+            showBeaconPowerScreen(animated = false)
         }
         showBatteryOptimizationNoticeIfNeeded()
+        workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
         bindBleService()
         refreshState()
     }
@@ -527,7 +535,7 @@ class MainActivity : Activity() {
             MotionEvent.ACTION_DOWN -> {
                 swipeStartX = event.rawX
                 swipeStartY = event.rawY
-                swipeStartedOnSlider = rssiThresholdScreenVisible && isInsideRssiThresholdSlider(
+                swipeStartedOnSlider = beaconPowerScreenVisible && isInsideBeaconPowerSlider(
                     event.rawX,
                     event.rawY
                 )
@@ -535,13 +543,13 @@ class MainActivity : Activity() {
             MotionEvent.ACTION_UP -> {
                 val dx = event.rawX - swipeStartX
                 val dy = event.rawY - swipeStartY
-                if (rssiThresholdScreenVisible) {
+                if (beaconPowerScreenVisible) {
                     if (!swipeStartedOnSlider && kotlin.math.hypot(dx, dy) >= dp(72)) {
-                        window.decorView.post { closeRssiThresholdScreen(animated = true) }
+                        window.decorView.post { closeBeaconPowerScreen(animated = true) }
                     }
                 } else if (::mainContentView.isInitialized && !serviceMenuRequested &&
                     -dy >= dp(90) && -dy > kotlin.math.abs(dx) * 1.2f) {
-                    window.decorView.post { showRssiThresholdScreen(animated = true) }
+                    window.decorView.post { showBeaconPowerScreen(animated = true) }
                 }
                 swipeStartedOnSlider = false
             }
@@ -551,14 +559,14 @@ class MainActivity : Activity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean(KEY_RSSI_SCREEN_VISIBLE, rssiThresholdScreenVisible)
+        outState.putBoolean(KEY_BEACON_POWER_SCREEN_VISIBLE, beaconPowerScreenVisible)
         super.onSaveInstanceState(outState)
     }
 
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
-        if (rssiThresholdScreenVisible) {
-            closeRssiThresholdScreen(animated = true)
+        if (beaconPowerScreenVisible) {
+            closeBeaconPowerScreen(animated = true)
         } else if (serviceMenuRequested) {
             closeServiceMenu()
         } else {
@@ -566,10 +574,10 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showRssiThresholdScreen(animated: Boolean) {
-        if (rssiThresholdScreenVisible) return
-        rssiThresholdScreenVisible = true
-        val screen = createRssiThresholdScreen()
+    private fun showBeaconPowerScreen(animated: Boolean) {
+        if (beaconPowerScreenVisible) return
+        beaconPowerScreenVisible = true
+        val screen = createBeaconPowerScreen()
         setContentView(screen)
         if (animated) {
             screen.translationY = resources.displayMetrics.heightPixels.toFloat()
@@ -580,9 +588,9 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun closeRssiThresholdScreen(animated: Boolean) {
-        if (!rssiThresholdScreenVisible) return
-        rssiThresholdScreenVisible = false
+    private fun closeBeaconPowerScreen(animated: Boolean) {
+        if (!beaconPowerScreenVisible) return
+        beaconPowerScreenVisible = false
         setContentView(mainContentView)
         if (animated) {
             mainContentView.translationY = -resources.displayMetrics.heightPixels.toFloat()
@@ -608,6 +616,15 @@ class MainActivity : Activity() {
         registerBackgroundReceiver()
         refreshState()
         showLegacyBleLocationNoticeIfNeeded()
+        if (webUiBrowserOpen) {
+            webUiBrowserOpen = false
+            if (localHotspotReservation != null) {
+                closeLocalHotspot("Возврат из Web UI")
+                setWebUiConnectionState(WebUiConnectionState.IDLE)
+            } else {
+                finishWebUiIpRequest()
+            }
+        }
     }
 
     override fun onPause() {
@@ -635,6 +652,9 @@ class MainActivity : Activity() {
         val filter = IntentFilter().apply {
             addAction(BleLockService.ACTION_CONNECTION_STATE)
             addAction(BleLockService.ACTION_AUTOMATIC_MODE)
+            addAction(PhoneBeacon.ACTION_OWNER_STATUS_CHANGED)
+            addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
+            addAction(PhoneBeacon.ACTION_WEB_UI_IP_RECEIVED)
         }
         ContextCompat.registerReceiver(
             this,
@@ -670,8 +690,10 @@ class MainActivity : Activity() {
             serviceBound = false
         }
         if (settings.autoOpenEnabled) startAutoOpenService()
+        clearPhoneBeaconHotspotIp()
         localHotspotReservation?.close()
         localHotspotReservation = null
+        hotspotSessionId = null
         super.onDestroy()
     }
 
@@ -683,10 +705,26 @@ class MainActivity : Activity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_BLE_PERMISSIONS) {
             refreshState()
-            if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
+            if (hasBlePermissions()) {
+                if (webUiBlePermissionPending) {
+                    webUiBlePermissionPending = false
+                    beginPhoneHotspotWebUi()
+                } else if (autoOpenPermissionPending) {
+                    autoOpenPermissionPending = false
+                    setAutomaticBeaconEnabled(true)
+                } else if (settings.autoOpenEnabled) {
+                    startAutoOpenService()
+                }
+            }
         } else if (requestCode == REQUEST_HOTSPOT_PERMISSIONS) {
-            if (hotspotPermissionsGranted()) startLocalHotspot()
-            else appendLog("Нет разрешения на создание локальной точки доступа")
+            if (hotspotPermissionsGranted() && webUiRequestPending && hotspotProvisioningStarted) {
+                startLocalHotspot()
+            } else if (!hotspotPermissionsGranted()) {
+                webUiRequestPending = false
+                hotspotProvisioningStarted = false
+                finishWebUiIpRequest()
+                appendLog("Нет разрешения на создание локальной точки доступа")
+            }
         }
     }
 
@@ -714,14 +752,18 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
         }
         manualOpenButton = controlTile(R.string.mode_auto) { toggleAutomaticMode() }
-        accessCard.addView(manualOpenButton, controlTileParams())
+        accessCard.addView(manualOpenButton, controlTileParams(heightDp = 118))
         manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }
-        accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 18))
+        accessCard.addView(manualKeepOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
+        val internetOpenButton = controlTile(R.string.open_via_internet) { }
+        internetOpenButton.isEnabled = false
+        internetOpenButton.alpha = 0.5f
+        accessCard.addView(internetOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
 
         hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
-        accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 18))
+        accessCard.addView(hotspotOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
         root.addView(accessCard, spacedFullWidth().apply { bottomMargin = dp(48) })
 
         // --- Admin container: everything that only appears once the lock exposes admin mode ---
@@ -1065,33 +1107,41 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createRssiThresholdScreen(): View {
+    private fun createBeaconPowerScreen(): View {
+        val powerLabels = resources.getStringArray(R.array.phone_beacon_tx_power_levels)
         val valueLabel = TextView(this).apply {
-            text = "${settings.rssiThreshold} dBm"
+            text = powerLabels[settings.phoneBeaconTxPowerLevel]
             textSize = 32f
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
             setTextColor(getColor(R.color.accent_blue))
         }
-        val slider = VerticalRssiSlider(this, RSSI_THRESHOLD_MIN, RSSI_THRESHOLD_MAX).apply {
-            setValue(settings.rssiThreshold, notify = false)
+        val slider = VerticalLevelSlider(
+            this,
+            LockSettings.MIN_PHONE_BEACON_TX_POWER_LEVEL,
+            LockSettings.MAX_PHONE_BEACON_TX_POWER_LEVEL,
+            getString(R.string.phone_beacon_tx_power_title)
+        ).apply {
+            setValue(settings.phoneBeaconTxPowerLevel, notify = false)
             onValueChanged = { value ->
-                settings.rssiThreshold = value
-                valueLabel.text = "$value dBm"
+                settings.phoneBeaconTxPowerLevel = value
+                valueLabel.text = powerLabels[value]
+                startService(Intent(this@MainActivity, BleLockService::class.java)
+                    .setAction(BleLockService.ACTION_BEACON_TX_POWER_CHANGED))
             }
         }
-        rssiThresholdSlider = slider
+        beaconPowerSlider = slider
 
         val scaleLabels = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             addView(TextView(this@MainActivity).apply {
-                text = "$RSSI_THRESHOLD_MAX dBm"
+                text = powerLabels[LockSettings.MAX_PHONE_BEACON_TX_POWER_LEVEL]
                 setTextColor(getColor(R.color.secondary_text))
             })
             addView(Space(this@MainActivity), LinearLayout.LayoutParams(1, 0, 1f))
             addView(TextView(this@MainActivity).apply {
-                text = "$RSSI_THRESHOLD_MIN dBm"
+                text = powerLabels[LockSettings.MIN_PHONE_BEACON_TX_POWER_LEVEL]
                 setTextColor(getColor(R.color.secondary_text))
             })
         }
@@ -1109,7 +1159,7 @@ class MainActivity : Activity() {
             setBackgroundColor(getColor(R.color.screen_background))
         }
         screen.addView(TextView(this).apply {
-            text = getString(R.string.rssi_threshold_title)
+            text = getString(R.string.phone_beacon_tx_power_title)
             textSize = 23f
             setTypeface(typeface, Typeface.BOLD)
             gravity = Gravity.CENTER
@@ -1125,7 +1175,7 @@ class MainActivity : Activity() {
             bottomMargin = dp(20)
         })
         screen.addView(TextView(this).apply {
-            text = "Подключение начинается независимо от RSSI. OPEN отправляется после защищённого подключения, когда сигнал достигает порога."
+            text = getString(R.string.phone_beacon_tx_power_description)
             textSize = 14f
             setTextColor(getColor(R.color.secondary_text))
             setPadding(dp(8), dp(12), dp(8), dp(12))
@@ -1133,8 +1183,8 @@ class MainActivity : Activity() {
         return screen
     }
 
-    private fun isInsideRssiThresholdSlider(rawX: Float, rawY: Float): Boolean {
-        val slider = rssiThresholdSlider ?: return false
+    private fun isInsideBeaconPowerSlider(rawX: Float, rawY: Float): Boolean {
+        val slider = beaconPowerSlider ?: return false
         val location = IntArray(2)
         slider.getLocationOnScreen(location)
         return rawX >= location[0] && rawX <= location[0] + slider.width &&
@@ -1233,7 +1283,8 @@ class MainActivity : Activity() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         renderWorkingMode()
         if (::hotspotOpenButton.isInitialized) {
-            val settingsEnabled = hasBlePermissions()
+            val settingsEnabled = settings.ownerAccessConfirmed
+            hotspotOpenButton.visibility = if (settingsEnabled) View.VISIBLE else View.GONE
             hotspotOpenButton.isEnabled = settingsEnabled
             hotspotOpenButton.alpha = if (settingsEnabled) 1f else 0.38f
         }
@@ -1250,15 +1301,18 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(20), dp(20), dp(20))
         }
 
-    private fun controlTileParams(topMarginDp: Int = 0) =
-        LinearLayout.LayoutParams(dp(252), dp(148)).apply {
+    private fun controlTileParams(heightDp: Int, topMarginDp: Int = 0) =
+        LinearLayout.LayoutParams(dp(252), dp(heightDp)).apply {
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(topMarginDp)
         }
 
     private fun updateAdminEntryState() {
         if (::hotspotOpenButton.isInitialized) {
-            hotspotOpenButton.visibility = if (hasBlePermissions()) View.VISIBLE else View.GONE
+            val ownerReady = settings.ownerAccessConfirmed
+            hotspotOpenButton.visibility = if (ownerReady) View.VISIBLE else View.GONE
+            hotspotOpenButton.isEnabled = ownerReady
+            hotspotOpenButton.alpha = if (ownerReady) 1f else 0.38f
         }
         if (::swipeRefresh.isInitialized) {
             swipeRefresh.isEnabled = adminModeAvailable && serviceMenuRequested
@@ -1399,9 +1453,13 @@ class MainActivity : Activity() {
     }
     private val otaStatusPoll = object : Runnable {
         override fun run() {
-            if (otaStartPending || runtimeWebPending) {
+            if (otaStartPending || runtimeWebPending || webUiRequestPending) {
                 if (!repository.readOtaStatus()) {
                     if (otaStartPending) otaStartPending = false
+                    if (webUiRequestPending) {
+                        signalHandler.postDelayed(this, 1000L)
+                        return
+                    }
                     if (runtimeWebPending) runtimeWebPending = false
                     signalHandler.removeCallbacks(this)
                     return
@@ -1437,76 +1495,79 @@ class MainActivity : Activity() {
 
     private fun toggleAutomaticMode() {
         if (!hasBlePermissions()) {
+            autoOpenPermissionPending = true
             requestMissingPermissions()
             return
         }
-        if (!serviceBound) return
-        dispatchWorkingModeEvent(WorkingModeEvent.UserToggledAuto)
+        setAutomaticBeaconEnabled(!settings.autoOpenEnabled)
+    }
+
+    private fun setAutomaticBeaconEnabled(enabled: Boolean) {
+        settings.autoOpenEnabled = enabled
+        workingModeState = WorkingModeReducer.reduce(
+            workingModeState, WorkingModeEvent.AutoOpenChanged(enabled)
+        )
+        if (enabled) {
+            startAutoOpenService()
+            if (!serviceBound) bindBleService() else boundService?.resumeAutomaticMode()
+        } else if (serviceBound) {
+            boundService?.setAutomaticMode(false)
+        } else {
+            startService(Intent(this, BleLockService::class.java).setAction(BleLockService.ACTION_STOP))
+        }
+        appendLog(if (enabled) "Автооткрытие включено: BLE-маяк телефона активен" else "Автооткрытие выключено: BLE-маяк телефона остановлен")
+        renderWorkingMode()
     }
 
     private fun toggleKeepOpenMode() {
-        if (!hasBlePermissions()) {
-            requestMissingPermissions()
+        if (wifiHoldOpenCommandPending || waitingForWifiIpForHoldOpen) return
+        val ip = hotspotExpectedEspIp ?: settings.lockWifiIp
+        if (!ip.isNullOrBlank()) {
+            toggleHoldOpenOverWifi(ip)
             return
         }
-        if (!serviceBound) return
-        dispatchWorkingModeEvent(WorkingModeEvent.UserToggledAlwaysOpen)
+        requestLockWifiIp { toggleHoldOpenOverWifi(it) }
     }
 
-    private fun dispatchWorkingModeEvent(event: WorkingModeEvent) {
-        val result = WorkingModeReducer.reduce(
-            workingModeState,
-            event,
-            SystemClock.elapsedRealtime(),
-            settings.autoOpenEnabled
-        )
-        workingModeState = result.state
+    private fun toggleHoldOpenOverWifi(ip: String) {
+        wifiHoldOpenCommandPending = true
         renderWorkingMode()
-        result.effects.forEach(::executeWorkingModeEffect)
-    }
-
-    private fun executeWorkingModeEffect(effect: WorkingModeEffect) {
-        when (effect) {
-            is WorkingModeEffect.SendSetAutomaticMode -> boundService?.setAutomaticMode(effect.enabled)
-            is WorkingModeEffect.SendSetWorkingMode -> repository.setWorkingMode(
-                effect.alwaysOpen,
-                effect.closeWhenDisablingAlwaysOpen
-            )
-            WorkingModeEffect.ResumeAutomaticMode -> boundService?.resumeAutomaticMode()
-            is WorkingModeEffect.PersistAutoOpen -> settings.autoOpenEnabled = effect.enabled
-            is WorkingModeEffect.ScheduleTimeout -> {
-                workingModeTimeout?.let(signalHandler::removeCallbacks)
-                val timeout = Runnable {
-                    dispatchWorkingModeEvent(WorkingModeEvent.TransitionTimedOut(effect.requestId))
+        appendLog("Переключаю постоянное открытие по Wi-Fi: $ip")
+        Thread({
+            val result = runCatching { WifiLockControl.toggle(ip) }
+            runOnUiThread {
+                wifiHoldOpenCommandPending = false
+                result.onSuccess { state ->
+                    workingModeState = WorkingModeReducer.reduce(
+                        workingModeState,
+                        WorkingModeEvent.AlwaysOpenConfirmed(state.holdOpen)
+                    )
+                    appendLog(if (state.holdOpen) "ESP32 подтвердила постоянное открытие по Wi-Fi"
+                              else "ESP32 подтвердила возврат в AUTO по Wi-Fi")
+                }.onFailure { error ->
+                    appendLog("Wi-Fi команда постоянного открытия не выполнена: ${error.message}")
+                    Toast.makeText(this, "ESP32 не ответила по Wi-Fi", Toast.LENGTH_LONG).show()
                 }
-                workingModeTimeout = timeout
-                signalHandler.postDelayed(
-                    timeout,
-                    (effect.atMs - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
-                )
+                renderWorkingMode()
             }
-            WorkingModeEffect.CancelTimeout -> {
-                workingModeTimeout?.let(signalHandler::removeCallbacks)
-                workingModeTimeout = null
-            }
-            WorkingModeEffect.RequestStatusRefresh -> {
-                if (::repository.isInitialized) repository.requestLockStatusRefresh()
-            }
-        }
+        }, "lock-hold-open-wifi").start()
     }
 
     private fun resetManualButtonStates() = renderWorkingMode()
 
     private fun renderWorkingMode() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
-        val ui = WorkingModeUi.compute(workingModeState)
+        val wifiCommandAvailable = !wifiHoldOpenCommandPending && (
+            !settings.lockWifiIp.isNullOrBlank() || !hotspotExpectedEspIp.isNullOrBlank() ||
+                (serviceBound && repository.currentState == BleRepository.State.READY)
+        )
+        val ui = WorkingModeUi.compute(workingModeState, wifiCommandAvailable)
         setManualButtonBlue(manualOpenButton, ui.autoSelected)
         setManualButtonBlue(manualKeepOpenButton, ui.alwaysOpenSelected)
-        manualOpenButton.isEnabled = ui.enabled
-        manualKeepOpenButton.isEnabled = ui.enabled
-        val alpha = if (ui.enabled) 1f else 0.38f
-        manualOpenButton.alpha = alpha
-        manualKeepOpenButton.alpha = alpha
+        manualOpenButton.isEnabled = ui.autoEnabled
+        manualKeepOpenButton.isEnabled = ui.alwaysOpenEnabled
+        manualOpenButton.alpha = if (ui.autoEnabled) 1f else 0.38f
+        manualKeepOpenButton.alpha = if (ui.alwaysOpenEnabled) 1f else 0.38f
     }
 
     private fun setManualButtonBlue(button: Button, blue: Boolean) {
@@ -1550,17 +1611,13 @@ class MainActivity : Activity() {
             repository = binder
             serviceBound = true
             binder.registerClient(bleListener)
-            dispatchWorkingModeEvent(
-                WorkingModeEvent.AutomaticModeConfirmed(binder.automaticModeActive)
-            )
-            dispatchWorkingModeEvent(WorkingModeEvent.BleStateSynced(binder.currentState))
+            workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
             refreshState()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             serviceBound = false
             boundService = null
-            dispatchWorkingModeEvent(WorkingModeEvent.AutomaticServiceUnavailable)
             adminModeAvailable = false
             updateAdminEntryState()
             setAdminPanelVisible(false)
@@ -1802,38 +1859,134 @@ class MainActivity : Activity() {
     }
 
     private fun openEspWebUi() {
-        webUiStartedAtMs = SystemClock.elapsedRealtime()
-        webUiCountdownStartSeconds = settings.webUiCountdownSeconds
-        setWebUiConnectionState(WebUiConnectionState.WAITING_WEBUI_ADDRESS)
-        webUiRequestPending = true
-        hotspotProvisioningStarted = false
-        signalHandler.removeCallbacks(webUiCountdown)
-        signalHandler.post(webUiCountdown)
-        if (!serviceBound || !adminModeAvailable || repository.currentState != BleRepository.State.READY) {
-            appendLog("Для проверки IP сначала устанавливаю административное BLE-соединение")
-            activateServiceMenu()
+        if (!settings.ownerAccessConfirmed || hotspotCredentialWriteInFlight) return
+        if (!hasBlePermissions()) {
+            webUiBlePermissionPending = true
+            requestMissingPermissions()
             return
         }
-        appendLog("Проверяю IP-адрес ESP32 по BLE")
-        if (!repository.readOtaStatus()) {
-            appendLog("BLE занят, повторяю проверку IP")
-            signalHandler.postDelayed({
-                if (webUiRequestPending && !hotspotProvisioningStarted) {
-                    repository.readOtaStatus()
-                }
-            }, 500L)
+        beginPhoneHotspotWebUi()
+    }
+
+    private fun beginPhoneHotspotWebUi() {
+        webUiRequestPending = true
+        hotspotProvisioningStarted = true
+        runtimeWebPending = false
+        webUiStartedAtMs = SystemClock.elapsedRealtime()
+        webUiCountdownStartSeconds = settings.webUiCountdownSeconds
+        setWebUiConnectionState(WebUiConnectionState.STARTING_HOTSPOT)
+        signalHandler.removeCallbacks(webUiCountdown)
+        signalHandler.post(webUiCountdown)
+        runCatching {
+            startService(
+                Intent(this, BleLockService::class.java)
+                    .setAction(BleLockService.ACTION_WEB_UI_IP_REQUEST)
+            )
+        }.onFailure {
+            webUiRequestPending = false
+            signalHandler.removeCallbacks(webUiCountdown)
+            setWebUiConnectionState(WebUiConnectionState.ERROR)
+            appendLog("Не удалось запросить IP ESP32 по BLE: ${it.message}")
+            return
         }
+        appendLog("Создаю точку доступа телефона для Web UI и передаю её параметры по encrypted BLE")
+        startWebUiProvisioning()
+    }
+
+    private fun openWebUiAt(ip: String) {
+        if (!ip.isValidIpv4()) return
+        val hadPendingRequest = webUiRequestPending
+        signalHandler.removeCallbacks(webUiCountdown)
+        if (hadPendingRequest) {
+            val elapsedMs = SystemClock.elapsedRealtime() - webUiStartedAtMs
+            settings.webUiCountdownSeconds =
+                ((elapsedMs + 999L) / 1000L).toInt().coerceIn(1, HOTSPOT_PROVISIONING_TIMEOUT_SECONDS)
+        }
+        settings.lockWifiIp = ip
+        val url = "http://$ip/"
+        hotspotWebUrlView.text = url
+        hotspotWebUrlView.visibility = View.VISIBLE
+        hotspotWebUrlView.tag = url
+        if (localHotspotReservation != null && !runtimeWebPending) {
+            closeLocalHotspot("ESP32 сообщила доступный IP существующей Wi-Fi сети")
+        } else if (localHotspotReservation == null && hotspotSessionId != null) {
+            clearPhoneBeaconHotspotIp(hotspotSessionId)
+            hotspotSessionId = null
+        }
+        webUiRequestPending = false
+        hotspotProvisioningStarted = false
+        val keepHotspotForEsp = localHotspotReservation != null && runtimeWebPending
+        if (keepHotspotForEsp) {
+            hotspotExpectedEspIp = ip
+            hotspotOpenedEspIp = ip
+        }
+        webUiBrowserOpen = hadPendingRequest || keepHotspotForEsp
+        setWebUiConnectionState(WebUiConnectionState.OPENING_BROWSER)
+        appendLog("Открываю Web UI ESP32: $url")
+        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+            .onSuccess {
+                setWebUiConnectionState(WebUiConnectionState.COMPLETE)
+                if (keepHotspotForEsp) {
+                    signalHandler.removeCallbacks(hotspotNoClientWatchdog)
+                    signalHandler.postDelayed(hotspotNoClientWatchdog, HOTSPOT_IP_CHECK_INTERVAL_MS)
+                }
+            }
+            .onFailure {
+                webUiBrowserOpen = false
+                setWebUiConnectionState(WebUiConnectionState.ERROR)
+                appendLog("Не удалось открыть браузер: ${it.message}")
+                finishWebUiIpRequest()
+            }
+    }
+
+    private fun finishWebUiIpRequest() {
+        signalHandler.removeCallbacks(webUiCountdown)
+        runCatching {
+            startService(
+                Intent(this, BleLockService::class.java)
+                    .setAction(BleLockService.ACTION_WEB_UI_IP_FINISHED)
+            )
+        }
+    }
+
+    private fun requestLockWifiIp(onReady: (String) -> Unit) {
+        val saved = settings.lockWifiIp?.trim()
+        if (saved.isValidIpv4()) {
+            onReady(saved!!)
+            return
+        }
+        val field = EditText(this).apply {
+            hint = "192.168.1.54"
+            inputType = InputType.TYPE_CLASS_TEXT
+            setSingleLine(true)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Wi-Fi адрес ESP32")
+            .setMessage("Телефон и ESP32 должны быть доступны в одной Wi-Fi сети. Адрес сохранится для следующих команд.")
+            .setView(field)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton("Продолжить") { _, _ ->
+                val ip = field.text.toString().trim()
+                if (!ip.isValidIpv4()) {
+                    Toast.makeText(this, "Введите IPv4 адрес ESP32", Toast.LENGTH_LONG).show()
+                } else {
+                    settings.lockWifiIp = ip
+                    onReady(ip)
+                }
+            }
+            .show()
     }
 
     private fun startWebUiProvisioning() {
         if (localHotspotReservation != null) {
-            sendHotspotCredentials(localHotspotReservation!!)
+            resolveHotspotIpv4ThenSend(localHotspotReservation!!, hotspotSessionId)
             return
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             webUiRequestPending = false
             hotspotProvisioningStarted = false
             setWebUiConnectionState(WebUiConnectionState.ERROR)
+            finishWebUiIpRequest()
             appendLog("Эта версия Android не умеет создавать локальную точку доступа")
             return
         }
@@ -1854,10 +2007,29 @@ class MainActivity : Activity() {
     private fun startLocalHotspot() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val wifiManager = getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val requestSessionId = java.util.UUID.randomUUID().toString()
+        hotspotSessionId = requestSessionId
         hotspotStatusView.setText(R.string.local_hotspot_status)
+        runCatching {
+            startService(
+                Intent(this, BleLockService::class.java)
+                    .setAction(BleLockService.ACTION_WIFI_PROVISION_PENDING)
+                    .putExtra(BleLockService.EXTRA_HOTSPOT_SESSION, requestSessionId)
+            )
+        }.onFailure {
+            hotspotSessionId = null
+            setWebUiConnectionState(WebUiConnectionState.ERROR)
+            finishWebUiIpRequest()
+            appendLog("Не удалось приостановить AUTO-маяк для настройки Wi-Fi: ${it.message}")
+            return
+        }
         try {
             wifiManager.startLocalOnlyHotspot(object : WifiManager.LocalOnlyHotspotCallback() {
             override fun onStarted(reservation: WifiManager.LocalOnlyHotspotReservation) {
+                if (hotspotSessionId != requestSessionId) {
+                    reservation.close()
+                    return
+                }
                 localHotspotReservation = reservation
                 hotspotExpectedEspIp = null
                 hotspotOpenedEspIp = null
@@ -1869,17 +2041,19 @@ class MainActivity : Activity() {
                 hotspotWebUrlView.visibility = View.GONE
                 hotspotOpenButton.isEnabled = true
                 hotspotOpenButton.visibility = View.VISIBLE
-                val config = reservation.wifiConfiguration
-                val ssid = config?.SSID?.trim('"') ?: "не сообщено Android"
-                val password = config?.preSharedKey?.trim('"') ?: "не сообщён Android"
                 hotspotStatusView.text = "Локальная сеть создана"
                 appendLog("Локальная точка доступа создана")
-                setWebUiConnectionState(WebUiConnectionState.SENDING_WIFI_CREDENTIALS)
-                sendHotspotCredentials(reservation)
+                hotspotStatusView.text = "Точка доступа готова, определяю IPv4 телефона…"
+                resolveHotspotIpv4ThenSend(reservation, requestSessionId)
             }
 
             override fun onStopped() {
+                clearPhoneBeaconHotspotIp(requestSessionId)
+                if (hotspotSessionId != requestSessionId) return
                 localHotspotReservation = null
+                hotspotSessionId = null
+                hotspotCredentialWriteInFlight = false
+                pendingHotspotWifi = null
                 hotspotExpectedEspIp = null
                 hotspotOpenedEspIp = null
                 hotspotIpCheckPending = false
@@ -1888,6 +2062,7 @@ class MainActivity : Activity() {
                     webUiRequestPending = false
                     hotspotProvisioningStarted = false
                     setWebUiConnectionState(WebUiConnectionState.ERROR)
+                    finishWebUiIpRequest()
                 }
                 hotspotStatusView.setText(R.string.local_hotspot_status)
                 hotspotWebUrlView.text = ""
@@ -1899,7 +2074,12 @@ class MainActivity : Activity() {
             }
 
             override fun onFailed(reason: Int) {
+                clearPhoneBeaconHotspotIp(requestSessionId)
+                if (hotspotSessionId != requestSessionId) return
                 localHotspotReservation = null
+                hotspotSessionId = null
+                hotspotCredentialWriteInFlight = false
+                pendingHotspotWifi = null
                 hotspotExpectedEspIp = null
                 hotspotOpenedEspIp = null
                 hotspotIpCheckPending = false
@@ -1907,6 +2087,7 @@ class MainActivity : Activity() {
                 webUiRequestPending = false
                 hotspotProvisioningStarted = false
                 setWebUiConnectionState(WebUiConnectionState.ERROR)
+                finishWebUiIpRequest()
                 hotspotStatusView.text = "Не удалось создать сеть, код Android: $reason"
                 hotspotWebUrlView.text = ""
                 hotspotWebUrlView.tag = null
@@ -1917,6 +2098,8 @@ class MainActivity : Activity() {
             }
             }, Handler(Looper.getMainLooper()))
         } catch (error: SecurityException) {
+            clearPhoneBeaconHotspotIp(requestSessionId)
+            if (hotspotSessionId == requestSessionId) hotspotSessionId = null
             hotspotStatusView.text = "Нет системного разрешения Wi-Fi: ${error.message}"
             hotspotOpenButton.isEnabled = true
             hotspotOpenButton.visibility = View.VISIBLE
@@ -1926,8 +2109,12 @@ class MainActivity : Activity() {
     }
 
     private fun closeLocalHotspot(reason: String) {
+        clearPhoneBeaconHotspotIp(hotspotSessionId)
         localHotspotReservation?.close()
         localHotspotReservation = null
+        hotspotSessionId = null
+        hotspotCredentialWriteInFlight = false
+        pendingHotspotWifi = null
         hotspotExpectedEspIp = null
         hotspotOpenedEspIp = null
         hotspotIpCheckPending = false
@@ -1937,6 +2124,7 @@ class MainActivity : Activity() {
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
         signalHandler.removeCallbacks(otaStatusPoll)
         signalHandler.removeCallbacks(webUiCountdown)
+        finishWebUiIpRequest()
         hotspotStatusView.setText(R.string.local_hotspot_status)
         hotspotWebUrlView.text = ""
         hotspotWebUrlView.tag = null
@@ -1945,11 +2133,23 @@ class MainActivity : Activity() {
         appendLog("Локальная точка доступа отключена: $reason")
     }
 
-    private fun sendHotspotCredentials(reservation: WifiManager.LocalOnlyHotspotReservation) {
-        val config = reservation.wifiConfiguration
-        val ssid = config?.SSID?.trim('"') ?: "не сообщено Android"
-        val password = config?.preSharedKey?.trim('"') ?: "не сообщён Android"
-        if (ssid == "не сообщено Android" || password == "не сообщён Android") {
+    private fun sendHotspotCredentials(
+        reservation: WifiManager.LocalOnlyHotspotReservation,
+        hotspotIp: ByteArray?,
+        sessionId: String? = hotspotSessionId
+    ) {
+        val credentials = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val config = reservation.softApConfiguration
+                config.ssid to config.passphrase
+            } else {
+                val config = reservation.wifiConfiguration
+                config?.SSID?.trim('"') to config?.preSharedKey?.trim('"')
+            }
+        }.getOrNull()
+        val ssid = credentials?.first
+        val password = credentials?.second
+        if (ssid.isNullOrBlank() || password.isNullOrBlank()) {
             webUiRequestPending = false
             hotspotProvisioningStarted = false
             setWebUiConnectionState(WebUiConnectionState.ERROR)
@@ -1957,9 +2157,79 @@ class MainActivity : Activity() {
             return
         }
         pendingHotspotWifi = "$ssid\n$password"
-        if (!trySendPendingHotspotCredentials()) {
-            appendLog("Ожидаю BLE-соединение для передачи настроек точки доступа")
+        val intent = Intent(this, BleLockService::class.java)
+            .setAction(BleLockService.ACTION_WIFI_PROVISION)
+            .putExtra(BleLockService.EXTRA_WIFI_SSID, ssid)
+            .putExtra(BleLockService.EXTRA_WIFI_PASSWORD, password)
+            .putExtra(BleLockService.EXTRA_HOTSPOT_IP, hotspotIp)
+            .putExtra(BleLockService.EXTRA_HOTSPOT_SESSION, sessionId)
+        runCatching { startService(intent) }
+            .onSuccess {
+                hotspotCredentialWriteInFlight = true
+                pendingHotspotWifi = null
+                setWebUiConnectionState(WebUiConnectionState.SENDING_WIFI_CREDENTIALS)
+                hotspotStatusView.text = "Hotspot готов, ожидается подключение ESP32"
+                appendLog("BLE-маяк переключён в режим передачи Wi-Fi credentials")
+            }
+            .onFailure {
+                hotspotCredentialWriteInFlight = false
+                setWebUiConnectionState(WebUiConnectionState.ERROR)
+                appendLog("Не удалось запустить BLE provisioning: ${it.message}")
+                Toast.makeText(this, "Не удалось запустить BLE provisioning", Toast.LENGTH_LONG).show()
+            }
+    }
+
+    private fun clearPhoneBeaconHotspotIp(sessionId: String? = hotspotSessionId) {
+        sendBroadcast(
+            Intent(BleLockService.ACTION_CLEAR_HOTSPOT_IP)
+                .setPackage(packageName)
+                .putExtra(BleLockService.EXTRA_HOTSPOT_SESSION, sessionId)
+        )
+    }
+
+    private fun resolveHotspotIpv4(): java.net.Inet4Address? {
+        val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val stationWifiActive = runCatching {
+            connectivity.allNetworks.any { network ->
+                connectivity.getNetworkCapabilities(network)
+                    ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
+        }.onFailure {
+            appendLog("Не удалось определить активный Wi-Fi интерфейс: ${it.message}")
+        }.getOrDefault(true)
+        return HotspotIpv4Resolver.resolve(allowWlanFallback = !stationWifiActive, logResult = false)
+    }
+
+    private fun resolveHotspotIpv4ThenSend(
+        reservation: WifiManager.LocalOnlyHotspotReservation,
+        sessionId: String?,
+        attemptsLeft: Int = HOTSPOT_INTERFACE_RESOLVE_ATTEMPTS
+    ) {
+        if (sessionId == null || sessionId != hotspotSessionId || localHotspotReservation !== reservation) return
+        val address = resolveHotspotIpv4()
+        if (address != null) {
+            appendLog("IPv4 hotspot найден: ${address.hostAddress}; отправляю credentials через PhoneBeacon")
+            sendHotspotCredentials(reservation, address.address, sessionId)
+            return
         }
+        if (attemptsLeft > 1) {
+            signalHandler.postDelayed(
+                { resolveHotspotIpv4ThenSend(reservation, sessionId, attemptsLeft - 1) },
+                HOTSPOT_INTERFACE_RESOLVE_INTERVAL_MS
+            )
+            return
+        }
+        // Record one final resolver diagnostic, then continue the existing SSID/password fallback.
+        val connectivity = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val stationWifiActive = runCatching {
+            connectivity.allNetworks.any { network ->
+                connectivity.getNetworkCapabilities(network)
+                    ?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) == true
+            }
+        }.getOrDefault(true)
+        HotspotIpv4Resolver.resolve(allowWlanFallback = !stationWifiActive, logResult = true)
+        appendLog("IPv4 hotspot не определён за ${HOTSPOT_INTERFACE_RESOLVE_ATTEMPTS * HOTSPOT_INTERFACE_RESOLVE_INTERVAL_MS / 1000}s; ESP получит SSID/пароль и продолжит через fallback")
+        sendHotspotCredentials(reservation, null, sessionId)
     }
 
     private fun trySendPendingHotspotCredentials(): Boolean {
@@ -1996,7 +2266,11 @@ class MainActivity : Activity() {
                 signalHandler.removeCallbacks(webUiCountdown)
                 hotspotOpenButton.setText(R.string.control_settings)
             }
-            else -> hotspotOpenButton.setText(R.string.control_settings)
+            WebUiConnectionState.STARTING_HOTSPOT -> hotspotOpenButton.text = "Создание Wi-Fi сети…"
+            WebUiConnectionState.SENDING_WIFI_CREDENTIALS,
+            WebUiConnectionState.ESP_CONNECTING,
+            WebUiConnectionState.WAITING_WEBUI_ADDRESS,
+            WebUiConnectionState.OPENING_BROWSER -> hotspotOpenButton.text = "Ожидание ESP32…"
         }
     }
 
@@ -2006,6 +2280,7 @@ class MainActivity : Activity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             permissions += Manifest.permission.BLUETOOTH_SCAN
             permissions += Manifest.permission.BLUETOOTH_CONNECT
+            permissions += Manifest.permission.BLUETOOTH_ADVERTISE
         } else {
             permissions += Manifest.permission.ACCESS_FINE_LOCATION
         }
@@ -2029,16 +2304,17 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val KEY_RSSI_SCREEN_VISIBLE = "rssi_threshold_screen_visible"
+        private const val KEY_BEACON_POWER_SCREEN_VISIBLE = "beacon_power_screen_visible"
         private const val SCREEN_TRANSITION_DURATION_MS = 220L
-        private const val RSSI_THRESHOLD_MIN = -100
-        private const val RSSI_THRESHOLD_MAX = -30
         private const val REQUEST_BLE_PERMISSIONS = 100
         private const val REQUEST_HOTSPOT_PERMISSIONS = 101
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L
         private const val SERVICE_RESUME_DELAY_MS = 700L
         private const val HOTSPOT_IP_CHECK_INTERVAL_MS = 10_000L
+        private const val HOTSPOT_PROVISIONING_TIMEOUT_SECONDS = 60
         private const val HOTSPOT_PROVISIONING_TIMEOUT_MS = 60_000L
+        private const val HOTSPOT_INTERFACE_RESOLVE_ATTEMPTS = 20
+        private const val HOTSPOT_INTERFACE_RESOLVE_INTERVAL_MS = 250L
         private const val ADMIN_PROBE_RETRY_DELAY_MS = 500L
         private const val MAX_ADMIN_PROBE_RETRIES = 3
         private const val MANUAL_CONNECT_DELAY_MS = 1_500L
@@ -2056,4 +2332,14 @@ class MainActivity : Activity() {
 private fun Any?.asLongOrNull(): Long? = when (this) {
     is Number -> toLong()
     else -> null
+}
+
+private fun String?.isValidIpv4(): Boolean {
+    val octets = this?.split('.') ?: return false
+    if (octets.size != 4 || octets.any { part ->
+            part.isEmpty() || part.length > 3 || part.any { !it.isDigit() } ||
+                part.toIntOrNull()?.let { it !in 0..255 } != false
+        }) return false
+    val first = octets[0].toInt()
+    return first != 0 && first != 127 && octets.any { it.toInt() != 0 }
 }

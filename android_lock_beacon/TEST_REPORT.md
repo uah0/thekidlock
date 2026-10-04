@@ -1,5 +1,83 @@
 # Отчёт о проверках Android-приложения
 
+## Web UI только через точку доступа телефона — baseline 04.10.2026
+
+- Baseline APK build 182 собрана и установлена ранее; `build-android.ps1 -Action test` прошёл (`testDebugUnitTest`, `testReleaseUnitTest`).
+- До и после установки Redmi Note 15 значения ориентации совпали: `accelerometer_rotation=1`, `user_rotation=0` (`artifacts/android-rotation-before-fresh-webui-ip-build182-install-20261004.json`).
+- Для нового требования Android-код ещё не изменялся; runtime нового маршрута после обязательного создания hotspot предстоит проверить после реализации.
+
+## Обновление IP Web UI при каждой кнопке «Настройки» — 04.10.2026
+
+- Android `build-android.ps1 -Action debug`: PASS, build 182; `build-android.ps1 -Action test`: PASS (`testDebugUnitTest`, `testReleaseUnitTest`).
+- APK установлена на Redmi Note 15. Системные `accelerometer_rotation=1`, `user_rotation=0` сохранены перед установкой, восстановлены и повторно проверены после неё (`artifacts/android-rotation-before-fresh-webui-ip-build182-install-20261004.json`).
+- Физический сценарий при выключенном ESP автоподключении к домашнему Wi-Fi: PASS. Приложение не открыло старый `192.168.1.54`; после 5 секунд создало hotspot `172.18.51.2`, ESP прочитала Wi-Fi параметры через BLE, подключилась и передала IP `172.18.51.177` через encrypted BLE. Chrome показал Web UI версии 10.0.314 (`artifacts/webui-build182-runtime-20261004.log`, `artifacts/webui-build182-after-tap-20261004.png`).
+
+## Получение Web UI IP от ESP — 04.10.2026
+
+- Android build 182 и `build-android.ps1 -Action test`: PASS (debug/release unit tests). APK установлена; ориентация `1/0` восстановлена и проверена (`artifacts/android-rotation-before-fresh-webui-ip-build182-install-20261004.json`).
+- ESP build 10.0.314: PASS; OTA `10.0.313 → 10.0.314` подтверждена device-agent.
+- Runtime PASS: при пустом `lock_wifi_ip` bonded ESP отправила `192.168.1.54` зашифрованной BLE записью; Android сохранила его, Chrome автоматически открыл Web UI с версией 10.0.314.
+- Ранее fallback создал LocalOnlyHotspot с IPv4 телефона `172.18.51.2`; полный сценарий подключения ESP без домашнего Wi-Fi дополнительно подтверждён физически в разделе выше.
+
+## Android Web UI по кнопке «Настройки» — 04.10.2026
+
+- Build 175 unit tests (`build-android.ps1 -Action test`): PASS.
+- Redmi Note 15 runtime build 175: дефект воспроизведён; encrypted Wi-Fi chunks прочитаны ESP, hotspot истёк через 60 секунд, кнопка осталась в ожидании, browser intent не стартовал. `192.168.1.54` доступен в той же Wi-Fi сети и отвечает HTTP 200.
+- Android build 176 `build-android.ps1`: PASS; APK установлена, ориентация экрана сохранена/восстановлена (`1/0`). Повторное нажатие и запуск браузера ожидают разблокировки телефона.
+- `build-android.ps1 -Action test`: PASS, debug/release unit tests.
+- Runtime build 176 на Redmi Note 15: PASS. Кнопка показала диалог адреса; после ввода `192.168.1.54` Chrome открыл Web UI замка, отобразились «Мастер настройки» и firmware 10.0.310. `lock_wifi_ip` сохранён.
+- Повторное нажатие «Настройки»: PASS, Web UI сразу открылся без диалога.
+- ESP после проверки: firmware 10.0.310, состояние `LOCKED`, `fault_flags=0`.
+
+## Credentials GATT chunks — 04.10.2026
+
+- Android baseline `assembleDebug`: PASS, build 171. Diagnostic build 173 установлен на Redmi Note 15; `accelerometer_rotation=0`, `user_rotation=0` сохранены и восстановлены.
+- Runtime source buffer: PASS (`ssidBytes=17`, `passwordBytes=15`, `nulAt=-1`). ESP 10.0.309 видел NUL на ATT offset 22. Исправленный chunked протокол создан; сборка/установка APK и полная runtime-проверка ожидают выполнения.
+- Chunked implementation Android build 174: PASS (`assembleDebug`). APK installation and device runtime validation pending.
+- Build 174 installed on Redmi Note 15: PASS. `accelerometer_rotation=1`, `user_rotation=0` were saved before install, restored and verified after.
+- Runtime build 174: PASS, Android/ESP прочитали два credentials блока `20 + 14` и `HOTSPOT_IP=172.18.51.2`; ESP 10.0.310 не переключилась на hotspot из-за сохранённой рабочей Wi-Fi priority policy. Найден сбой MainActivity: pending UI flag отсутствовал и сбрасывался на BLE disconnect. Исправленная state machine ещё требует сборки/установки/runtime проверки.
+- MainActivity pending Web UI state fix: `build-android.ps1` PASS, Android build 175.
+- Build 175 installed: PASS, Redmi Note 15 orientation `1/0` restored and verified. ESP Web UI at `192.168.1.54` responds HTTP 200. Physical button/browser validation awaits phone unlock; current device is at lock screen.
+
+## Proof GATT read во время Wi-Fi provisioning — 04.10.2026
+
+- Baseline `build-android.ps1` до изменения: PASS (`assembleDebug`, предыдущий Android build 170).
+- После изменения `PhoneBeacon.kt`: `build-android.ps1` PASS (`assembleDebug`), Android build 171; предупреждения Kotlin прежние deprecation warnings.
+- Установка APK на Redmi Note 15 через ADB: PASS. До/после установки `accelerometer_rotation=0`, `user_rotation=0`, значения совпали; снимок до установки: `artifacts/android-rotation-before-proof-provision-build171-install-20261004.json`.
+- ESP доступна по сети: firmware 10.0.305, `LOCKED`, `fault_flags=0`.
+- Runtime proof/Wi-Fi provisioning после изменения ещё не выполнен: экран телефона заперт. Ожидается пользовательская разблокировка, затем будет нажата «Настройки».
+
+## Восстановление зависшего BLE autoConnect — 01.10.2026
+
+- Исходный build 131 — PASS. На Redmi при близком ESP нативный запрос оставался в `CONNECTING` без колбэка более двух минут.
+- Build 132 после правки — PASS (`build-android.ps1`, `assembleDebug`). APK установлен на Redmi Note 15; настройки ориентации 0/0 до установки и 0/0 после восстановления.
+- Logcat: 14:42:42 native pending; 14:44:52 watchdog; 14:44:54 прямая попытка завершилась GATT 133; 14:44:59 native-запрос создан повторно. После перезапуска ESP в 14:47:06 GATT подключился, защищённое чтение `LOCK_STATUS` и запись `OPEN` успешны. ESP 10.0.248: `OPEN`, `connected=true`, `fault_flags=0`.
+- Сервис подавил повторный OPEN при следующих чтениях RSSI. Причина недоступности BLE до перезапуска ESP не доказана; 90-секундный Handler-таймер сработал примерно через 130 секунд.
+
+## Исправление BLE-обнаружения на Xiaomi — 28.09.2026
+
+- `build-android.ps1` для build 112 — PASS; APK установлен на Xiaomi 2510DRA23E.
+- До исправления сервис оставался в `SCANNING`, а logcat не содержал принятого
+  BLE advertising callback. После исправления logcat: `BLE advertisement accepted`
+  (RSSI телефона `-58`), `GATT_CONNECTED`; дальше прошли защищённое чтение и
+  запись имени телефона.
+- ESP32 status после исправления: `connected=true`, `encrypted=true`,
+  `bonded=true`, RSSI `-41`, замок `LOCKED`, `fault_flags=0`.
+- ESP event log подтвердил owner-protected чтение `ADMIN_STATE` на новой сессии.
+- Ориентация до/после установки совпала (`accelerometer_rotation=0`,
+  `user_rotation=0`). Текущую UI-иерархию после установки не удалось прочитать:
+  телефон оставался заблокирован; до установки обе mode-кнопки наблюдались
+  disabled в состоянии BLE-поиска.
+
+## Owner-сессия BLE и один сигнал рекламы — 28.09.2026
+
+- Baseline до изменений: `build-android.ps1` — PASS.
+- Финальная Android-сборка build 111: `build-android.ps1` — PASS (`assembleDebug`).
+- Поиск оставшихся вызовов звука: в приложении остался только
+  `BleEventTones.advertisementDetected()` при принятом рекламном пакете замка.
+- Тесты и установка на телефон в этой задаче не выполнялись; поведение после
+  установки на устройстве ещё не проверено.
+
 ## Закрытие замка при отключении Always Open — 28.09.2026
 
 - Android baseline `build-android.ps1` до изменения — PASS (`assembleDebug`).
@@ -731,10 +809,212 @@ Baseline build PASS (24 s), итоговая build PASS (37 s), APK build 5 inst
 - `build-android.ps1` до и после изменения: PASS.
 - Установка APK не выполнена: телефон ушёл offline в ADB. Параметры ориентации не изменялись.
 - По исходному коду «Настройки» показывается при наличии BLE-разрешений и доступна для запуска соединения; физическая UI-проверка ожидает возврата устройства в ADB.
+## 2026-09-28 — уточнение проверки владельца и рекламы
 
+- Подтверждение владельца и BLE-разрешения управляют доступностью кнопки «Настройки»; активная GATT-сессия влияет только на уже открытые admin-действия. Нажатие запускает подключение при необходимости.
+- При native auto-connect departure scan теперь принимает рекламу без аппаратного UUID ScanFilter: UUID проверяется в callback, первый пакет за цикл даёт единственный beep.
+- APK установлен; значения ориентации сохранены и восстановлены (повторная установка: `accelerometer_rotation=1`, `user_rotation=0`). Телефон оставался заблокирован, поэтому визуальная проверка кнопки и фактическое прослушивание сигнала не выполнены.
+## 2026-09-28 — сигнал при выключенном экране
+
+Baseline и итоговая build-android.ps1: PASS. BLE advertisement callbacks поступали при выключенном экране; DND выключен, ring/notification volume не нулевой. APK installation and physical audio verification pending.
+
+Итоговая сборка после добавления native auto-connect tone: PASS. Установка новой сборки и проверка tone при screen-off ожидаются.
+
+Итоговый screen-off тест: APK установлен, ориентация `0/0` восстановлена. В состоянии `mWakefulness=Dozing` получено `Advertisement tone started=true screenOn=false`; `dumpsys power` подтвердил ACQ и REL timed partial wake lock. Сборка `build-android.ps1`: PASS. Проверена передача сигнала в audio system, не физическая слышимость.
+
+## 2026-10-01 — порог RSSI перед подключением
+
+- `build-android.ps1` до изменения: PASS, build 123; после изменения: PASS, build 124. `git diff --check`: PASS.
+- REDMI Note 15: build 124 установлен с сохранением данных. Ориентация до установки и после запуска `accelerometer_rotation=0`, `user_rotation=0`; исходные значения сохранены в `artifacts/redmi-note15-rotation-before-rssi-gate-build124-20261001.json`.
+- При пороге `-72 dBm` рекламные пакеты `-99`, `-94`, `-86 dBm` оставили телефон в поиске; пакет `-68 dBm` вызвал GATT-подключение. Лог: `artifacts/redmi-note15-rssi-gate-build124-20261001.log`.
+- Первый запуск через `monkey` после force-stop сопровождался одним ANR foreground service на HyperOS. Повторный запуск завершился READY и успешной проверкой порога. Длительная работа в фоне отдельно не проверялась.
+
+## 2026-10-01 — scan с фильтром по имени
+
+- Исходная сборка Android build 125: PASS. Итоговая сборка после замены нефильтрованного scan на фильтр по имени: PASS, build 126. Результат проверки на REDMI Note 15 — ниже.
+- Build 126 установлен; при погашенном экране получены реклама и READY, но после нескольких циклов HyperOS выдала `scanning too frequently`. После ограничения частоты и watchdog Android build 127: PASS. Физическая проверка build 127 — ниже.
+- Build 127 установлен; реклама принималась и READY достигался, но при открытом UI отдельный RSSI scan привёл к повторному `scanning too frequently`. После прекращения этого scan сборка Android build 128: PASS. Проверка на телефоне — ниже.
+- Build 128 установлен на REDMI Note 15 с сохранением данных и ориентации `0/0`. В течение более минуты несколько циклов scan/GATT получали рекламу и READY; слабые пакеты оставались ниже порога, новые сообщения `scanning too frequently` не появились. Журнал сохранён в `artifacts/redmi-note15-filtered-scan-build128-20261001.log`.
+
+## 2026-10-01 — возврат телефона на build 122
+
+- APK build 122 установлен через `adb install -r`; SHA-256 установленного `base.apk` совпал с `artifacts/android-main-build122-before-rssi-gate.apk`. Данные приложения сохранены, ориентация до/после `0/0`.
+- При погашенном экране журнал показал native auto-connect, GATT_CONNECTED и READY. Проверка возвращения через 30 минут отдельно не выполнялась. Текущие исходники проекта остаются build 128.
+## 2026-10-01 — правило одного автооткрытия за присутствие
+
+- Baseline `build-android.ps1`: PASS, build 129. Итоговая сборка: PASS, build 130.
+- `build-android.ps1 -Action test`: PASS; обновлённый `AutoOpenPresenceGateTest` проверяет блокировку после OPEN и снятие только после `DEPARTED`.
+- Build 130 установлен на REDMI Note 15 через ADB с сохранением данных. Перед установкой сохранены `accelerometer_rotation=0` и `user_rotation=0` в `artifacts/redmi-note15-rotation-before-presence-rule-build130-20261001.json`; после установки оба значения восстановлены и повторно проверены как `0/0`.
+- На телефоне получены `NATIVE_AUTO_CONNECT_START`, `GATT_CONNECTED`, `AUTH_SUCCESS` и один `OPEN_SENT` в 13:45:22. ESP32 10.0.248 приняла OPEN и перешла в `OPEN` без fault. Второго OPEN при продолжающемся соединении до 13:46:02 не было. Реальный уход/возврат телефона в этом прогоне не выполнялся.
 ## 01.10.2026 — административная панель без таймера Б
 
 - Исходный build 133: PASS; после изменений build 134: PASS через `build-android.ps1`.
 - APK: `app/build/outputs/apk/debug/app-debug.apk`, 2291236 байт. На телефон не устанавливался, чтобы не вмешиваться в двухчасовой тест BLE Foreva.
 - Сохранен GATT-формат из шести числовых полей: пятое поле теперь фиксированный `0`. Сборка проверена; взаимодействие новой Android-панели с физическим телефоном отдельно не проверялось.
 - Изменены `app/src/main/java/com/blelock/app/MainActivity.kt`, `app/src/main/res/values/strings.xml`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+
+## 02.10.2026 — кнопка открытия через интернет
+
+- Проектный `build-android.ps1` PASS, debug build 137. Кнопка добавлена на главный экран и отключена до появления обработчика. На физическое устройство эта сборка не устанавливалась.
+## 02.10.2026 — Android beacon для новой схемы
+
+- Исходная сборка 138 PASS; после правок `build-android.ps1` PASS, build 139.
+- APK пока не установлен. Затронуты `PhoneBeacon.kt` (новый), `BleLockService.kt`, `MainActivity.kt`, `AndroidManifest.xml`.
+- Интеграционный тест с ESP32 ожидает реализации scanner/central.
+## 02.10.2026 — исправление старого AUTO OPEN
+
+- Build 139 установлен на телефон с сохранением и восстановлением настроек поворота. Его проверка обнаружила старую GATT-команду `OPEN` при запуске UI.
+- После исправления `build-android.ps1` PASS, build 140. Новый APK ещё не установлен.
+## 02.10.2026 — настройка мощности маяка
+
+- С `ULTRA_LOW` ESP32 видела новый маяк около −77…−80 dBm при пороге −60 dBm. Изменено на `ADVERTISE_TX_POWER_HIGH`.
+- `build-android.ps1` PASS, build 141. APK ещё не установлен.
+## 02.10.2026 — установка build 141
+
+- Build 141 установлен на физический телефон. Перед установкой значения поворота `0/0` сохранены в `artifacts/android-rotation-before-architecture-build141-install-20261002.json`, затем восстановлены и проверены. `BLUETOOTH_ADVERTISE` предоставлено.
+- Сохранённый AUTO сейчас выключен. Новая мощность advertising при штатном RSSI-пороге ESP32 −60 dBm ожидает короткой проверки после включения AUTO пользователем.
+## 02.10.2026 — Wi‑Fi управление постоянным открытием
+
+- Проектный `build-android.ps1`: PASS.
+- Физический HTTP-вызов и установка этого APK не выполнялись; требуется проверить телефон и ESP в одной доступной локальной сети.
+## 02.10.2026 — baseline новой BLE-архитектуры
+
+- `build-android.ps1`: PASS, debug build 143. Физические pairing/AUTO проверки до изменений не проводились.
+## 02.10.2026 — режимы Auto Open и Always Open
+
+- `build-android.ps1`: PASS, build 144. `build-android.ps1 -Action test`: PASS.
+- Физическая установка не выполнена: ADB устройство не подключено. RF/pairing на этом этапе не тестировались.
+## 02.10.2026 — проверка со стороны ESP
+
+- ESP firmware 10.0.268 прошла сборку и OTA-проверку. Проверка связи с новым Android pairing откладывается до восстановления ADB/доступности телефона.
+## 02.10.2026 — pairing test status
+
+- Android unit/build проверки этапа 2 прошли на build 144. ESP firmware 10.0.270 установлена; Android 144 не установлена, так как ADB устройство недоступно.
+- Приёмочный long-press удаляет все bonds; тест не запускался во избежание потери уже зарегистрированных телефонов без доступного Android для восстановления.
+
+## 02.10.2026 — owner marker / ESP central transaction
+
+- ESP: `build-esp32.ps1` PASS, firmware 10.0.271; OTA PASS, устройство подтвердило переход 10.0.270 → 10.0.271.
+- Android: `build-android.ps1` PASS, debug build 146; `build-android.ps1 -Action test` PASS для debug/release unit tests.
+- Runtime BLE pairing, запись owner marker на телефоне и UI visibility не проверены: ADB устройство отсутствует. Физические проверки остаются обязательными.
+
+## 02.10.2026 — Web UI обращается по Wi-Fi
+
+- `build-android.ps1`: PASS, debug build 147; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- UI при отсутствии сохранённого IP просит ввести IPv4; сетевой вызов/браузер и реальная доступность ESP32 с телефона не тестировались без ADB/устройства.
+
+## 02.10.2026 — Android Central lifecycle gate
+
+- `build-android.ps1`: PASS, debug build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Проверка `adb devices -l`: список пуст. Установка APK, проверка Auto ON/OFF, background advertising и owner Web UI на физическом Android не выполнялись.
+
+## 02.10.2026 — Android Peripheral lifecycle
+
+- `build-android.ps1`: PASS, build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- `adb devices -l`: нет подключённых устройств. Boot/restart, Auto ON/OFF и отсутствие Android Central физически не проверены.
+
+## 02.10.2026 — лимит ESP bond store
+
+- `build-esp32.ps1`: PASS, firmware 10.0.272; OTA PASS, Agent API подтвердил переход 10.0.271 → 10.0.272.
+- Лимит проверен статически и компиляцией, заполненный до 20 записей bond store тест физически не выполнялся.
+
+## 02.10.2026 — Android foreground lifecycle
+
+- `build-android.ps1`: PASS, debug build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физическая проверка Auto ON/OFF и уведомления ожидает ADB-подключения телефона.
+
+## 02.10.2026 — Android callback guard
+
+- `build-android.ps1`: PASS, build 148; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физический runtime test отсутствует: ADB устройство не подключено.
+
+## 02.10.2026 — Android Wi-Fi provisioning beacon
+
+- `build-android.ps1`: PASS, build 152; `build-android.ps1 -Action test`: PASS (debug/release unit tests).
+- Физический hotspot/BLE provisioning не проверен: ADB телефон не виден; ESP пока не реализует protocol byte `0x81`/Wi-Fi GATT read.
+
+## 02.10.2026 — Android↔ESP hotspot provisioning протокол
+
+- Android `build-android.ps1`: PASS, build 152; debug/release unit tests PASS.
+- ESP `build-esp32.ps1`: PASS, firmware 10.0.273; OTA PASS (`10.0.272 → 10.0.273`), Agent API подтвердил новую версию.
+- End-to-end hotspot, bonded long-read, Wi-Fi DHCP и повторное AUTO не проверены: ADB phone недоступен. ESP runtime parser проверен сборкой; пароль не логируется.
+- Android не получает dynamic DHCP IP после разрыва GATT, поэтому автооткрытие URL Web UI остаётся непроверенным/незавершённым.
+
+## Hotspot IPv4 через защищённый PhoneBeacon — Android этап (02.10.2026)
+
+- После `LocalOnlyHotspotCallback.onStarted()` Android пытается определить текущий IPv4 по поднятым AP интерфейсам (`ap*`, `softap*`, `swlan*`); если AP интерфейс не обнаружен — использует единственный однозначный `wlan*` IPv4. При неоднозначности/ошибке IP не передаётся, фиксируется logcat warning, SSID/пароль provisioning продолжаются.
+- IP (4 bytes network-order; `00 00 00 00` = отсутствует) передаётся BleLockService в `PhoneBeacon`. В GATT добавлена encrypted-read характеристика `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3` к существующему сервису.
+- `PhoneBeacon` проверяет `BOND_BONDED`; `PERMISSION_READ_ENCRYPTED` оставляет фактическую проверку encryption стандартному Android Bluetooth stack. IP очищается при `onStopped`, `onFailed` и остановке reservation.
+- Android `build-android.ps1 -Action test`: PASS (debug/release compile и unit tests). Добавлены проверки выбора AP-интерфейса, неоднозначности WLAN-кандидатов и недопустимого IPv4.
+
+## HOTSPOT_IP — завершение Android/ESP (02.10.2026)
+
+- Android IPv4 lookup использует перечисление поднятых интерфейсов и адресов. В первую очередь рассматриваются интерфейсы с AP-названием `ap*`, `softap*`, `swlan*`; единственный `wlan*` кандидат допускается только если нет активной Wi-Fi station сети. Адреса loopback/link-local/multicast/unspecified/broadcast отбрасываются. Неоднозначность возвращает «нет данных» и сохраняет credential/DHCP fallback. Стандартный Android API не раскрывает стабильно имя SoftAP интерфейса, поэтому физическое подтверждение на целевой модели остаётся необходимым.
+- GATT characteristic: `HOTSPOT_IP_UUID = 6f4f0014-9a7b-4c21-8d32-5e6f708192a3`, в существующем PhoneBeacon service; 4 bytes IPv4 network-order, `00 00 00 00` означает отсутствие IP.
+- Android проверяет `device.bondState == BOND_BONDED`; characteristic имеет `PERMISSION_READ_ENCRYPTED`, так что enforcement шифрования остаётся системному Bluetooth stack. IP очищается по жизненному циклу reservation; session token не даёт позднему STOP старого hotspot очистить адрес новой сессии.
+- ESP использует единственный исходящий GATT connection: `connect → encrypted/bonded proof BLE_LOCK_V1 → Wi-Fi credentials → HOTSPOT_IP`. IP читается только при provisioning marker `0x81`; обычный AUTO proof не делает дополнительного чтения и соединения.
+- ESP проверяет unicast IPv4, хранит его только в RAM через `wifi_ota_set_runtime_phone_ip()` / `wifi_ota_get_runtime_phone_ip()`. На IP отсутствует/ошибке продолжается credential provisioning fallback. ESP DHCP/static-IP поведение не менялось; NVS не получает IP телефона.
+- Android `build-android.ps1 -Action test`: PASS, build 153 (debug/release и unit tests). ESP `build-esp32.ps1`: PASS, firmware 10.0.275; OTA PASS, device-agent подтвердил `10.0.274 → 10.0.275`.
+- Радио-тест характеристик на физическом телефоне и проверка фактического интерфейса hotspot не выполнялись. Resolver покрыт unit tests, но использует доступные интерфейсы Android и при ambiguity намеренно возвращает отсутствие адреса.
+
+## Hotspot provisioning race fix — 02.10.2026
+
+- `build-android.ps1 -Action test`: PASS, debug/release compile и unit tests, build 154.
+- Исходный радиопрогон был на установленном build 153: hotspot `AndroidShare_5591`, обычное AUTO подтверждение ESP и timeout примерно через 60 секунд. Промежуточный build 154 установили до последней lifecycle правки. Итоговый APK build 155 собран отдельно через `build-android.ps1 -Action debug`; SHA-256 `A7CB26C74B0E5C4E9ED486A83D7A94BB7F7F4CFF1F3D9814660E8AC64C3ECDB5`. Адрес AP IPv4/успешный provisioning не подтверждены.
+- Финальный APK build 155 не установлен: ADB wireless install не завершилась, телефон заблокирован; разблокировка нужна для завершения wireless ADB install. Rotation values после попыток проверены: `accelerometer_rotation=1`, `user_rotation=0`.
+- Базовая ESP сборка firmware 10.0.276: PASS. Обязательная OTA upload/reboot verification: FAIL — Agent API `192.168.1.54` не вернулся за 60 секунд. Установленная версия не подтверждена; ESP код этой правкой не менялся.
+- End-to-end критерии ожидают повтор после разблокировки телефона и возврата ESP в сеть: provisioning marker, encrypted reads `WIFI_SETUP` + `HOTSPOT_IP`, совпадение адреса hotspot, DHCP ESP и доступность Web UI.
+
+
+
+
+
+## 2026-10-04 — Web UI только через hotspot телефона
+
+- `build-android.ps1`: PASS, debug build 183.
+- Установка APK и runtime-проверка этого изменения отложены до сборки/прошивки ESP с раздельной маршрутизацией UI и Agent API.
+- В этом этапе APK не устанавливался; системные значения ориентации экрана не менялись.
+
+## 2026-10-04 — локальные HTTP маршруты и попытка hotspot provisioning
+
+- ESP 10.0.316 на домашней сети: `/` вернул 404, `/api/agent/status` и `/api/agent/monitor` вернули HTTP 200.
+- Android build 183 установлена; исходные настройки ориентации `0/0` после установки восстановлены и повторно проверены.
+- Hotspot телефона поднялся (`172.18.51.2`), но ESP не выбрала BLE provisioning маяк: наблюдавшийся RSSI −63…−66 dBm ниже порога −60 dBm. Watchdog корректно остановил hotspot через 60 секунд.
+- Runtime подтверждение DHCP/IP, открытия браузера через hotspot и возврата ESP к домашней сети после закрытия hotspot остаётся незавершённым.
+
+## 2026-10-04 — end-to-end подтверждение на firmware 10.0.317
+
+- Исправлен ESP BLE filter: `0x81` Wi-Fi provisioning и `0x82` Web UI IP request проходят даже если обычный beacon того же device ID ранее попал в suppression после proof `status=257`.
+- На Redmi Note 15 нажатие Settings создало LocalOnlyHotspot `172.18.51.2`; encrypted bonded provisioning передал credentials, затем DHCP и защищённая IP характеристика вернули ESP адрес `172.18.51.177`.
+- Chrome открыл Web UI; страница отобразила firmware 10.0.317 и настройки.
+- Выход из Chrome остановил hotspot; Agent API вернулся по домашней сети `192.168.1.54`. LAN проверки: `/` → 404, `/api/agent/status` → 200, `/api/agent/monitor?since=0` → 200.
+- Ориентация экрана после установки Android build 183 восстановлена и проверена: `accelerometer_rotation=0`, `user_rotation=0`.
+
+## 2026-10-04 — адаптивный обратный таймер кнопки Settings
+
+- Android baseline build 184: PASS.
+- Изменение собрано: Android build 185 PASS.
+- APK build 185 установлена, значения ориентации до/после установки совпали `accelerometer_rotation=0`, `user_rotation=0`.
+- Устройство имеет persisted countdown `1` sec.; default `6` sec. используется при отсутствии значения. Физический цикл повторного нажатия и обновление значения при новом успешном открытии после build 185 не выполнялись.
+
+## 2026-10-04 — физическая проверка адаптивного таймера Settings
+
+- PASS: Android build 185 установлен на Redmi Note 15; перед установкой и после неё `accelerometer_rotation=0`, `user_rotation=0`.
+- PASS: до первого проверочного нажатия приложение хранило 1 сек. После нажатия Chrome открыл `http://172.18.51.177/` примерно через 7,3 сек.; сохранённое значение стало 8 сек. (ceil).
+- PASS: при повторном нажатии таймер использовал предыдущие 8 сек. — UI-снимок во время отсчёта показывает оставшиеся 5 сек. После следующего открытия URL сохранённое значение стало 5 сек.
+- Артефакты: `artifacts/adaptive-settings-timer-build185-next-countdown.png`, `artifacts/adaptive-settings-timer-build185-next-countdown.xml`, `artifacts/adaptive-settings-timer-build185-second-open.png`.
+- Итог: адаптивный таймер подтверждён физически. Хранилище — Android device-protected SharedPreferences; default 6 сек. применяется только при отсутствии сохранённого значения. 60-секундный hotspot watchdog отдельный и не менялся.
+## 2026-10-04 — проверка кнопок и ползунка мощности BLE
+
+- PASS: исходная Android-сборка `build-android.ps1` завершилась до изменений.
+- PASS: итоговая Android-сборка `build-android.ps1`, build 188; Kotlin и ресурсы успешно скомпилированы и APK собран.
+- PASS: `git diff --check` для изменённых Android исходников и ресурсов.
+- Не выполнялись: unit-тесты, установка APK и физическая проверка рекламной мощности; Android runtime не запускался в этой задаче.
+- Изменены: `MainActivity.kt`, `LockSettings.kt`, `PhoneBeacon.kt`, `BleLockService.kt`, `VerticalRssiSlider.kt`, `strings.xml`, `android_lock_beacon/BUILD_NUMBER`; обновлены `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md` в корне и `android_lock_beacon`.
+- ESP32 исходники не менялись, ESP-сборка не требовалась.
+## 2026-10-04 — установка Android build 188 на телефон
+
+- PASS: ADB подключён к `192.168.1.65:37521`; Android сообщил об успешной установке APK (`Success`).
+- PASS: пакет `com.blelock.app` присутствует на устройстве (`pm path` вернул APK path).
+- PASS: прочитанные перед установкой `accelerometer_rotation=0` и `user_rotation=0` восстановлены и повторно прочитаны как `0` и `0`.
+- Устройство: модель `2510DRA23E`; APK build 188, SHA-256 записан в `artifacts/android-rotation-before-beacon-tx-power-build188-install-20261004.json`.

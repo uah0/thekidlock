@@ -19,6 +19,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Handler
+import android.os.SystemClock
 import android.util.Log
 import android.os.Looper
 import android.util.Base64
@@ -83,6 +84,7 @@ class BleRepository(
 
     fun setControlOnly(value: Boolean) {
         controlOnly = value
+        if (value) stopSignalMonitoring()
     }
 
     fun promoteToFullControl() {
@@ -94,6 +96,7 @@ class BleRepository(
 
     override fun setAutomaticMode(enabled: Boolean) {
         controlOnly = enabled
+        if (enabled) stopSignalMonitoring()
     }
 
     /** true, если уже идёт поиск/подключение/соединение установлено — новый findAndConnect() не нужен.
@@ -118,6 +121,10 @@ class BleRepository(
     }
     private var departureMode = false
     private var departureScanActive = false
+    private var connectionScanActive = false
+    private var pendingConnectionScan: Runnable? = null
+    private var advertisementTonePlayedForPresence = false
+    private var lastBelowThresholdLogMs = 0L
     private var autoConnectOpenSentForPresence = false
     private var adminProbePending = false
     private var mtuNegotiationRetries = 0
@@ -217,29 +224,59 @@ class BleRepository(
 
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
+            if (result.scanRecord?.serviceUuids?.contains(BleProtocol.SERVICE_PARCEL_UUID) != true) {
+                return
+            }
+            if (state != State.SCANNING && state != State.WAITING_DEPARTURE) return
+            if (!connectionScanActive) return
+            if (state == State.SCANNING) {
+                handler.removeCallbacks(connectionScanWatchdog)
+                handler.postDelayed(connectionScanWatchdog, SCAN_SILENCE_RETRY_MS)
+            }
+            handler.post { listener.onSignalRssi(result.rssi) }
             if (departureMode) {
-                handler.post { listener.onSignalRssi(result.rssi) }
+                if (!advertisementTonePlayedForPresence) {
+                    advertisementTonePlayedForPresence = true
+                    Log.i(TAG, "BLE lock advertisement detected during departure monitoring")
+                    BleEventTones.advertisementDetected(context)
+                }
                 if (autoConnectGattActive && gatt != null) {
                     if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
                     return
                 }
                 scheduleDepartureConfirmation()
-                // Любое обнаружение маяка считается основанием для попытки
-                // подключения. Решение по RSSI принимает ESP32.
+            }
+            val threshold = lockSettings.rssiThreshold
+            if (result.rssi <= threshold) {
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastBelowThresholdLogMs >= 5_000L) {
+                    lastBelowThresholdLogMs = now
+                    Log.i(TAG, "BLE_CONNECT_WAITING_FOR_RSSI: advRssi=${result.rssi} threshold=$threshold dBm")
+                }
+                return
+            }
+            if (departureMode) {
                 departureMode = false
                 stopScan()
                 lockSettings.lockAddress = result.device.address
                 pairOrConnect(result.device)
                 return
             }
-            Log.i(TAG, "BLE advertisement accepted for GATT connection: ${result.device.address}, rssi=${result.rssi}")
-            BleEventTones.advertisementDetected()
+            Log.i(TAG, "BLE advertisement accepted for GATT connection: ${result.device.address}, rssi=${result.rssi}, threshold=$threshold")
+            playAdvertisementToneOnceForPresence()
             stopScan()
             lockSettings.lockAddress = result.device.address
             pairOrConnect(result.device)
         }
 
         override fun onScanFailed(errorCode: Int) {
+            if (state == State.SCANNING &&
+                errorCode == ScanCallback.SCAN_FAILED_SCANNING_TOO_FREQUENTLY) {
+                Log.w(TAG, "BLE scan throttled by Android; retrying after cooldown")
+                stopScan()
+                scheduleConnectionScan(SCAN_THROTTLE_RETRY_MS)
+                return
+            }
             if (departureMode && autoConnectGattActive) {
                 departureScanActive = false
                 Log.w(TAG, "Native auto-connect remains armed; departure scan failed: $errorCode")
@@ -327,13 +364,13 @@ class BleRepository(
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> {
                     if (autoConnectGattActive) autoConnectLinkConnected = true
+                    if (autoConnectGattActive) playAdvertisementToneOnceForPresence()
                     if (departureMode) {
                         handler.removeCallbacks(departureConfirmed)
                     }
                     if (!gattConnectionEstablished) {
                         gattConnectionEstablished = true
                         Log.i(TAG, "GATT_CONNECTED: ${gatt.device.address}")
-                        BleEventTones.connected()
                     }
                     update(State.DISCOVERING, "Подключено, поиск GATT-сервиса")
                     gatt.discoverServices()
@@ -611,41 +648,69 @@ class BleRepository(
         }
         closeGatt()
         departureMode = false
-        if (controlOnly && EXPERIMENT_BONDED_AUTO_CONNECT) {
+        if (controlOnly) {
             val savedAddress = lockSettings.lockAddress
-            val adapter = bluetoothManager?.adapter
             val bondedDevice = runCatching {
                 val address = savedAddress ?: return@runCatching null
-                val currentAdapter = adapter ?: return@runCatching null
-                currentAdapter.getRemoteDevice(address)
+                val adapter = bluetoothManager?.adapter ?: return@runCatching null
+                adapter.getRemoteDevice(address)
                     .takeIf { it.bondState == BluetoothDevice.BOND_BONDED }
             }.getOrNull()
             if (bondedDevice != null) {
                 stopScan()
                 stopSignalMonitoring()
-                Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_START: bonded device=$savedAddress")
+                Log.i(TAG, "NATIVE_AUTO_CONNECT_START: bonded device=$savedAddress")
                 connect(bondedDevice, autoConnect = true)
                 return
             }
-            Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_FALLBACK: no saved bonded device; using filtered scan")
+            Log.i(TAG, "NATIVE_AUTO_CONNECT_FALLBACK: no saved bonded device; using filtered scan")
         }
+        update(State.SCANNING, "Поиск BLE Lock…")
+        scheduleConnectionScan()
+    }
+
+    private fun scheduleConnectionScan(extraDelayMs: Long = 0L) {
+        if (state != State.SCANNING) return
+        pendingConnectionScan?.let(handler::removeCallbacks)
+        val now = SystemClock.elapsedRealtime()
+        val delay = maxOf(extraDelayMs, lastConnectionScanStartMs + SCAN_START_INTERVAL_MS - now, 0L)
+        val start = Runnable { startConnectionScan() }
+        pendingConnectionScan = start
+        if (delay > 0L) Log.i(TAG, "BLE scan start delayed ${delay}ms to avoid Android throttling")
+        handler.postDelayed(start, delay)
+    }
+
+    private fun startConnectionScan() {
+        pendingConnectionScan = null
+        if (state != State.SCANNING) return
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner
         if (scanner == null) {
             fail("Bluetooth выключен или BLE scanner недоступен")
             return
         }
-        update(State.SCANNING, "Поиск BLE Lock…")
-        // Не фильтруем по сохранённому MAC: BLE privacy может менять RPA-адрес
-        // телефона или замка. Уникальный UUID сервиса сохраняет выбор нужного замка.
-        val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
+        // Фильтр по рекламируемому имени работает при выключенном экране.
+        // MAC может измениться из-за BLE privacy, а аппаратный фильтр по
+        // 128-битному UUID терял пакеты на Xiaomi. UUID проверяется в callback.
+        val filter = ScanFilter.Builder().setDeviceName(BleProtocol.DEVICE_NAME).build()
         val settings = ScanSettings.Builder()
             .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
             .build()
+        lastConnectionScanStartMs = SystemClock.elapsedRealtime()
+        connectionScanActive = true
         scanner.startScan(listOf(filter), settings, scanCallback)
+        handler.removeCallbacks(connectionScanWatchdog)
+        handler.postDelayed(connectionScanWatchdog, SCAN_SILENCE_RETRY_MS)
+    }
+
+    private val connectionScanWatchdog = Runnable {
+        if (state != State.SCANNING) return@Runnable
+        Log.w(TAG, "BLE scan produced no lock advertisements; restarting scanner")
+        stopScan()
+        scheduleConnectionScan()
     }
 
     fun startSignalMonitoring() {
-        if (signalMonitoring || departureScanActive || departureMode) return
+        if (controlOnly || signalMonitoring || departureScanActive || departureMode) return
         val scanner = bluetoothManager?.adapter?.bluetoothLeScanner ?: return
         val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
         val settings = ScanSettings.Builder()
@@ -678,7 +743,6 @@ class BleRepository(
             if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
             return
         }
-        val filter = ScanFilter.Builder().setServiceUuid(BleProtocol.SERVICE_PARCEL_UUID).build()
         val settings = ScanSettings.Builder()
             /* BALANCED вместо LOW_POWER: у LOW_POWER окно сканирования ~0.5с раз в ~5с,
              * из-за чего после разрыва соединения первый новый RSSI мог появляться
@@ -687,7 +751,11 @@ class BleRepository(
              * который тут избыточен — здесь только следим за присутствием/уходом. */
             .setScanMode(ScanSettings.SCAN_MODE_BALANCED)
             .build()
+        // Тот же фильтр нужен после разрыва, чтобы Android продолжал получать
+        // рекламу при выключенном экране; UUID проверяется в scanCallback.
+        val filter = ScanFilter.Builder().setDeviceName(BleProtocol.DEVICE_NAME).build()
         scanner.startScan(listOf(filter), settings, scanCallback)
+        connectionScanActive = true
         departureScanActive = true
         if (!autoConnectLinkConnected) scheduleDepartureConfirmation()
     }
@@ -973,7 +1041,15 @@ class BleRepository(
         stopScan()
         departureMode = false
         autoConnectOpenSentForPresence = false
+        advertisementTonePlayedForPresence = false
         update(State.DEPARTED, "Уход подтверждён, новый цикл разрешён")
+    }
+
+    private fun playAdvertisementToneOnceForPresence() {
+        if (advertisementTonePlayedForPresence) return
+        advertisementTonePlayedForPresence = true
+        Log.i(TAG, "BLE lock presence confirmed; playing advertisement tone")
+        BleEventTones.advertisementDetected(context)
     }
 
     private val rssiPoll = Runnable {
@@ -1006,6 +1082,10 @@ class BleRepository(
 
     private fun stopScan() {
         handler.removeCallbacks(departureConfirmed)
+        handler.removeCallbacks(connectionScanWatchdog)
+        pendingConnectionScan?.let(handler::removeCallbacks)
+        pendingConnectionScan = null
+        connectionScanActive = false
         runCatching { bluetoothManager?.adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
         departureScanActive = false
     }
@@ -1034,6 +1114,12 @@ class BleRepository(
             autoConnectOpenSentForPresence = false
             secureStatusProbeAttempts = 0
             Log.i(TAG, "EXPERIMENT_AUTO_CONNECT_PENDING: gatt=${newGatt != null}")
+            if (newGatt == null) {
+                closeGatt()
+                fail("Не удалось запустить системное BLE-подключение")
+                return
+            }
+            armNativeAutoConnectWatchdog(newGatt)
             return
         }
         val watchdog = Runnable {
@@ -1044,6 +1130,20 @@ class BleRepository(
         }
         connectWatchdog = watchdog
         handler.postDelayed(watchdog, GATT_CONNECT_TIMEOUT_MS)
+    }
+
+    private fun armNativeAutoConnectWatchdog(request: BluetoothGatt) {
+        connectWatchdog?.let(handler::removeCallbacks)
+        val watchdog = Runnable {
+            if (gatt !== request || !autoConnectGattActive || autoConnectLinkConnected ||
+                autoConnectOpenSentForPresence) return@Runnable
+            Log.w(TAG, "NATIVE_AUTO_CONNECT_STALLED: trying direct GATT connection")
+            val device = request.device
+            closeGatt()
+            connect(device)
+        }
+        connectWatchdog = watchdog
+        handler.postDelayed(watchdog, NATIVE_AUTO_CONNECT_TIMEOUT_MS)
     }
 
     private fun pairOrConnect(device: BluetoothDevice) {
@@ -1290,15 +1390,10 @@ class BleRepository(
         Log.d(TAG, "state -> $newState ($detail)")
         state = newState
         handler.post { listener.onBleState(newState, detail) }
-        if (newState == State.READY) {
-            // Пока замок READY, прошивка почти всегда продолжает advertising
-            // (см. ble_phone.c: реклама перезапускается после connect, если
-            // остался свободный слот из BLE_PHONE_MAX_CONNECTIONS). Поэтому RSSI
-            // можно получать из пассивного скана — он живее, чем опрос раз в
-            // RSSI_POLL_INTERVAL_MS. GATT-опрос (scheduleRssiPoll) остаётся как
-            // резерв на случай, если все слоты заняты и advertising встал.
-            startSignalMonitoring()
-        } else if (signalMonitoring) {
+        // Частые отдельные RSSI scan после READY/OPEN_SENT приводят к
+        // SCAN_FAILED_SCANNING_TOO_FREQUENTLY на HyperOS. Значение для UI
+        // уже обновляется существующим GATT-опросом раз в 2 секунды.
+        if (signalMonitoring) {
             stopSignalMonitoring()
         }
     }
@@ -1307,7 +1402,6 @@ class BleRepository(
         if (!gattConnectionEstablished) return
         gattConnectionEstablished = false
         Log.i(TAG, "GATT_DISCONNECTED")
-        BleEventTones.disconnected()
     }
 
     private fun setAdminAvailability(available: Boolean) {
@@ -1375,6 +1469,7 @@ class BleRepository(
             waitForDeparture()
         } else {
             update(State.CONNECTING, "Ожидание системного GATT-переподключения")
+            gatt?.let(::armNativeAutoConnectWatchdog)
         }
     }
 
@@ -1388,15 +1483,17 @@ class BleRepository(
 
     companion object {
         private const val TAG = "BleLock"
-        // Temporary debug experiment: use Android's native background auto-connect
-        // for the already-bonded lock while AUTO mode is active.
-        private const val EXPERIMENT_BONDED_AUTO_CONNECT = true
+        private var lastConnectionScanStartMs = 0L
+        private const val SCAN_START_INTERVAL_MS = 15_000L
+        private const val SCAN_SILENCE_RETRY_MS = 60_000L
+        private const val SCAN_THROTTLE_RETRY_MS = 60_000L
         private const val DEPARTURE_SILENCE_MS = 20_000L
         private const val PHONE_NAME_MAX_BYTES = 20
         private const val RSSI_POLL_INTERVAL_MS = 2_000L
         private const val GATT_OPERATION_TIMEOUT_MS = 10_000L
         private const val INITIAL_SECURE_READ_TIMEOUT_MS = 3_000L
         private const val GATT_CONNECT_TIMEOUT_MS = 8_000L
+        private const val NATIVE_AUTO_CONNECT_TIMEOUT_MS = 90_000L
         /* Совпадает с CONFIG_BT_NIMBLE_ATT_PREFERRED_MTU=256 в прошивке ESP32. */
         private const val REQUESTED_MTU = 256
         private const val MTU_FALLBACK_DELAY_MS = 500L

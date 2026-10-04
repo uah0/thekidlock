@@ -1,13 +1,15 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("debug","clean","install")]
-    [string]$Action = "debug"
+    [ValidateSet("debug","clean","install","test")]
+    [string]$Action = "debug",
+    [ValidateSet("android_lock_beacon")]
+    [string]$ProjectName = "android_lock_beacon"
 )
 
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = $PSScriptRoot
-$ProjectDir = Join-Path $ProjectRoot "android_lock_beacon"
+$ProjectDir = Join-Path $ProjectRoot $ProjectName
 $JavaHome = "C:\Program Files\Android\Android Studio\jbr"
 $AndroidSdk = "C:\Dev\AndroidSdk"
 
@@ -49,13 +51,16 @@ Set-Content -Path $localProperties -Value "sdk.dir=$sdkEscaped" -Encoding ASCII
 
 Set-Location $ProjectDir
 
-if ($Action -ne "clean") {
+if ($Action -in @("debug", "install")) {
     $buildNumberFile = Join-Path $ProjectDir "BUILD_NUMBER"
     $buildNumber = [int](Get-Content -LiteralPath $buildNumberFile -Raw).Trim()
     Set-Content -LiteralPath $buildNumberFile -Value ($buildNumber + 1) -Encoding ASCII
 }
 
 switch ($Action) {
+    "test" {
+        & ".\gradlew.bat" --no-daemon test
+    }
     "debug" {
         & ".\gradlew.bat" --no-daemon assembleDebug
     }

@@ -59,7 +59,6 @@ bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out);
 esp_err_t ulp_controller_calibration_start(void);
 void ulp_controller_calibration_cancel(void);
 esp_err_t ulp_controller_calibration_verify(void);
-esp_err_t ulp_controller_calibration_save(int32_t contact_raw,
-                                          int32_t paper1_raw,
+esp_err_t ulp_controller_calibration_save(int32_t closed_raw,
                                           int32_t open_raw,
                                           int32_t verify_contact_raw);

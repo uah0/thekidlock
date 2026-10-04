@@ -10,8 +10,8 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.SeekBar
 import kotlin.math.roundToInt
 
-/** Вертикальный ползунок с доступностью обычного SeekBar. */
-internal class VerticalRssiSlider(
+/** Вертикальный дискретный ползунок с доступностью обычного SeekBar. */
+internal class VerticalLevelSlider(
     context: Context,
     private val minValue: Int,
     private val maxValue: Int,

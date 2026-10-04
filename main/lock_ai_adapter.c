@@ -108,6 +108,7 @@ static const char *ulp_fsm_state_name(lock_fsm_state_t state)
         case LOCK_FSM_OPEN_VERIFY_CURRENT_OFF: return "Открытие: проверка тока";
         case LOCK_FSM_FAULT: return "Неисправность";
         case LOCK_FSM_OPEN_HOLD: return "Постоянно открыт: без измерения";
+        case LOCK_FSM_GATE_TEST: return "Диагностика GPIO6: MOSFET включён";
         default: return "Неизвестно";
     }
 }
@@ -288,6 +289,16 @@ static esp_err_t cmd_ulp_unlock(const ai_agent_args_t *args, void *ctx)
     (void)args; (void)ctx;
     return ulp_controller_request_wait(ULP_CMD_UNLOCK);
 }
+static esp_err_t cmd_ulp_gate_test(const ai_agent_args_t *args, void *ctx)
+{
+    (void)args; (void)ctx;
+    return ulp_controller_request_wait(ULP_CMD_GATE_TEST);
+}
+static esp_err_t cmd_ulp_gate_test_stop(const ai_agent_args_t *args, void *ctx)
+{
+    (void)args; (void)ctx;
+    return ulp_controller_request_wait(ULP_CMD_HOLD_OPEN);
+}
 static esp_err_t cmd_buzzer(const ai_agent_args_t *args, void *ctx)
 {
     (void)ctx;
@@ -316,6 +327,8 @@ static const ai_agent_command_t lock_commands[] = {
     {"disable_auto_close", "Disable automatic mode and close", cmd_disable, NULL},
     {"ulp_lock", "Direct ULP lock request", cmd_ulp_lock, NULL},
     {"ulp_unlock", "Direct ULP unlock request", cmd_ulp_unlock, NULL},
+    {"ulp_gate_test", "Timed GPIO6 ADC test with MOSFET on", cmd_ulp_gate_test, NULL},
+    {"ulp_gate_test_stop", "Stop GPIO6 ADC test and turn MOSFET off", cmd_ulp_gate_test_stop, NULL},
     {"buzzer", "Test buzzer: value=1..7", cmd_buzzer, NULL},
     {"diagnostics", "Verbose ULP logging: value=0 or 1", cmd_diagnostics, NULL},
 };
