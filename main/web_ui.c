@@ -12,6 +12,8 @@
 #include "event_log.h"
 #include "lock_control.h"
 #include "thingspeak_config.h"
+#include "cloud_link.h"
+#include "cloud_commands.h"
 #include "ulp_controller.h"
 #include "wifi_ota.h"
 #include "esp_http_server.h"
@@ -321,19 +323,48 @@ static esp_err_t thingspeak_get(httpd_req_t *req)
     if (!json_append_string(json, sizeof(json), &pos, cfg.channel_url))
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak URL too long");
     n = snprintf(json + pos, sizeof(json) - pos,
-                 ",\"password_configured\":%s,\"read_key_configured\":%s,\"write_key_configured\":%s}",
+                 ",\"password_configured\":%s,\"read_key_configured\":%s,\"write_key_configured\":%s,"
+                 "\"enabled\":%s,\"commands_enabled\":%s,\"command_channel_id\":%lu,\"result_channel_id\":%lu,"
+                 "\"pending\":%u,\"dropped\":%u,\"time_ready\":%s,\"mqtt_ready\":%s,\"cloud_status\":\"%s\",\"command_status\":\"%s\",\"mqtt_client_id\":",
                  cfg.password[0] ? "true" : "false",
                  cfg.read_api_key[0] ? "true" : "false",
-                 cfg.write_api_key[0] ? "true" : "false");
+                 cfg.write_api_key[0] ? "true" : "false", cfg.enabled ? "true" : "false",
+                 cfg.commands_enabled ? "true" : "false", (unsigned long)cfg.command_channel_id,
+                 (unsigned long)cfg.result_channel_id, cloud_link_pending(), cloud_link_dropped(),
+                 cloud_link_time_ready() ? "true" : "false", cloud_link_mqtt_ready() ? "true" : "false",
+                 cloud_link_error(), cloud_commands_status());
     if (n < 0 || (size_t)n >= sizeof(json) - pos)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
+    pos += (size_t)n;
+    if (!json_append_string(json, sizeof(json), &pos, cfg.mqtt_client_id) || pos + 2 >= sizeof(json))
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
+    json[pos++] = '}'; json[pos] = '\0';
     return send_json(req, json);
 }
 
-static esp_err_t thingspeak_post(httpd_req_t *req)
+static bool cloud_number(const char *form, const char *key, uint32_t *out)
 {
-    char form[1800];
-    if (req->content_len <= 0 || (size_t)req->content_len >= sizeof(form))
+    char value[16] = "";
+    if (!thingspeak_field(form, key, value, sizeof(value), true)) return false;
+    if (!value[0]) return true;
+    char *end; errno = 0;
+    unsigned long number = strtoul(value, &end, 10);
+    if (errno || *end || strspn(value, "0123456789") != strlen(value) || number > UINT32_MAX) return false;
+    *out = number; return true;
+}
+
+static bool cloud_flag(const char *form, const char *key, bool *out)
+{
+    char value[8] = "";
+    if (!thingspeak_field(form, key, value, sizeof(value), true)) return false;
+    if (!value[0]) return true;
+    if (strcmp(value, "0") && strcmp(value, "1")) return false;
+    *out = value[0] == '1'; return true;
+}
+
+static esp_err_t thingspeak_post_impl(httpd_req_t *req, char *form, size_t capacity)
+{
+    if (req->content_len <= 0 || (size_t)req->content_len >= capacity)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ThingSpeak form too long");
     size_t received = 0;
     while (received < (size_t)req->content_len) {
@@ -359,9 +390,35 @@ static esp_err_t thingspeak_post(httpd_req_t *req)
         strspn(channel, "0123456789") != strlen(channel) || number > UINT32_MAX)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak channel");
     cfg.channel_id = (uint32_t)number;
+    if (!cloud_number(form, "command_channel_id", &cfg.command_channel_id) ||
+        !cloud_number(form, "result_channel_id", &cfg.result_channel_id) ||
+        !cloud_flag(form, "enabled", &cfg.enabled) ||
+        !cloud_flag(form, "commands_enabled", &cfg.commands_enabled) ||
+        !thingspeak_field(form, "mqtt_client_id", cfg.mqtt_client_id, sizeof(cfg.mqtt_client_id), true))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid cloud settings");
+    thingspeak_config_t previous;
+    if (thingspeak_config_get(&previous) != ESP_OK)
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Config unavailable");
+    if (cfg.channel_id != previous.channel_id && cloud_link_pending())
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Deliver journal before changing channel");
+    if ((cfg.command_channel_id != previous.command_channel_id || cfg.result_channel_id != previous.result_channel_id) &&
+        cloud_commands_busy())
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Deliver command result before changing channels");
     esp_err_t err = thingspeak_config_save(&cfg);
+    if (err == ESP_ERR_INVALID_ARG)
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Fill keys, MQTT credentials and three distinct channels");
     return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak save failed");
+}
+
+static esp_err_t thingspeak_post(httpd_req_t *req)
+{
+    const size_t capacity = 1800;
+    char *form = malloc(capacity);
+    if (!form) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No memory");
+    esp_err_t err = thingspeak_post_impl(req, form, capacity);
+    free(form);
+    return err;
 }
 
 static esp_err_t wifi_auto_post(httpd_req_t *req)

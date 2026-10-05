@@ -3461,3 +3461,46 @@ SHA-256 установленного через `adb pull` APK совпадае�
 - Отказы non-owner, отсутствие ответа 30 с и Bluetooth OFF во время команды на устройстве отдельно не провоцировались; проверены кодом и частично unit-тестами. Алгоритм автомата и таймеры не изменены, OTA/Wi-Fi/Web UI/scanner сохранены.
 - Артефакты: artifacts/android-rotation-before-service-beacon200-install.json, artifacts/service-beacon200-ui.xml, artifacts/service-beacon200-phone.log, artifacts/service-beacon200-validation.json, artifacts/service-beacon327-final-snapshot.json.
 - Изменённые файлы: main/ble_phone.c, BUILD_NUMBER; Android PhoneBeacon.kt, BleLockService.kt, MainActivity.kt, LockSettings.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt, BUILD_NUMBER; SERVICE_BEACON_PLAN.md; корневые и Android README.md/AUDIT.md/CHANGELOG.md/TEST_REPORT.md. git diff --check PASS.
+
+## 04.10.2026 — облачный журнал, этап 1
+Добавлены cloud_link.c/h, SNTP, очередь 32 событий в NVS, HTTPS bulk с проверкой сертификатов и сверкой доставки. Очередь lock_control дополнена источником и BLE identity без изменения алгоритма/таймеров. Расширены thingspeak_config.c/h, Web UI; main.c/CMakeLists.txt подключают компонент. Исходный коммит 85d24dc; проектирование THINGSPEAK_CLOUD_DESIGN.md. Локальный API не менялся.
+
+## 04.10.2026 — MQTT управление, этап 2
+Добавлены cloud_commands.c/h и cloud_policy.c/h: MQTT TLS 8883, строгий формат, целевой MAC, возрастающий сохранённый ID, expiry, ограничение очереди и проверка факта ULP. MQTT результаты подтверждаются собственным subscribe, QoS 0 не трактуется как доставка. Незавершённая команда после reboot — interrupted без повторного действия. В lock_control добавлены идентификатор принятой облачной операции, deadline в очереди и признак сохранённого режима. Web UI показывает статус команды; локальный API не защищался.
+
+## 04.10.2026 — завершение облачного транспорта, этап 3
+Добавлены THINGSPEAK_SETUP.md и tools/thingspeak-control.py (HTTPS клиент без дополнительных библиотек). Реальные C функции проверяются tools/test-cloud-regressions.py и test-cloud-journal.py. Исправлены крайние случаи partial delivery, retry NVS до POST, embedded NUL JSON; сокращён blob NVS до действительной длины, потери сохраняются отдельно не чаще минуты. Дополнены THINGSPEAK_CLOUD_DESIGN.md и AUDIT.md. Актуализированы mocks/случаи tools/test-ulp-regressions.py к существующей API без изменения ULP кода. Локальный API и Android не менялись.
+
+Финальная корректировка спецификации ThingSpeak: created_at передаётся строкой EPOCH; каждое удаление события требует HTTPS сверки восьми полей даже при bulk success:true. Форма Web UI хранится в heap для сохранения запаса стека. MQTT статус connected/waiting_time уточнён. ESP 10.0.332 собрана успешно, OTA выполняется.
+
+Финальная версия ESP 10.0.332 успешно прошита OTA, возврат версии подтверждён. .gitignore дополнен Python bytecode каталогом для тестового стенда. Подключение к реальному ThingSpeak ожидает настройки пользовательских каналов через панель.
+
+## Подготовка установки на второй телефон — 05.10.2026
+
+- Проектным скриптом собран Android debug APK, сборка 201; исходный код приложения не изменялся.
+- Установка ожидает подключения второго телефона через беспроводную отладку ADB.
+- Изменён счётчик `android_lock_beacon/BUILD_NUMBER`; обновлены `CHANGELOG.md` и `TEST_REPORT.md`.
+
+- APK Android build 201 скопирован в Download второго телефона (Redmi Note 8 Pro) для ручной установки через штатный установщик, поскольку MIUI требует SIM-карту для разрешения установки через ADB.
+
+## Постоянное открытие для зарегистрированных телефонов — 05.10.2026
+
+- Кнопка «Замок постоянно открыт» разрешена всем телефонам с подтверждённой регистрацией, независимо от owner-роли. Подтверждение сохраняется отдельно после защищённого сообщения ESP о роли.
+- ESP принимает hold-only запросы сохранённых BLE-bonds в зашифрованном соединении; перед ожиданием результата повторно проверяется сохранённое сопряжение. Смешанные запросы с Wi-Fi/Web IP требуют owner.
+- Изменены: main/ble_phone.c; Android LockSettings.kt, PhoneBeacon.kt, MainActivity.kt; BUILD_NUMBER, android_lock_beacon/BUILD_NUMBER; AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- ESP 10.0.334 собрана и загружена через OTA. Android build 203 собрана и скопирована в Download Redmi Note 8 Pro для ручного обновления из-за ограничения MIUI без SIM-карты.
+
+- Runtime-проверка Redmi Note 8 Pro завершена: Android 203 установлена вручную, зарегистрированный телефон без owner-роли получил доступную кнопку постоянного открытия, в том числе при выключенном AUTO.
+
+## Кнопка постоянного открытия без запоминания режима — 05.10.2026
+
+- Кнопка больше не сохраняет и не отображает hold-режим замка. Старое значение confirmed_hold_open не используется и не обновляется.
+- Каждое нажатие читает актуальный режим ESP и запрашивает противоположный через существующий служебный BLE-протокол.
+- После подтверждения финальной команды кнопка на 1,5 секунды подсвечивается и показывает «Команда выполнена», затем возвращается к обычному виду. Ошибка и таймаут не дают подтверждения; при новом нажатии и возвращении на экран прежняя индикация очищается.
+- Изменены: Android MainActivity.kt, PhoneBeacon.kt, LockSettings.kt, WorkingModeUi.kt, WorkingModeReducerTest.kt, android_lock_beacon/BUILD_NUMBER; AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- Android build 205 PASS; APK передан в Download Redmi Note 8 Pro для ручного обновления. ESP не изменялась.
+
+## Установка Android 205 на Redmi Note 15 — 05.10.2026
+
+- APK build 205 установлен и запущен через Wi-Fi ADB 192.168.1.65:42223. Настройки accelerometer_rotation=0 и user_rotation=0 сохранены, восстановлены и проверены после установки и запуска.
+

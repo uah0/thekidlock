@@ -8,6 +8,7 @@
 #include "lock_control.h"
 #include "ulp_controller.h"
 #include "event_log.h"
+#include "cloud_link.h"
 #include "remote_log.h"
 #include "wifi_ota.h"
 #include "esp_err.h"
@@ -382,6 +383,7 @@ void app_main(void)
     esp_err_t nvs_err = init_nvs();
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_err);
     ESP_ERROR_CHECK_WITHOUT_ABORT(app_config_init());
+    if (nvs_err == ESP_OK) ESP_ERROR_CHECK_WITHOUT_ABORT(cloud_link_init());
     /* Control first; ancillary failures must not reset the coil/ULP. */
     esp_err_t ulp_err = ulp_controller_init();
     ESP_ERROR_CHECK_WITHOUT_ABORT(ulp_err);
@@ -391,6 +393,7 @@ void app_main(void)
     else led_set_state(LED_STATE_FAULT);
     esp_err_t wifi_err = wifi_ota_init();
     ESP_ERROR_CHECK_WITHOUT_ABORT(wifi_err);
+    if (wifi_err == ESP_OK) ESP_ERROR_CHECK_WITHOUT_ABORT(cloud_link_start());
     ESP_ERROR_CHECK_WITHOUT_ABORT(xTaskCreate(close_failure_buzzer_task, "close_buzzer", 4096,
                                 NULL, 3, NULL) == pdPASS
                                 ? ESP_OK : ESP_ERR_NO_MEM);

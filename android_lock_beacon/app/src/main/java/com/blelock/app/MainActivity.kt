@@ -115,6 +115,10 @@ class MainActivity : Activity() {
     private var keepOpenStatusExpected = false
     private var manualCommandWaitingForReady = false
     private var workingModeState = WorkingModeState()
+    private val clearHoldCommandConfirmation = Runnable {
+        workingModeState = workingModeState.copy(holdCommandConfirmed = false)
+        renderWorkingMode()
+    }
     private var autoOpenPermissionPending = false
     private var hotspotCredentialWriteInFlight = false
     private var webUiBlePermissionPending = false
@@ -183,10 +187,15 @@ class MainActivity : Activity() {
                     appendLog(if (settings.ownerAccessConfirmed) "ESP32 подтвердила роль владельца" else "ESP32 подтвердила роль ключа без owner-доступа")
                 }
                 PhoneBeacon.ACTION_HOLD_OPEN_RESULT -> {
-                    workingModeState = workingModeState.copy(alwaysOpenEnabled = settings.confirmedHoldOpen)
-                    if (intent.getBooleanExtra(PhoneBeacon.EXTRA_SUCCESS, false)) {
-                        appendLog(if (settings.confirmedHoldOpen) "ESP32 подтвердила постоянное открытие по BLE"
-                            else "ESP32 подтвердила отмену постоянного открытия по BLE")
+                    BleLockService.lastHoldCommandPending = false
+                    signalHandler.removeCallbacks(clearHoldCommandConfirmation)
+                    val success = intent.getBooleanExtra(PhoneBeacon.EXTRA_SUCCESS, false)
+                    workingModeState = WorkingModeReducer.reduce(
+                        workingModeState, WorkingModeEvent.HoldCommandResult(success)
+                    )
+                    if (success) {
+                        appendLog("ESP32 подтвердила переключение режима по BLE")
+                        signalHandler.postDelayed(clearHoldCommandConfirmation, 1500L)
                     } else {
                         val error = intent.getStringExtra(PhoneBeacon.EXTRA_ERROR).orEmpty()
                         appendLog("Команда режима замка: $error")
@@ -316,17 +325,6 @@ class MainActivity : Activity() {
             }
 
             override fun onLockData(info: String?, status: String?) {
-                if (!status.isNullOrBlank()) {
-                    val holdOpen = when (status.trim().uppercase()) {
-                        "OPEN_HOLD" -> true
-                        "OPEN", "LOCKED" -> false
-                        else -> workingModeState.alwaysOpenEnabled
-                    }
-                    workingModeState = WorkingModeReducer.reduce(
-                        workingModeState, WorkingModeEvent.AlwaysOpenConfirmed(holdOpen)
-                    )
-                    renderWorkingMode()
-                }
                 if (!status.isNullOrBlank() && keepOpenStatusExpected) keepOpenStatusExpected = false
             }
 
@@ -533,8 +531,7 @@ class MainActivity : Activity() {
             showBeaconPowerScreen(animated = false)
         }
         showBatteryOptimizationNoticeIfNeeded()
-        workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled,
-            alwaysOpenEnabled = settings.confirmedHoldOpen)
+        workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
         bindBleService()
         refreshState()
     }
@@ -623,7 +620,8 @@ class MainActivity : Activity() {
         // full-control request after a process restart and could delay the
         // visible connection until the background reconnect backoff expired.
         registerBackgroundReceiver()
-        workingModeState = workingModeState.copy(alwaysOpenEnabled = settings.confirmedHoldOpen)
+        signalHandler.removeCallbacks(clearHoldCommandConfirmation)
+        workingModeState = workingModeState.copy(holdCommandConfirmed = false)
         refreshState()
         showLegacyBleLocationNoticeIfNeeded()
         if (webUiBrowserOpen) {
@@ -691,6 +689,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        signalHandler.removeCallbacks(clearHoldCommandConfirmation)
         signalHandler.removeCallbacks(adminSignalPoll)
         signalHandler.removeCallbacks(resumeService)
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
@@ -1531,6 +1530,8 @@ class MainActivity : Activity() {
 
     private fun toggleKeepOpenMode() {
         if (BleLockService.lastHoldCommandPending) return
+        signalHandler.removeCallbacks(clearHoldCommandConfirmation)
+        workingModeState = workingModeState.copy(holdCommandConfirmed = false)
         BleLockService.lastHoldCommandPending = true
         try {
             ContextCompat.startForegroundService(this, Intent(this, BleLockService::class.java)
@@ -1550,8 +1551,9 @@ class MainActivity : Activity() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         val bluetoothReady = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
         val ui = WorkingModeUi.compute(workingModeState,
-            bluetoothReady && settings.ownerAccessConfirmed && !BleLockService.lastHoldCommandPending)
+            bluetoothReady && (settings.registeredAccessConfirmed || settings.ownerAccessConfirmed) && !BleLockService.lastHoldCommandPending)
         manualKeepOpenButton.text = if (BleLockService.lastHoldCommandPending) "Ожидание ESP32…"
+            else if (workingModeState.holdCommandConfirmed) "Команда выполнена"
             else getString(R.string.mode_always_open)
         setManualButtonBlue(manualOpenButton, ui.autoSelected)
         setManualButtonBlue(manualKeepOpenButton, ui.alwaysOpenSelected)

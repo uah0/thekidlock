@@ -107,8 +107,10 @@ static int semaphore_available = 1;
 #define NVS_READWRITE 1
 typedef int nvs_handle_t;
 static int nvs_writes;
+static uint8_t s_sense_gpio = 7;
 static int nvs_open(const char *name, int mode, nvs_handle_t *handle) { *handle=1; return 0; }
 static int nvs_set_i32(nvs_handle_t h, const char *key, int32_t v) { nvs_writes++; return 0; }
+static int nvs_set_u8(nvs_handle_t h, const char *key, uint8_t v) { nvs_writes++; return 0; }
 static int nvs_commit(nvs_handle_t h) { return 0; }
 static void nvs_close(nvs_handle_t h) {}
 CALIBRATION_FUNCTIONS
@@ -207,13 +209,14 @@ int run_tests(int test)
         CHECK(calibration_mode == 0 && lock_state == LOCK_STATE_UNLOCKED && gate_level == 0);
     } else if (test == 10) {
         CHECK(ulp_controller_calibration_start() == ESP_OK);
-        CHECK(ulp_controller_calibration_save(100,200,4096,300) == ESP_ERR_INVALID_ARG);
-        CHECK(ulp_controller_calibration_save(100,200,1000,4096) == ESP_ERR_INVALID_ARG);
-        CHECK(ulp_controller_calibration_save(100,3000,4095,300) == ESP_ERR_INVALID_ARG);
-        CHECK(ulp_controller_calibration_save(-1,200,1000,300) == ESP_ERR_INVALID_ARG);
+        CHECK(ulp_controller_calibration_save(100,4096,300) == ESP_ERR_INVALID_ARG);
+        CHECK(ulp_controller_calibration_save(100,1000,4096) == ESP_ERR_INVALID_ARG);
+        CHECK(ulp_controller_calibration_save(100,100,300) == ESP_ERR_INVALID_ARG);
+        CHECK(ulp_controller_calibration_save(-1,1000,300) == ESP_ERR_INVALID_ARG);
         CHECK(nvs_writes == 0 && calibration_mode == 1);
-        CHECK(ulp_controller_calibration_save(100,200,4095,4095) == ESP_OK);
-        CHECK(nvs_writes == 5 && calibration_mode == 0);
+        CHECK(ulp_controller_calibration_save(100,4095,4095) == ESP_OK);
+        CHECK(nvs_writes == 6 && calibration_mode == 0);
+        CHECK(calibration_paper1_raw == 750 && calibration_paper2_raw == 1400);
     } else if (test == 11) { /* Missing NVS calibration never closes silently. */
         calibration_contact_raw = -1;
         calibration_paper1_raw = -1;

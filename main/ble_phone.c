@@ -10,6 +10,7 @@
 #include "event_log.h"
 #include "led.h"
 #include "lock_control.h"
+#include "cloud_link.h"
 #include "wifi_ota.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
@@ -696,12 +697,17 @@ static int central_read_cb(uint16_t handle, const struct ble_gatt_error *error,
                   (unsigned)handle, error->status, secured,
                   secured && desc.sec_state.bonded, valid);
     if (secured && valid) {
+        char identity[18];
+        address_to_string(&desc.peer_id_addr, identity);
+        cloud_link_record("connected", "ble", identity, "bonded_encrypted");
         app_config_t cfg;
         app_config_get(&cfg);
         if (s_central_rssi >= cfg.phone_rssi_threshold) {
             lock_feedback_t feedback;
             lock_control_get_feedback(&feedback);
-            if (!feedback.requested_open) lock_request_open();
+            char actor[18];
+            address_to_string(&desc.peer_id_addr, actor);
+            if (!feedback.requested_open) lock_request_attributed("open", "ble", actor);
             lock_control_report_rssi(true);
             int64_t now_ms = esp_timer_get_time() / 1000;
             if (!feedback.requested_open || now_ms - s_central_last_success_log_ms >= 30000) {
@@ -964,7 +970,7 @@ static void central_service_send_result(uint16_t handle, uint8_t result)
 
 static void central_service_check_hold(uint16_t handle)
 {
-    if (!central_service_owner(handle)) {
+    if (atomic_load(&s_central_reset_pending) || !central_connection_secured(handle)) {
         central_disconnect(handle);
         return;
     }
@@ -1008,16 +1014,20 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
         central_disconnect(handle);
         return 0;
     }
-    if (!central_service_owner(handle)) {
-        event_log_add("BLE service: owner access denied");
+    if (request[1] != PHONE_SERVICE_HOLD && !central_service_owner(handle)) {
+        event_log_add("BLE service: owner access denied for settings request");
         if (request[1] & PHONE_SERVICE_HOLD) central_service_send_result(handle, 1);
         else central_disconnect(handle);
         return 0;
     }
+    struct ble_gap_conn_desc cloud_desc;
+    char actor[18] = "";
+    if (ble_gap_conn_find(handle, &cloud_desc) == 0) address_to_string(&cloud_desc.peer_id_addr, actor);
+    cloud_link_record("connected", "ble", actor, "bonded_encrypted");
     event_log_add("BLE service: request flags=%u command=%u", request[1], request[2]);
     if (request[1] & PHONE_SERVICE_HOLD) {
         if (request[2] == 0) central_service_send_result(handle, 0);
-        else if (lock_request_set_hold_open(request[2] == 1) != ESP_OK)
+        else if (lock_request_attributed(request[2] == 1 ? "hold_on" : "hold_off", "ble", actor) != ESP_OK)
             central_service_send_result(handle, 2);
         else {
             s_central_hold_deadline_ms = esp_timer_get_time() / 1000 + 5000;

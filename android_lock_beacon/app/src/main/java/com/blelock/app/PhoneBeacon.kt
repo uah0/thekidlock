@@ -219,6 +219,7 @@ class PhoneBeacon(private val context: Context) {
                     !preparedWrite && offset == 0 && value.size == 1 && (value[0] == 0.toByte() || value[0] == 1.toByte())
                 if (valid) {
                     LockSettings(context).ownerAccessConfirmed = value[0] == 1.toByte()
+                    LockSettings(context).registeredAccessConfirmed = true
                     context.sendBroadcast(
                         Intent(ACTION_OWNER_STATUS_CHANGED).setPackage(context.packageName)
                     )
@@ -246,13 +247,12 @@ class PhoneBeacon(private val context: Context) {
                     handler.post { synchronized(this@PhoneBeacon) {
                         if (generation != serverGeneration || holdRequest != acceptedRequest) return@synchronized
                         if (serviceResult.code == 0) {
-                            LockSettings(context).confirmedHoldOpen = serviceResult.holdOpen
                             if (acceptedRequest?.enabled == null) {
                                 holdRequest = ServiceBeaconProtocol.HoldRequest(nextRequestId(), !serviceResult.holdOpen)
                                 restartAdvertising()
                             } else finishHoldRequest(true)
                         } else finishHoldRequest(false, when (serviceResult.code) {
-                            1 -> "Нет прав владельца замка"
+                            1 -> "Телефон не зарегистрирован или нет доступа к запрошенным настройкам"
                             2 -> "ESP32 не приняла команду"
                             else -> "ESP32 не подтвердила режим: ошибка или таймаут"
                         })

@@ -4,6 +4,9 @@ idf_component_register(
         "ap_mode.c"
         "app_config.c"
         "thingspeak_config.c"
+        "cloud_link.c"
+        "cloud_commands.c"
+        "cloud_policy.c"
         "event_log.c"
         "remote_log.c"
         "led.c"
@@ -28,6 +31,8 @@ idf_component_register(
         esp_http_client
         esp_https_ota
         esp_http_server
+        json
+        mqtt
     PRIV_REQUIRES
         esp_driver_gpio
         led_strip

@@ -34,6 +34,7 @@ keystore.properties
 # OS files
 Thumbs.db
 .DS_Store
+__pycache__/
 
 **/.gradle-project/
 android_lock_beacon/keystore.properties

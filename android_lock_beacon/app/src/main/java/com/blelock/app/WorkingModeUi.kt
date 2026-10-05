@@ -2,7 +2,7 @@ package com.blelock.app
 
 data class WorkingModeState(
     val autoOpenEnabled: Boolean = false,
-    val alwaysOpenEnabled: Boolean = false
+    val holdCommandConfirmed: Boolean = false
 )
 
 data class WorkingModeButtonsUi(
@@ -14,13 +14,13 @@ data class WorkingModeButtonsUi(
 
 sealed class WorkingModeEvent {
     data class AutoOpenChanged(val enabled: Boolean) : WorkingModeEvent()
-    data class AlwaysOpenConfirmed(val enabled: Boolean) : WorkingModeEvent()
+    data class HoldCommandResult(val success: Boolean) : WorkingModeEvent()
 }
 
 object WorkingModeReducer {
     fun reduce(state: WorkingModeState, event: WorkingModeEvent): WorkingModeState = when (event) {
         is WorkingModeEvent.AutoOpenChanged -> state.copy(autoOpenEnabled = event.enabled)
-        is WorkingModeEvent.AlwaysOpenConfirmed -> state.copy(alwaysOpenEnabled = event.enabled)
+        is WorkingModeEvent.HoldCommandResult -> state.copy(holdCommandConfirmed = event.success)
     }
 }
 
@@ -28,7 +28,7 @@ object WorkingModeUi {
     fun compute(state: WorkingModeState, alwaysOpenAvailable: Boolean): WorkingModeButtonsUi =
         WorkingModeButtonsUi(
             autoSelected = state.autoOpenEnabled,
-            alwaysOpenSelected = state.alwaysOpenEnabled,
+            alwaysOpenSelected = state.holdCommandConfirmed,
             autoEnabled = true,
             alwaysOpenEnabled = alwaysOpenAvailable
         )

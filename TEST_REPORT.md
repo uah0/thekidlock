@@ -5373,3 +5373,71 @@ Baseline build-android.ps1 до изменений: PASS. Итоговая build
 - Отказы non-owner, отсутствие ответа 30 с и Bluetooth OFF во время команды на устройстве отдельно не провоцировались; проверены кодом и частично unit-тестами. Алгоритм автомата и таймеры не изменены, OTA/Wi-Fi/Web UI/scanner сохранены.
 - Артефакты: artifacts/android-rotation-before-service-beacon200-install.json, artifacts/service-beacon200-ui.xml, artifacts/service-beacon200-phone.log, artifacts/service-beacon200-validation.json, artifacts/service-beacon327-final-snapshot.json.
 - Изменённые файлы: main/ble_phone.c, BUILD_NUMBER; Android PhoneBeacon.kt, BleLockService.kt, MainActivity.kt, LockSettings.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt, BUILD_NUMBER; SERVICE_BEACON_PLAN.md; корневые и Android README.md/AUDIT.md/CHANGELOG.md/TEST_REPORT.md. git diff --check PASS.
+
+## 04.10.2026 — этап 1 облачного журнала
+Базовая ESP 10.0.328: сборка PASS, OTA 327→328 PASS. Этап 1 ESP 10.0.329: сборка PASS, размер 0x14aae0, свободно 31% OTA-раздела. OTA выполняется немедленно; результат будет дополнен после возврата устройства. ThingSpeak без настройки каналов не проверен. Файлы этапа: main/cloud_link.c/h, thingspeak_config.c/h, lock_control.c/h, ble_phone.c, main.c, CMakeLists.txt, web_ui.c, web/index.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, THINGSPEAK_CLOUD_DESIGN.md.
+
+Этап 1 OTA PASS: 10.0.328→10.0.329, firmware_version подтверждён. Фактическое OPEN, hold=false, fault=0, BLE encrypted/bonded. /api/thingspeak из домашней сети возвращает 404 согласно существующему ограничению панели; авторизацию/маршрутизацию API не меняли. NVS free entries=457.
+
+## 04.10.2026 — этап 2 MQTT
+ESP 10.0.330: сборка проектным скриптом PASS, размер 0x152a60, свободно 29% OTA-раздела. OTA начато сразу. Парсер/проверка команд имеют неактуирующий startup selftest с положительными и негативными случаями; результат runtime будет проверен после OTA. Файлы этапа: main/cloud_commands.c/h, cloud_policy.c/h, cloud_link.c, lock_control.c/h, CMakeLists.txt, web_ui.c, web/index.html, BUILD_NUMBER и отчёты. Реальный MQTT аккаунт пока не настроен.
+
+## 04.10.2026 — итоговое тестирование облака
+Этап 2 OTA PASS: 10.0.329→10.0.330; на ESP startup Cloud policy selftest PASS. Этап 3: 22 командных сценария real-C RISC-V PASS; 13 сценариев журнала real-C PASS (lost response, partial delivery, offline, invalid success, spoofed fields, NVS write/open/cleanup failure, unsynced previous boot, 32 records). Проверки Python клиента и отклонения ложного результата PASS. Все 13 существующих ULP/calibration сценариев PASS после актуализации устаревшего mock к текущей API (3 аргумента, GPIO NVS). Web UI JavaScript node --check PASS; клиент dry-run PASS без сети/секретов. ESP 10.0.331 build PASS, размер 0x152d70, свободно 29% OTA-раздела; OTA начато немедленно. Live ThingSpeak НЕ ПРОВЕРЕН: каналы и credentials не настроены. Итоговые файлы перечислены в следующем дополнении.
+
+Этап 3 OTA PASS: 10.0.330→10.0.331, возврат OPEN, hold=false, fault=0, BLE encrypted/bonded, NVS free entries=457. Во время финальной сверки официальной спецификации bulk created_at приведён к string EPOCH, а сверка всех полей выполняется даже после HTTP 200, поскольку сервер может отклонить уже занятые timestamps отдельных записей. Повторные 13 journal сценариев PASS. POST форма вынесена в heap, чтобы не складывать form/config/NVS frames на HTTP stack. Файлы финальной корректировки: main/cloud_link.c, cloud_commands.c, web_ui.c; отчёты.
+
+Финальная ESP 10.0.332: build PASS, размер 0x152dd0, свободно 29%. Сборка сразу передана OTA. Файлы всего изменения: AUDIT.md, BUILD_NUMBER, CHANGELOG.md, TEST_REPORT.md, THINGSPEAK_CLOUD_DESIGN.md, THINGSPEAK_SETUP.md; main/CMakeLists.txt, main/main.c, main/cloud_link.c/h, main/cloud_commands.c/h, main/cloud_policy.c/h, main/thingspeak_config.c/h, main/lock_control.c/h, main/ble_phone.c, main/web_ui.c, main/web/index.html; tools/thingspeak-control.py, tools/test-cloud-regressions.py, tools/test-cloud-journal.py, tools/test-ulp-regressions.py. Android не менялся. Локальная API авторизация/маршрутизация не менялась.
+
+Итог OTA PASS: 10.0.331→10.0.332, firmware_version подтверждён штатным device-agent. Первая попытка OTA была недоступна при переходе ESP в hotspot телефона (172.18.51.177, MAC совпал). ESP вернулась в домашнюю сеть, повторная штатная OTA успешна. Временный ADB nc PID 29281 остановлен, forward 18081 удалён; установки/ориентация Android не изменялись. После краткой недоступности последующий прямой GET /api/agent/info подтвердил 10.0.332 и MAC a0:f2:62:f1:14:b8; GET /api/agent/status сохранён в .device-agent/cloud-332-final-status.json. Live ThingSpeak остаётся НЕ ПРОВЕРЕН до настройки каналов и credentials через Web UI. Дополнен .gitignore: Python test bytecode не входит в проектные изменения.
+
+05.10.2026: итоговый runtime 10.0.332 подтверждён прямыми GET info/status: MAC a0:f2:62:f1:14:b8, LOCKED, hold=false, fault_flags=0, calibration_required=false, command_sequence=command_ack_sequence=6, NVS free entries=457. Устройство работает после OTA; ADB forwards отсутствуют. Облачный live тест требует пользовательских каналов/ключей, не заменён стендом.
+
+## Второй телефон: подготовка APK — 05.10.2026
+
+- `build-android.ps1`: PASS, Android build 201, `BUILD SUCCESSFUL`.
+- `adb devices -l` и `adb mdns services`: подключённых или обнаруженных устройств нет.
+- Установка не выполнена: необходим адрес беспроводной отладки второго телефона и, при первом сопряжении, код с отдельным портом сопряжения.
+- Системные настройки ориентации телефона пока не изменялись; перед установкой они будут сохранены, после установки восстановлены и проверены.
+
+### Второй телефон подключён; установка заблокирована MIUI
+
+- Redmi Note 8 Pro, Android 11: сопряжение и Wi-Fi ADB `192.168.1.168:39103` успешны.
+- Установка build 201 отклонена телефоном: `INSTALL_FAILED_USER_RESTRICTED`.
+- Перед попыткой сохранены `accelerometer_rotation=0`, `user_rotation=0` в `artifacts/android-rotation-before-second-phone201-install.json`; повторное чтение подтвердило те же значения.
+- Запись исходных значений отклонена MIUI (`WRITE_SETTINGS`); фактическая ориентация не изменилась. Повторная установка ожидает разрешения установки и отладки на телефоне.
+
+- Повторная попытка по указанию пользователя: MIUI снова отклонила установку build 201 (INSTALL_FAILED_USER_RESTRICTED). Подтверждено, что остаётся установленной сборка 124. WRITE_SETTINGS и INJECT_EVENTS для ADB запрещены; ориентация при повторном чтении 0/0, без изменений. Открыт экран настроек разработчика для завершения разрешений пользователем.
+
+- Очередная попытка установки build 201 на Redmi Note 8 Pro: INSTALL_FAILED_USER_RESTRICTED; восстановление настроек через ADB отклонено WRITE_SETTINGS. Повторное чтение подтвердило исходную ориентацию accelerometer_rotation=0, user_rotation=0. Установка не выполнена.
+
+- MIUI требует SIM-карту для включения установки через USB. Для обычной ручной установки APK build 201 передан через adb push в /sdcard/Download/TheKidLock-build201.apk. Установка пользователем пока не подтверждена; ограничения MIUI не изменялись.
+
+## Постоянное открытие для всех зарегистрированных телефонов — 05.10.2026
+
+- До изменений: ESP build 333 PASS, OTA 10.0.332 → 10.0.333 PASS; Android build 202 PASS.
+- После изменений: ESP build 334 PASS, OTA 10.0.333 → 10.0.334 PASS, возврат и firmware_version подтверждены device-agent.ps1.
+- Android build 203 PASS; build-android.ps1 -Action test PASS для testDebugUnitTest и testReleaseUnitTest. git diff --check PASS.
+- Аудит доступа: сохранённый peer_has_bond, encrypted и bonded обязательны в central_connection_secured; для hold-only owner не требуется, Wi-Fi/Web IP и смешанные запросы сохраняют owner-проверку.
+- APK /sdcard/Download/TheKidLock-build203.apk передан на Redmi Note 8 Pro; ручное обновление и runtime-проверка кнопки пока ожидают пользователя. Через ADB APK не устанавливался; ориентация не менялась.
+
+### Runtime на Redmi Note 8 Pro — PASS
+
+- Пользователь вручную установил Android build 203; версия подтверждена экраном приложения через uiautomator.
+- После BLE-обмена сохранено registered_access_confirmed=true при owner_access_confirmed=false.
+- При auto_open_enabled=false кнопка «Замок постоянно открыт» имеет enabled=true. Таким образом доступность подтверждена именно для зарегистрированного телефона без owner-роли и независимо от включения AUTO.
+- Физическое переключение режима кнопкой в этой проверке не выполнялось; подтверждена доступность интерфейса, компиляция серверных изменений и загрузка ESP 10.0.334.
+
+## Кнопка переключения без сохранённого режима — 05.10.2026
+
+- Базовая Android build 204 PASS до изменений; после изменений build 205 PASS.
+- Аудит: PhoneBeacon.requestToggleHoldOpen начинает с enabled=null; только ответ ESP формирует команду !serviceResult.holdOpen. Подсветка выдаётся после финального подтверждения, а не после чтения текущего состояния.
+- confirmedHoldOpen удалён из настроек и потребителей; OPEN_HOLD и старый сохранённый режим не влияют на оформление кнопки. Краткая индикация хранится только в памяти Activity, очищается таймером 1500 мс, новым запросом и onResume.
+- APK передан в /sdcard/Download/TheKidLock-build205.apk. Установка вручную и проверка на физическом устройстве ожидают пользователя; автоматическая установка ADB не выполнялась из-за MIUI.
+- git diff --check PASS; ESP не затрагивается, сборка и OTA ESP не требуются.
+
+- build-android.ps1 -Action test: PASS (testDebugUnitTest и testReleaseUnitTest). Проверены независимость AUTO от подтверждения команды, очистка подтверждения при ошибке и обычный вид на новом экране; существующие ServiceBeaconProtocolTest также PASS.
+
+- Redmi Note 15: adb install -r build 205 PASS (Success), запуск MainActivity PASS. Ориентация 0/0 восстановлена и сверена; исходные значения в artifacts/android-rotation-before-note15-build205-install.json.
+- Базовая ESP-сборка перед изменением мастера Web UI: build 335 PASS; выполняется обязательная OTA.
+

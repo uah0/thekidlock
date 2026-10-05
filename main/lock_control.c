@@ -1,6 +1,9 @@
 #include "lock_control.h"
 
 #include "app_config.h"
+#include "cloud_link.h"
+#include <stdio.h>
+#include <string.h>
 #include "event_log.h"
 #include "led.h"
 #include "esp_timer.h"
@@ -63,6 +66,42 @@ typedef enum {
     LOCK_EVENT_DISCONNECTED,
 } lock_event_t;
 
+typedef struct {
+    lock_event_t kind;
+    char source[12], actor[18];
+    uint64_t cloud_id;
+    int64_t deadline_us;
+} lock_event_item_t;
+static char s_source[12] = "system", s_actor[18];
+static uint64_t s_cloud_id;
+static bool s_mode_persisted = true;
+
+static esp_err_t request_attributed(const char *operation, const char *source, const char *actor,
+                                    uint64_t id, int64_t deadline_us)
+{
+    lock_event_item_t item = {.cloud_id = id, .deadline_us = deadline_us};
+    if (!operation) return ESP_ERR_INVALID_ARG;
+    if (!strcmp(operation, "open")) item.kind = LOCK_EVENT_OPEN;
+    else if (!strcmp(operation, "manual_open")) item.kind = LOCK_EVENT_TEST_OPEN;
+    else if (!strcmp(operation, "close")) item.kind = LOCK_EVENT_CLOSE;
+    else if (!strcmp(operation, "hold_on")) item.kind = LOCK_EVENT_SET_HOLD_OPEN;
+    else if (!strcmp(operation, "hold_off")) item.kind = LOCK_EVENT_SET_AUTO;
+    else return ESP_ERR_INVALID_ARG;
+    snprintf(item.source, sizeof(item.source), "%s", source ? source : "local");
+    snprintf(item.actor, sizeof(item.actor), "%s", actor ? actor : "");
+    return s_events && xQueueSend(s_events, &item, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t lock_request_attributed(const char *operation, const char *source, const char *actor)
+{
+    return request_attributed(operation, source, actor, 0, 0);
+}
+
+esp_err_t lock_request_cloud(const char *operation, const char *actor, uint64_t id, int64_t deadline_us)
+{
+    return request_attributed(operation, "cloud", actor, id, deadline_us);
+}
+
 static esp_err_t apply_command(ulp_command_t command)
 {
     if (!s_initialized || !s_mutex) return ESP_ERR_INVALID_STATE;
@@ -89,13 +128,28 @@ static void lock_task(void *arg)
     bool open_armed = false;
 
     for (;;) {
-        lock_event_t event;
-        bool received = xQueueReceive(s_events, &event, pdMS_TO_TICKS(100)) == pdTRUE;
+        lock_event_item_t item;
+        bool received = xQueueReceive(s_events, &item, pdMS_TO_TICKS(100)) == pdTRUE;
+        lock_event_t event = received ? item.kind : LOCK_EVENT_DISCONNECTED;
         int64_t now_ms = esp_timer_get_time() / 1000;
         app_config_t cfg;
         app_config_get(&cfg);
 
         if (received) {
+            if (item.deadline_us && esp_timer_get_time() >= item.deadline_us) {
+                cloud_link_record("expired_in_queue", item.source, item.actor, "not_executed");
+                received = false;
+            }
+        }
+        if (received) {
+            if (item.cloud_id) s_cloud_id = item.cloud_id;
+            if (event != LOCK_EVENT_RSSI_HIGH && event != LOCK_EVENT_DISCONNECTED) {
+                snprintf(s_source, sizeof(s_source), "%s", item.source[0] ? item.source : "local");
+                snprintf(s_actor, sizeof(s_actor), "%s", item.actor);
+                char operation[24];
+                snprintf(operation, sizeof(operation), "operation=%u", (unsigned)event);
+                cloud_link_record("request", s_source, s_actor, operation);
+            }
             switch (event) {
                 case LOCK_EVENT_OPEN:
                     if (!lock_control_requested_open()) {
@@ -146,9 +200,11 @@ static void lock_task(void *arg)
                         last_sufficient_ms = now_ms;
                         event_log_add("Замок: режим Не закрывать выключен");
                     }
-                    if (save_hold_open(hold_open) != ESP_OK) {
+                    s_mode_persisted = save_hold_open(hold_open) == ESP_OK;
+                    if (!s_mode_persisted) {
                         event_log_add("Замок: ошибка сохранения режима в NVS");
                     }
+                    cloud_link_record("mode", s_source, s_actor, hold_open ? "hold_on" : "hold_off");
                     break;
                 }
                 case LOCK_EVENT_DISABLE_AUTO_CLOSE:
@@ -194,6 +250,8 @@ static void lock_task(void *arg)
             bool close_test = test_open_active &&
                               now_ms >= test_open_deadline_ms;
             if (close_a || close_test) {
+                snprintf(s_source, sizeof(s_source), "%s", "timer");
+                s_actor[0] = '\0';
                 if (apply_state(false) == ESP_OK) {
                     test_open_active = false;
                     event_log_add("Замок: запрос закрытия по %s",
@@ -213,7 +271,7 @@ esp_err_t lock_control_init(void)
 
     s_mutex = xSemaphoreCreateMutex();
     if (!s_mutex) return ESP_ERR_NO_MEM;
-    s_events = xQueueCreate(8, sizeof(lock_event_t));
+    s_events = xQueueCreate(8, sizeof(lock_event_item_t));
     if (!s_events) { vSemaphoreDelete(s_mutex); s_mutex = NULL; return ESP_ERR_NO_MEM; }
 
     s_hold_open = load_hold_open();
@@ -237,49 +295,49 @@ failed:
 
 esp_err_t lock_request_open(void)
 {
-    lock_event_t event = LOCK_EVENT_OPEN;
+    lock_event_item_t event = {.kind = LOCK_EVENT_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_arm_open(void)
 {
-    lock_event_t event = LOCK_EVENT_ARM_OPEN;
+    lock_event_item_t event = {.kind = LOCK_EVENT_ARM_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_close(void)
 {
-    lock_event_t event = LOCK_EVENT_CLOSE;
+    lock_event_item_t event = {.kind = LOCK_EVENT_CLOSE};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_test_open(void)
 {
-    lock_event_t event = LOCK_EVENT_TEST_OPEN;
+    lock_event_item_t event = {.kind = LOCK_EVENT_TEST_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_manual_open(void)
 {
-    lock_event_t event = LOCK_EVENT_TEST_OPEN;
+    lock_event_item_t event = {.kind = LOCK_EVENT_TEST_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_toggle_hold_open(void)
 {
-    lock_event_t event = LOCK_EVENT_TOGGLE_HOLD_OPEN;
+    lock_event_item_t event = {.kind = LOCK_EVENT_TOGGLE_HOLD_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_set_hold_open(bool enabled)
 {
-    lock_event_t event = enabled ? LOCK_EVENT_SET_HOLD_OPEN : LOCK_EVENT_SET_AUTO;
+    lock_event_item_t event = {.kind = enabled ? LOCK_EVENT_SET_HOLD_OPEN : LOCK_EVENT_SET_AUTO};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_disable_auto_and_close(void)
 {
-    lock_event_t event = LOCK_EVENT_DISABLE_AUTO_CLOSE;
+    lock_event_item_t event = {.kind = LOCK_EVENT_DISABLE_AUTO_CLOSE};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
@@ -293,14 +351,14 @@ esp_err_t lock_control_config_changed(void)
 void lock_control_report_rssi(bool sufficient)
 {
     if (!s_events || !sufficient) return;
-    lock_event_t event = LOCK_EVENT_RSSI_HIGH;
+    lock_event_item_t event = {.kind = LOCK_EVENT_RSSI_HIGH};
     xQueueSend(s_events, &event, 0);
 }
 
 void lock_control_report_disconnected(void)
 {
     if (!s_events) return;
-    lock_event_t event = LOCK_EVENT_DISCONNECTED;
+    lock_event_item_t event = {.kind = LOCK_EVENT_DISCONNECTED};
     xQueueSend(s_events, &event, 0);
 }
 
@@ -339,6 +397,9 @@ static void refresh_feedback(int64_t now_ms)
     }
     s_feedback.hold_open = s_hold_open;
     s_feedback.requested_open = s_requested_open;
+    s_feedback.sampled_at_us = now_ms * 1000;
+    s_feedback.cloud_command_id = s_cloud_id;
+    s_feedback.mode_persisted = s_mode_persisted;
     lock_feedback_t current = s_feedback;
     xSemaphoreGive(s_mutex);
 
@@ -356,6 +417,10 @@ static void refresh_feedback(int64_t now_ms)
         previous.calibration_required != current.calibration_required) {
         event_log_add("ULP факт: %s fault=0x%lx", lock_control_feedback_name(&current),
                       (unsigned long)current.fault_flags);
+        char result[48];
+        snprintf(result, sizeof(result), "%s;fault=%lx;hold=%u",
+                 lock_control_feedback_name(&current), (unsigned long)current.fault_flags, current.hold_open);
+        cloud_link_record("state", s_source, s_actor, result);
     }
 }
 

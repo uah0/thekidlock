@@ -37,10 +37,10 @@ class LockSettings(context: Context) {
             preferences.edit().putBoolean(KEY_OWNER_ACCESS_CONFIRMED, value).commit()
         }
 
-    var confirmedHoldOpen: Boolean
-        get() = preferences.getBoolean("confirmed_hold_open", false)
+    var registeredAccessConfirmed: Boolean
+        get() = preferences.getBoolean("registered_access_confirmed", false)
         set(value) {
-            preferences.edit().putBoolean("confirmed_hold_open", value).commit()
+            preferences.edit().putBoolean("registered_access_confirmed", value).commit()
         }
 
     var batteryOptimizationNoticeShown: Boolean

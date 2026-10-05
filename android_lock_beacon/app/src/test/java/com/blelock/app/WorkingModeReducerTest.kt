@@ -7,32 +7,44 @@ import org.junit.Test
 
 class WorkingModeReducerTest {
     @Test
-    fun allFourAutoAndHoldOpenCombinationsAreRepresentable() {
+    fun commandConfirmationDoesNotChangeAutoSelection() {
         for (auto in listOf(false, true)) {
-            for (hold in listOf(false, true)) {
-                val state = WorkingModeState(autoOpenEnabled = auto, alwaysOpenEnabled = hold)
+            for (confirmed in listOf(false, true)) {
+                val state = WorkingModeState(autoOpenEnabled = auto, holdCommandConfirmed = confirmed)
                 val ui = WorkingModeUi.compute(state, alwaysOpenAvailable = true)
                 assertEquals(auto, ui.autoSelected)
-                assertEquals(hold, ui.alwaysOpenSelected)
+                assertEquals(confirmed, ui.alwaysOpenSelected)
                 assertTrue(ui.autoEnabled)
             }
         }
     }
 
     @Test
-    fun togglingAutoDoesNotChangeAlwaysOpen() {
-        val start = WorkingModeState(autoOpenEnabled = false, alwaysOpenEnabled = true)
+    fun togglingAutoDoesNotChangeCommandConfirmation() {
+        val start = WorkingModeState(autoOpenEnabled = false, holdCommandConfirmed = true)
         val next = WorkingModeReducer.reduce(start, WorkingModeEvent.AutoOpenChanged(true))
         assertTrue(next.autoOpenEnabled)
-        assertTrue(next.alwaysOpenEnabled)
+        assertTrue(next.holdCommandConfirmed)
     }
 
     @Test
-    fun confirmingAlwaysOpenDoesNotChangeAuto() {
-        val start = WorkingModeState(autoOpenEnabled = true, alwaysOpenEnabled = false)
-        val next = WorkingModeReducer.reduce(start, WorkingModeEvent.AlwaysOpenConfirmed(true))
+    fun confirmingCommandDoesNotChangeAuto() {
+        val start = WorkingModeState(autoOpenEnabled = true)
+        val next = WorkingModeReducer.reduce(start, WorkingModeEvent.HoldCommandResult(true))
         assertTrue(next.autoOpenEnabled)
-        assertTrue(next.alwaysOpenEnabled)
+        assertTrue(next.holdCommandConfirmed)
+    }
+
+    @Test
+    fun failedCommandClearsPreviousConfirmation() {
+        val start = WorkingModeState(holdCommandConfirmed = true)
+        val next = WorkingModeReducer.reduce(start, WorkingModeEvent.HoldCommandResult(false))
+        assertFalse(WorkingModeUi.compute(next, true).alwaysOpenSelected)
+    }
+
+    @Test
+    fun freshScreenDoesNotRestorePreviousCommandConfirmation() {
+        assertFalse(WorkingModeUi.compute(WorkingModeState(), true).alwaysOpenSelected)
     }
 
     @Test
