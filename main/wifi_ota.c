@@ -1,4 +1,6 @@
 #include "wifi_ota.h"
+#include "mqtt_config.h"
+#include "cloud_commands.h"
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -41,6 +43,8 @@ static bool s_web_active;
 static bool s_web_task_running;
 static bool s_reconnect_enabled;
 static bool s_auto_connect = true;
+static atomic_bool s_mqtt_required;
+static int64_t s_mqtt_wifi_retry_us;
 static bool s_auto_update;
 static esp_netif_t *s_sta_netif;
 static char s_ssid[WIFI_OTA_SSID_MAX + 1];
@@ -83,6 +87,11 @@ static const char *wifi_reason_name(unsigned reason)
 static const char *wifi_source(void)
 {
     return atomic_load(&s_runtime_source) ? "phone_runtime" : "saved";
+}
+
+static bool home_auto_connect(void)
+{
+    return s_auto_connect || atomic_load(&s_mqtt_required);
 }
 
 static esp_err_t connect_with_diagnostics_locked(const char *trigger);
@@ -241,13 +250,20 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
 {
     (void)arg;
     if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-        connect_with_diagnostics("STA_START");
+        if (s_reconnect_enabled) connect_with_diagnostics("STA_START");
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_CONNECTED) {
         const wifi_event_sta_connected_t *e = event_data;
         if (e) ESP_LOGI(TAG, "WiFiDiag associated ssid='%.*s' channel=%u authmode=%u; waiting for DHCP/IP",
                        (int)e->ssid_len, (const char *)e->ssid, e->channel, (unsigned)e->authmode);
     } else if (base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         const wifi_event_sta_disconnected_t *e = event_data;
+        /* Disconnect notifications from a stopped station can arrive after
+         * credentials have already switched to the next network. */
+        if (e && e->ssid_len > 0 &&
+            (e->ssid_len != strlen(s_ssid) || memcmp(e->ssid, s_ssid, e->ssid_len) != 0)) {
+            ESP_LOGI(TAG, "WiFiDiag ignoring disconnect from previous network");
+            return;
+        }
         unsigned reason = e ? e->reason : 0;
         atomic_store(&s_last_disconnect_reason, reason);
         atomic_store(&s_last_disconnect_ms, (unsigned)(esp_timer_get_time() / 1000));
@@ -260,25 +276,31 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
             e->ssid_len == strlen(s_ssid) && memcmp(e->ssid, s_ssid, e->ssid_len) == 0;
         if (event_matches_phone) {
             ESP_LOGI(TAG, "Phone hotspot disconnected; restoring saved home Wi-Fi");
+            s_reconnect_enabled = false;
+            esp_err_t stop_err = esp_wifi_stop();
             activate_saved_config_locked();
             xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT);
-            if (s_auto_connect && s_saved_ssid[0] && s_saved_password[0]) {
+            if (home_auto_connect() && s_saved_ssid[0] && s_saved_password[0]) {
                 wifi_config_t config = {0};
                 memcpy(config.sta.ssid, s_ssid, strnlen(s_ssid, sizeof(config.sta.ssid)));
                 memcpy(config.sta.password, s_password, strnlen(s_password, sizeof(config.sta.password)));
-                esp_err_t err = esp_wifi_set_config(WIFI_IF_STA, &config);
+                esp_err_t err = stop_err;
+                if (err == ESP_OK) err = esp_wifi_set_config(WIFI_IF_STA, &config);
                 if (err == ESP_OK) {
                     set_status("CONNECTING_WIFI");
-                    err = esp_wifi_connect();
+                    s_reconnect_enabled = true;
+                    /* STA_START performs the sole connection attempt after
+                     * restarting the station with fresh home credentials. */
+                    err = esp_wifi_start();
                 }
                 if (err != ESP_OK) {
+                    s_reconnect_enabled = false;
                     set_status("ERROR_WIFI");
                     ESP_LOGW(TAG, "saved Wi-Fi restore failed to start: %s", esp_err_to_name(err));
                 }
             } else {
                 s_reconnect_enabled = false;
                 set_status("IDLE");
-                (void)esp_wifi_stop();
             }
             return;
         }
@@ -304,6 +326,10 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
                  IP2STR(&e->ip_info.ip), wifi_source(), 32, (const char *)ap.ssid,
                  ap.rssi, esp_err_to_name(ap_err), s_status);
         s_wifi_connected = true;
+        if (!atomic_load(&s_runtime_source)) {
+            event_log_add("Wi-Fi: home IP ready");
+            cloud_commands_home_ip_ready();
+        }
         /* web_task only publishes readiness on its initial connection. A later
          * reconnect must refresh the BLE-visible status and IP as well. */
         if (s_web_active && !s_task_running) {
@@ -350,6 +376,8 @@ esp_err_t wifi_ota_init(void)
     } else if (err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
     }
+    mqtt_config_t mqtt;
+    atomic_store(&s_mqtt_required, mqtt_config_get(&mqtt) == ESP_OK && mqtt.enabled);
     activate_saved_config();
     /* Сетевой статус является только текущим состоянием, а не настройкой.
      * Удаляем старый ключ, оставшийся от предыдущих версий прошивки, чтобы
@@ -809,7 +837,7 @@ static void web_task(void *arg)
 
 static esp_err_t start_web_task(bool respect_auto_connect)
 {
-    if (!s_initialized || (respect_auto_connect && !s_auto_connect) ||
+    if (!s_initialized || (respect_auto_connect && !home_auto_connect()) ||
         s_ssid[0] == '\0' || s_password[0] == '\0') {
         ESP_LOGW(TAG, "WiFiDiag Web start rejected initialized=%d respect_auto=%d auto_connect=%d ssid_present=%d password_present=%d",
                  s_initialized, respect_auto_connect, s_auto_connect, s_ssid[0] != '\0', s_password[0] != '\0');
@@ -844,6 +872,37 @@ static esp_err_t wifi_ota_start_web_locked(void)
     if (s_task_running || s_web_task_running) return ESP_ERR_INVALID_STATE;
     activate_saved_config();
     return start_web_task(true);
+}
+
+void wifi_ota_set_mqtt_required(bool enabled)
+{
+    bool changed = atomic_exchange(&s_mqtt_required, enabled) != enabled;
+    if (!enabled || !s_state_mutex ||
+        xSemaphoreTakeRecursive(s_state_mutex, 0) != pdTRUE) return;
+    int64_t now = esp_timer_get_time();
+    if (changed) s_mqtt_wifi_retry_us = 0;
+    if (s_initialized && !atomic_load(&s_runtime_source) && !s_task_running &&
+        !s_web_task_running && !s_wifi_connected && now >= s_mqtt_wifi_retry_us) {
+        s_mqtt_wifi_retry_us = now + 30000000;
+        if (!s_reconnect_enabled) {
+            esp_err_t err = wifi_ota_start_web_locked();
+            if (err != ESP_OK && err != ESP_ERR_INVALID_STATE)
+                ESP_LOGW(TAG, "MQTT home Wi-Fi start failed: %s", esp_err_to_name(err));
+        }
+    }
+    xSemaphoreGiveRecursive(s_state_mutex);
+}
+
+esp_err_t wifi_ota_request_home_wifi(void)
+{
+    if (!s_state_mutex || xSemaphoreTakeRecursive(s_state_mutex, 0) != pdTRUE)
+        return ESP_ERR_INVALID_STATE;
+    esp_err_t err = ESP_OK;
+    if (home_auto_connect() && !atomic_load(&s_runtime_source) && !s_task_running &&
+        !s_web_task_running && !s_wifi_connected)
+        err = wifi_ota_start_web_locked();
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return err;
 }
 
 static esp_err_t wifi_ota_start_runtime_web_locked(void);

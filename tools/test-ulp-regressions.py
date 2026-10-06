@@ -87,6 +87,7 @@ typedef int esp_err_t;
 #define portMAX_DELAY 0xffffffffu
 #define pdTRUE 1
 static bool s_initialized = true;
+static bool lock_control_internet_active(void) { return false; }
 static int s_calibration_mutex = 1;
 static int64_t s_calibration_deadline_us, mock_time;
 static uint32_t s_calibration_timeout_count;

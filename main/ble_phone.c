@@ -11,6 +11,10 @@
 #include "led.h"
 #include "lock_control.h"
 #include "cloud_link.h"
+#include "mqtt_config.h"
+#include "cJSON.h"
+#include "esp_mac.h"
+#include "mbedtls/platform_util.h"
 #include "wifi_ota.h"
 #include "host/ble_hs.h"
 #include "host/ble_gap.h"
@@ -49,6 +53,9 @@ static const ble_uuid128_t s_phone_beacon_service_uuid = BLE_UUID128_INIT(
 static const ble_uuid128_t s_phone_beacon_proof_uuid = BLE_UUID128_INIT(
     0xa3, 0x92, 0x81, 0x70, 0x6f, 0x5e, 0x32, 0x8d,
     0x21, 0x4c, 0x7b, 0x9a, 0x11, 0x00, 0x4f, 0x6f);
+static const ble_uuid128_t s_phone_mqtt_uuid = BLE_UUID128_INIT(
+    0xa3,0x92,0x81,0x70,0x6f,0x5e,0x32,0x8d,0x21,0x4c,0x7b,0x9a,0x1d,0x00,0x4f,0x6f);
+static uint16_t s_central_mqtt_handle;
 static const ble_uuid128_t s_phone_beacon_owner_status_uuid = BLE_UUID128_INIT(
     0xa3, 0x92, 0x81, 0x70, 0x6f, 0x5e, 0x32, 0x8d,
     0x21, 0x4c, 0x7b, 0x9a, 0x12, 0x00, 0x4f, 0x6f);
@@ -83,6 +90,7 @@ static const ble_uuid128_t s_phone_service_result_uuid = BLE_UUID128_INIT(
 #define PHONE_SERVICE_WIFI 1
 #define PHONE_SERVICE_WEB_IP 2
 #define PHONE_SERVICE_HOLD 4
+#define PHONE_SERVICE_HOME_WIFI 8
 #define PHONE_BEACON_COMPANY_ID 0xf0e1
 #define PHONE_BEACON_RETRY_MS 1000
 
@@ -603,6 +611,27 @@ static bool central_try_send_web_ui_ip(uint16_t handle)
     return false;
 }
 
+esp_err_t ble_phone_mqtt_key(const char *phone, uint8_t out[16])
+{
+    if (!phone || strlen(phone)!=13 || !out) return ESP_ERR_INVALID_ARG;
+    ble_addr_t peers[MAX_BONDED_PHONES]; int count=0;
+    if(ble_store_util_bonded_peers(peers,&count,MAX_BONDED_PHONES)!=0) return ESP_FAIL;
+    for(int i=0;i<count;i++) {
+        char id[14];
+        snprintf(id,sizeof(id),"%x%02x%02x%02x%02x%02x%02x",(unsigned)(peers[i].type & 1),
+                 peers[i].val[5],peers[i].val[4],peers[i].val[3],peers[i].val[2],peers[i].val[1],peers[i].val[0]);
+        if(strcmp(id,phone)) continue;
+        struct ble_store_key_sec key={.peer_addr=peers[i]};
+        struct ble_store_value_sec value={0};
+        int rc=ble_store_read_peer_sec(&key,&value);
+        if(rc==0 && value.ltk_present) memcpy(out,value.ltk,16);
+        bool ok=rc==0 && value.ltk_present;
+        mbedtls_platform_zeroize(&value,sizeof(value));
+        return ok ? ESP_OK : ESP_ERR_NOT_FOUND;
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
 static int central_owner_status_write_cb(uint16_t handle, const struct ble_gatt_error *error,
                                          struct ble_gatt_attr *attr, void *arg)
 {
@@ -615,7 +644,7 @@ static int central_owner_status_write_cb(uint16_t handle, const struct ble_gatt_
     return 0;
 }
 
-static void central_send_owner_status(uint16_t handle)
+static void central_send_owner_status_after_mqtt(uint16_t handle)
 {
     if (!s_central_owner_status_handle) {
         if (central_try_send_web_ui_ip(handle)) return;
@@ -631,6 +660,58 @@ static void central_send_owner_status(uint16_t handle)
     if (ble_gattc_write_flat(handle, s_central_owner_status_handle, &is_owner, sizeof(is_owner),
                              central_owner_status_write_cb, NULL) != 0)
         central_finish_proof_session(handle);
+}
+
+static void (*s_mqtt_continue)(uint16_t);
+static int central_mqtt_write_cb(uint16_t handle,const struct ble_gatt_error *error,
+                                  struct ble_gatt_attr *attr,void *arg)
+{
+    (void)error; (void)attr; (void)arg;
+    if(s_mqtt_continue) s_mqtt_continue(handle);
+    return 0;
+}
+static void central_export_mqtt(uint16_t handle,void (*next)(uint16_t))
+{
+    s_mqtt_continue=next;
+    struct ble_gap_conn_desc desc;
+    uint8_t ltk[16]={0}, mac[6]; char phone[14], target[18], hex[33];
+    mqtt_config_t cfg;
+    if(!s_central_mqtt_handle || ble_gap_conn_find(handle,&desc)!=0 ||
+       !desc.sec_state.encrypted || !desc.sec_state.bonded) {
+        next(handle); return;
+    }
+    snprintf(phone,sizeof(phone),"%x%02x%02x%02x%02x%02x%02x",(unsigned)(desc.peer_id_addr.type & 1),
+             desc.peer_id_addr.val[5],desc.peer_id_addr.val[4],desc.peer_id_addr.val[3],
+             desc.peer_id_addr.val[2],desc.peer_id_addr.val[1],desc.peer_id_addr.val[0]);
+    if(ble_phone_mqtt_key(phone,ltk)!=ESP_OK || mqtt_config_get(&cfg)!=ESP_OK ||
+       esp_read_mac(mac,ESP_MAC_WIFI_STA)!=ESP_OK) {
+        mbedtls_platform_zeroize(ltk,sizeof(ltk)); next(handle); return;
+    }
+    snprintf(target,sizeof(target),"%02x:%02x:%02x:%02x:%02x:%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    for(unsigned i=0;i<16;i++) snprintf(hex+i*2,3,"%02x",ltk[i]);
+    cJSON *json=cJSON_CreateObject();
+    cJSON_AddStringToObject(json,"target",target); cJSON_AddStringToObject(json,"phone",phone);
+    cJSON_AddStringToObject(json,"ltk",hex); cJSON_AddStringToObject(json,"host",cfg.host);
+    cJSON_AddBoolToObject(json,"enabled",cfg.enabled);
+    uint64_t last_id=0; nvs_handle_t nh;
+    if(nvs_open("mqtt_open",NVS_READONLY,&nh)==ESP_OK) { nvs_get_u64(nh,phone,&last_id); nvs_close(nh); }
+    char floor[24]; snprintf(floor,sizeof(floor),"%" PRIu64,last_id);
+    cJSON_AddStringToObject(json,"last_id",floor);
+    char *text=cJSON_PrintUnformatted(json);
+    cJSON *secret=cJSON_GetObjectItemCaseSensitive(json,"ltk");
+    if(secret && secret->valuestring) mbedtls_platform_zeroize(secret->valuestring,strlen(secret->valuestring));
+    cJSON_Delete(json);
+    mbedtls_platform_zeroize(ltk,sizeof(ltk)); mbedtls_platform_zeroize(hex,sizeof(hex));
+    struct os_mbuf *om=text ? ble_hs_mbuf_from_flat(text,strlen(text)) : NULL;
+    if(text) { mbedtls_platform_zeroize(text,strlen(text)); free(text); }
+    central_set_phase(CENTRAL_PHASE_OWNER_STATUS_WRITE,CENTRAL_GATT_TIMEOUT_MS);
+    if(om && ble_gattc_write_long(handle,s_central_mqtt_handle,0,om,central_mqtt_write_cb,NULL)==0) return;
+    next(handle);
+}
+
+static void central_send_owner_status(uint16_t handle)
+{
+    central_export_mqtt(handle,central_send_owner_status_after_mqtt);
 }
 
 static int central_name_read_cb(uint16_t handle, const struct ble_gatt_error *error,
@@ -994,7 +1075,7 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
     bool valid = error->status == 0 && attr && attr->om &&
                  OS_MBUF_PKTLEN(attr->om) == sizeof(request) &&
                  ble_hs_mbuf_to_flat(attr->om, request, sizeof(request), NULL) == 0 &&
-                 request[0] == 1 && request[1] != 0 && (request[1] & ~7) == 0 &&
+                 request[0] == 1 && request[1] != 0 && (request[1] & ~15) == 0 &&
                  request[2] <= 2;
     if (!valid || !central_connection_secured(handle) || atomic_load(&s_central_reset_pending)) {
         event_log_add("BLE service: invalid/unsecured request status=%d", error->status);
@@ -1004,7 +1085,13 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
     s_central_service_flags = request[1];
     s_central_service_command = request[2];
     memcpy(s_central_service_request_id, request + 3, 4);
-    if (!(request[1] & PHONE_SERVICE_HOLD) &&
+    if ((request[1] & PHONE_SERVICE_HOME_WIFI) &&
+        (request[1] != PHONE_SERVICE_HOME_WIFI || request[2] != 0 ||
+         !s_central_service_result_handle || !(request[3] || request[4] || request[5] || request[6]))) {
+        central_disconnect(handle);
+        return 0;
+    }
+    if (!(request[1] & (PHONE_SERVICE_HOLD | PHONE_SERVICE_HOME_WIFI)) &&
         (request[2] != 0 || request[3] || request[4] || request[5] || request[6])) {
         central_disconnect(handle);
         return 0;
@@ -1014,7 +1101,7 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
         central_disconnect(handle);
         return 0;
     }
-    if (request[1] != PHONE_SERVICE_HOLD && !central_service_owner(handle)) {
+    if (request[1] != PHONE_SERVICE_HOLD && request[1] != PHONE_SERVICE_HOME_WIFI && !central_service_owner(handle)) {
         event_log_add("BLE service: owner access denied for settings request");
         if (request[1] & PHONE_SERVICE_HOLD) central_service_send_result(handle, 1);
         else central_disconnect(handle);
@@ -1025,7 +1112,11 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
     if (ble_gap_conn_find(handle, &cloud_desc) == 0) address_to_string(&cloud_desc.peer_id_addr, actor);
     cloud_link_record("connected", "ble", actor, "bonded_encrypted");
     event_log_add("BLE service: request flags=%u command=%u", request[1], request[2]);
-    if (request[1] & PHONE_SERVICE_HOLD) {
+    if (request[1] == PHONE_SERVICE_HOME_WIFI) {
+        esp_err_t err = wifi_ota_request_home_wifi();
+        event_log_add("BLE service: home Wi-Fi request %s", esp_err_to_name(err));
+        central_service_send_result(handle, err == ESP_OK ? 0 : 2);
+    } else if (request[1] & PHONE_SERVICE_HOLD) {
         if (request[2] == 0) central_service_send_result(handle, 0);
         else if (lock_request_attributed(request[2] == 1 ? "hold_on" : "hold_off", "ble", actor) != ESP_OK)
             central_service_send_result(handle, 2);
@@ -1035,6 +1126,13 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
         }
     } else central_service_continue(handle);
     return 0;
+}
+
+static void central_service_after_mqtt(uint16_t handle)
+{
+    if(!central_connection_secured(handle) || atomic_load(&s_central_reset_pending)) { central_disconnect(handle); return; }
+    central_set_phase(CENTRAL_PHASE_SERVICE_REQUEST_READ,CENTRAL_GATT_TIMEOUT_MS);
+    if(ble_gattc_read(handle,s_central_service_request_handle,central_service_request_cb,NULL)!=0) central_disconnect(handle);
 }
 
 static int central_service_proof_cb(uint16_t handle, const struct ble_gatt_error *error,
@@ -1049,9 +1147,7 @@ static int central_service_proof_cb(uint16_t handle, const struct ble_gatt_error
         central_disconnect(handle);
         return 0;
     }
-    central_set_phase(CENTRAL_PHASE_SERVICE_REQUEST_READ, CENTRAL_GATT_TIMEOUT_MS);
-    if (ble_gattc_read(handle, s_central_service_request_handle, central_service_request_cb, NULL) != 0)
-        central_disconnect(handle);
+    central_export_mqtt(handle,central_service_after_mqtt);
     return 0;
 }
 
@@ -1066,6 +1162,8 @@ static int central_chr_cb(uint16_t handle, const struct ble_gatt_error *error,
     if (error->status == 0 && chr) {
         if (ble_uuid_cmp(&chr->uuid.u, &s_phone_beacon_proof_uuid.u) == 0)
             s_central_proof_handle = chr->val_handle;
+        else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_mqtt_uuid.u) == 0)
+            s_central_mqtt_handle = chr->val_handle;
         else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_beacon_owner_status_uuid.u) == 0)
             s_central_owner_status_handle = chr->val_handle;
         else if (ble_uuid_cmp(&chr->uuid.u, &s_phone_beacon_hotspot_ip_uuid.u) == 0)
@@ -1128,6 +1226,7 @@ static int central_svc_cb(uint16_t handle, const struct ble_gatt_error *error,
     if (error->status == BLE_HS_EDONE && s_central_svc_start) {
         s_central_proof_handle = 0;
         s_central_owner_status_handle = 0;
+        s_central_mqtt_handle = 0;
         memset(s_central_wifi_setup_handles, 0, sizeof(s_central_wifi_setup_handles));
         s_central_hotspot_ip_handle = 0;
         s_central_name_handle = 0;

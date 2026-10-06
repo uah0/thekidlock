@@ -30,3 +30,6 @@ void ble_phone_get_registration(bool *allowed, uint32_t *remaining_seconds);
 size_t ble_phone_get_bonds(ble_phone_bond_t *out, size_t max_bonds);
 esp_err_t ble_phone_delete_bond(const char *address);
 esp_err_t ble_phone_delete_all_bonds(void);
+
+/* Returns only the currently bonded peer LTK; never log the output. */
+esp_err_t ble_phone_mqtt_key(const char *phone, uint8_t out[16]);

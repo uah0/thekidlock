@@ -133,11 +133,11 @@ button.command-ok{background:var(--good);border-color:var(--good);color:#04231b}
 button:disabled{opacity:.45;cursor:default}
 
 /* inputs */
-input[type=number],input[type=text],input[type=password],select{
+input[type=number],input[type=text],input[type=password],select,textarea{
   background:var(--surface-2);border:1px solid var(--border);color:var(--text);
   border-radius:7px;padding:9px 10px;width:100%;
 }
-#wssid{color:#000;-webkit-text-fill-color:#000}
+#wssid,#wpass{background:#fff;color:#000;-webkit-text-fill-color:#000}
 input:focus,select:focus{border-color:var(--accent)}
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .field label{font-size:12.5px;color:var(--text-dim)}
@@ -237,14 +237,29 @@ table.bonds td:first-child{font-family:var(--mono)}
   </div>
 </div>
 
-<section class="panel"><div class="panel-head"><span class="tag">SETUP</span><h2>Мастер настроек</h2></div>
-  <div class="hero-actions"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер настройки замка</button></div>
+<section class="panel">
+  <div class="pairing-state off" id="pairing">Загрузка…</div>
+  <div class="actions-row">
+    <button class="btn-primary" onclick="allowPairing()">Разрешить регистрацию телефона</button>
+  </div>
+  <p class="panel-sub">Pairing нового телефона разрешается на 60 секунд. Все зарегистрированные телефоны на это время временно не смогут переподключиться — слот освобождается для нового устройства, затем всё работает как обычно.</p>
+
+  <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
+  <div class="actions-row" style="margin-bottom:2px">
+    <button onclick="loadBonds()">Обновить</button>
+    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все телефоны</button>
+  </div>
+  <table class="bonds">
+    <thead><tr><th>Имя</th><th>Identity address</th><th></th></tr></thead>
+    <tbody id="bonds"></tbody>
+  </table>
+  <div class="actions-row" style="margin-top:18px"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер настройки замка</button></div>
 </section>
     <section class="panel">
       <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi</h2></div>
       <div class="field">
         <label for="wssid">SSID Wi-Fi</label>
-        <input id="wssid" maxlength="32">
+        <input id="wssid" type="text" maxlength="32">
       </div>
       <div class="field">
         <label for="wpass">Пароль Wi-Fi</label>
@@ -269,41 +284,23 @@ table.bonds td:first-child{font-family:var(--mono)}
 
 
 <section class="panel">
-  <div class="panel-head"><span class="tag">BLE</span><h2>Управление пользователями</h2></div>
-  <div class="pairing-state off" id="pairing">Загрузка…</div>
-  <div class="actions-row">
-    <button class="btn-primary" onclick="allowPairing()">Разрешить регистрацию телефона</button>
-  </div>
-  <p class="panel-sub">Pairing нового телефона разрешается на 60 секунд. Все зарегистрированные телефоны на это время временно не смогут переподключиться — слот освобождается для нового устройства, затем всё работает как обычно.</p>
-
-  <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
-  <div class="actions-row" style="margin-bottom:2px">
-    <button onclick="loadBonds()">Обновить</button>
-    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все телефоны</button>
-  </div>
-  <table class="bonds">
-    <thead><tr><th>Имя</th><th>Identity address</th><th>Тип</th><th></th></tr></thead>
-    <tbody id="bonds"></tbody>
-  </table>
-</section>
-
-<section class="panel">
   <div class="panel-head"><span class="tag">NET</span><h2>ThingSpeak</h2></div>
   <div class="field"><label><input id="tsEnabled" type="checkbox"> Отправлять журнал событий</label></div>
   <div class="field"><label for="tsChannel">Номер канала</label><input id="tsChannel" type="number" min="0" max="4294967295" oninput="updateThingSpeakLink()"></div>
   <div class="field"><span>Ссылка на веб-канал</span><a id="tsUrl" target="_blank" rel="noopener noreferrer" hidden></a><small id="tsUrlUnavailable">Укажите номер канала</small></div>
   <div class="field"><label for="tsReadKey">Read API key</label><input id="tsReadKey" type="password" maxlength="64" placeholder="Пусто — сохранить прежний"></div>
   <div class="field"><label for="tsWriteKey">Write API key</label><input id="tsWriteKey" type="password" maxlength="64" placeholder="Пусто — сохранить прежний"></div>
-  <div class="field"><label><input id="tsCommands" type="checkbox"> Разрешить управление через интернет</label></div>
-  <div class="field"><label for="tsCommandChannel">Канал команд</label><input id="tsCommandChannel" type="number" min="0" max="4294967295"></div>
-  <div class="field"><label for="tsResultChannel">Канал результатов</label><input id="tsResultChannel" type="number" min="0" max="4294967295"></div>
-  <div class="field"><label for="tsClient">MQTT Device Client ID</label><input id="tsClient" maxlength="64" autocomplete="off"></div>
-  <div class="field"><label for="tsLogin">MQTT Device Username</label><input id="tsLogin" maxlength="64" autocomplete="off"></div>
-  <div class="field"><label for="tsPassword">MQTT Device Password</label><input id="tsPassword" type="password" maxlength="64" autocomplete="new-password" placeholder="Пусто — сохранить прежний"></div>
-  <p class="panel-sub">Три закрытых канала: журнал, команды, результаты. Время события UTC находится в field5 журнала. Пароль нужен от MQTT Device.</p>
+  <p class="panel-sub">Закрытый канал журнала событий. Время события UTC находится в field5. MQTT настраивается отдельно ниже.</p>
   <p id="tsStatus" role="status"></p>
   <div class="actions-row"><button class="btn-primary" onclick="saveThingSpeak()">Сохранить</button><span class="saved-msg" id="tsSaved"></span></div>
 </section>
+
+<section class="panel">
+  <div class="panel-head"><span class="tag">NET</span><h2>MQTT</h2></div>
+  <div class="field"><label><input id="mEnabled" type="checkbox"> Открытие через интернет</label></div>
+  <div class="field"><label for="mHost">Адрес публичного брокера</label><input id="mHost" type="text" maxlength="192" placeholder="Домен брокера" autocomplete="off"></div>
+  <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
+ </section>
 
 <button id="advancedToggle" class="btn-primary advanced-toggle" aria-expanded="false" aria-controls="advancedSettings" onclick="toggleAdvanced()">Дополнительные настройки ▾</button>
 <div id="advancedSettings" hidden>
@@ -481,10 +478,15 @@ async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_t
 async function saveSerialLog(){try{await j('/api/config/serial-log?enabled='+(serialLog.checked?'1':'0'),{method:'POST'});serialLogSaved.textContent='Сохранено';setTimeout(()=>serialLogSaved.textContent='',2000)}catch(e){serialLog.checked=!serialLog.checked;serialLogSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
 function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidden=!open;advancedToggle.setAttribute('aria-expanded',String(open));advancedToggle.textContent=open?'Дополнительные настройки ▴':'Дополнительные настройки ▾'}
 function updateThingSpeakLink(){let id=tsChannel.value.trim(),valid=/^[1-9][0-9]*$/.test(id)&&Number(id)<=4294967295;tsUrl.hidden=!valid;tsUrlUnavailable.hidden=valid;if(valid){let url='https://thingspeak.mathworks.com/channels/'+id;tsUrl.href=url;tsUrl.textContent=url}else{tsUrl.removeAttribute('href');tsUrl.textContent=''}}
-function showCloudStatus(c){tsStatus.textContent='UTC: '+(c.time_ready?'синхронизировано':'ожидание')+' · MQTT: '+(c.mqtt_ready?'подключён':'отключён')+' · Очередь: '+c.pending+' · Потери: '+c.dropped+' · '+c.cloud_status+' · '+c.command_status}
-async function loadThingSpeak(){try{let c=await j('/api/thingspeak');tsChannel.value=c.channel_id||'';updateThingSpeakLink();tsEnabled.checked=c.enabled;tsCommands.checked=c.commands_enabled;tsCommandChannel.value=c.command_channel_id||'';tsResultChannel.value=c.result_channel_id||'';tsClient.value=c.mqtt_client_id||'';tsLogin.value=c.login||'';tsReadKey.value='';tsWriteKey.value='';tsPassword.value='';showCloudStatus(c);tsSaved.textContent=[c.read_key_configured?'Read key сохранён':'',c.write_key_configured?'Write key сохранён':'',c.password_configured?'MQTT пароль сохранён':''].filter(Boolean).join(' · ')}catch(e){tsSaved.textContent=String(e)}}
+function showCloudStatus(c){tsStatus.textContent='UTC: '+(c.time_ready?'синхронизировано':'ожидание')+' · Очередь: '+c.pending+' · Потери: '+c.dropped+' · '+c.cloud_status}
+async function loadThingSpeak(){try{let c=await j('/api/thingspeak');tsChannel.value=c.channel_id||'';updateThingSpeakLink();tsEnabled.checked=c.enabled;tsReadKey.value='';tsWriteKey.value='';showCloudStatus(c);tsSaved.textContent=[c.read_key_configured?'Read key сохранён':'',c.write_key_configured?'Write key сохранён':''].filter(Boolean).join(' · ')}catch(e){tsSaved.textContent=String(e)}}
 async function refreshCloudStatus(){try{showCloudStatus(await j('/api/thingspeak'))}catch(e){tsStatus.textContent=String(e)}}
-async function saveThingSpeak(){let q=new URLSearchParams({channel_id:tsChannel.value||'0',read_key:tsReadKey.value,write_key:tsWriteKey.value,enabled:tsEnabled.checked?'1':'0',commands_enabled:tsCommands.checked?'1':'0',command_channel_id:tsCommandChannel.value||'0',result_channel_id:tsResultChannel.value||'0',mqtt_client_id:tsClient.value,login:tsLogin.value,password:tsPassword.value});try{await j('/api/thingspeak',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await loadThingSpeak();tsSaved.textContent='Сохранено'}catch(e){tsSaved.textContent=String(e)}}
+async function saveThingSpeak(){let q=new URLSearchParams({channel_id:tsChannel.value||'0',read_key:tsReadKey.value,write_key:tsWriteKey.value,enabled:tsEnabled.checked?'1':'0'});try{await j('/api/thingspeak',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await loadThingSpeak();tsSaved.textContent='Сохранено'}catch(e){tsSaved.textContent=String(e)}}
+const mqttLabels={disabled:'Отключено',connected:'Подключено',ready:'Готово',connecting:'Подключение…',waiting_time:'Ожидание синхронизации UTC',authentication_failed:'Брокер отклонил логин или пароль',network_failed:'Ошибка сети',mqtt_disconnected:'Соединение потеряно',subscription_denied:'Нет разрешения на подписку команд',config_nvs:'Ошибка чтения настроек',client_failed:'Не удалось создать соединение',no_memory:'Недостаточно памяти',command_nvs:'Ошибка сохранения команды',invalid_command:'Некорректная команда',wrong_target:'Команда адресована другому замку',stale_or_unsynced:'Команда просрочена или UTC не синхронизировано',busy:'Ожидание результата',result_pending:'Отправка результата',waiting_feedback:'Ожидание подтверждения замка',retained_command_rejected:'Сохранённая брокером команда отклонена'};
+function showMqttStatus(c){mStatus.textContent=(mqttLabels[c.status]||c.status)+' · UTC: '+(c.time_ready?'синхронизировано':'ожидание');mSave.disabled=c.busy}
+async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mTopics.textContent=['command','result'].map(t=>c.prefix+'/'+t).join('\n');showMqttStatus(c)}catch(e){mSaved.textContent=String(e)}}
+async function refreshMqttStatus(){try{showMqttStatus(await j('/api/mqtt'))}catch(e){mStatus.textContent='Нет связи: '+e}}
+async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wupdate.checked=c.auto_update;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
 async function saveAutoUpdate(){try{let q=new URLSearchParams({enabled:wupdate.checked?'1':'0'});await j('/api/wifi/auto-update?'+q,{method:'POST'});updateSaved.textContent='Сохранено';setTimeout(()=>updateSaved.textContent='',2000)}catch(e){updateSaved.textContent='Ошибка сохранения';throw e}}
@@ -494,14 +496,14 @@ async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:pr.v
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.className='pairing-state '+(p.allowed?'on':'off');pairing.textContent=p.allowed?`Регистрация разрешена: ${p.remaining_s} с`:'Регистрация запрещена'}catch(e){pairing.className='pairing-state off';pairing.textContent=e}}
 async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
-async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><span class="type-chip">${esc(b.type)}</span></td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='4'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='4'>${esc(e)}</td></tr>`}}
+async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
 async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
 async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все телефоны» ещё раз',async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice('Все телефоны удалены')}catch(e){showNotice(String(e),true)}})}
 async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите файл .bin',true);return}ota.textContent='Загрузка…';try{let r=await fetch('/api/ota',{method:'POST',body:f});ota.textContent=await r.text()}catch(e){ota.textContent=e}}
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
-async function initPage(){await loadConfig();await loadWifi();await loadThingSpeak();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshCloudStatus,10000)}
+async function initPage(){await loadConfig();await loadWifi();await loadThingSpeak();await loadMqtt();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshCloudStatus,10000);setInterval(refreshMqttStatus,2000)}
 initPage()
 </script>
 </body>

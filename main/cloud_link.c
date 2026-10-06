@@ -279,7 +279,7 @@ static void cloud_task(void *arg)
             continue;
         }
         atomic_store(&s_enabled, cfg.enabled);
-        if (cfg.enabled && network_ready() && !sntp_started) {
+        if ((cfg.enabled || cloud_commands_time_required()) && network_ready() && !sntp_started) {
             esp_sntp_config_t time_config = ESP_NETIF_SNTP_DEFAULT_CONFIG("time.cloudflare.com");
             time_config.sync_cb = time_synced;
             sntp_started = esp_netif_sntp_init(&time_config) == ESP_OK;

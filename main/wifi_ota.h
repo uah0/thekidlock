@@ -22,6 +22,9 @@ bool wifi_ota_password_configured(void);
 bool wifi_ota_config_matches(const char *ssid, const char *url);
 esp_err_t wifi_ota_get_status(char *out, size_t out_size);
 bool wifi_ota_get_auto_connect(void);
+/* MQTT requires saved home Wi-Fi; an explicit phone Web UI session stays temporary. */
+void wifi_ota_set_mqtt_required(bool enabled);
+esp_err_t wifi_ota_request_home_wifi(void);
 esp_err_t wifi_ota_set_auto_connect(bool enabled);
 bool wifi_ota_get_auto_update(void);
 esp_err_t wifi_ota_set_auto_update(bool enabled);

@@ -24,6 +24,21 @@ class ServiceBeaconProtocolTest {
         assertEquals(id, ServiceBeaconProtocol.result(response(), ServiceBeaconProtocol.HoldRequest(id, true))?.id)
     }
 
+    @Test fun homeWifiRequestDoesNotSetHoldAndKeepsIdentity() {
+        assertArrayEquals(byteArrayOf(1, 8, 0, 0x89.toByte(), 0xab.toByte(), 0xcd.toByte(), 0xef.toByte()),
+            ServiceBeaconProtocol.request(false, false, null, id))
+        assertNotNull(ServiceBeaconProtocol.result(response(hold = false), ServiceBeaconProtocol.HoldRequest(id, null)))
+        assertNull(ServiceBeaconProtocol.result(response(requestId = id + 1), ServiceBeaconProtocol.HoldRequest(id, null)))
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun homeRequestCannotProvisionPhoneWifi() {
+        ServiceBeaconProtocol.request(true, false, null, id)
+    }
+
+    @Test(expected = IllegalArgumentException::class) fun homeRequestCannotChangeHoldMode() {
+        ServiceBeaconProtocol.request(false, false, ServiceBeaconProtocol.HoldRequest(id, true), id)
+    }
+
     @Test fun staleOrUnsolicitedResultIsRejected() {
         assertNull(ServiceBeaconProtocol.result(response(), null))
         assertNull(ServiceBeaconProtocol.result(response(requestId = id + 1), ServiceBeaconProtocol.HoldRequest(id, true)))

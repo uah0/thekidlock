@@ -1,4 +1,5 @@
 #include "ulp_controller.h"
+#include "lock_control.h"
 
 #include <stdint.h>
 
@@ -232,6 +233,7 @@ esp_err_t ulp_controller_init(void)
 
 esp_err_t ulp_controller_calibration_start(void)
 {
+    if(lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     if (!s_initialized) return ESP_ERR_INVALID_STATE;
     xSemaphoreTake(s_calibration_mutex, portMAX_DELAY);
     calibration_expire();
@@ -363,6 +365,7 @@ esp_err_t ulp_controller_request(ulp_command_t requested)
 
 esp_err_t ulp_controller_request_wait(ulp_command_t requested)
 {
+    if(lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     if (ulp_calibration_mode) return ESP_ERR_INVALID_STATE;
     if (requested == ULP_CMD_GATE_TEST &&
         (ulp_lock_state != LOCK_STATE_UNLOCKED ||

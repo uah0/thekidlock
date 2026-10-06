@@ -633,6 +633,11 @@ class MainActivity : Activity() {
                 finishWebUiIpRequest()
             }
         }
+        if (!webUiRequestPending && localHotspotReservation == null) {
+            runCatching { startService(Intent(this, BleLockService::class.java)
+                .setAction(BleLockService.ACTION_HOME_WIFI_REQUEST)) }
+                .onFailure { appendLog("Не удалось запросить домашний Wi-Fi: ${it.message}") }
+        }
     }
 
     override fun onPause() {
@@ -765,9 +770,11 @@ class MainActivity : Activity() {
         accessCard.addView(manualOpenButton, controlTileParams(heightDp = 118))
         manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }
         accessCard.addView(manualKeepOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
-        val internetOpenButton = controlTile(R.string.open_via_internet) { }
-        internetOpenButton.isEnabled = false
-        internetOpenButton.alpha = 0.5f
+        val internetOpenButton = controlTile(R.string.open_via_internet) {
+            InternetOpen.start(this,
+                { message -> runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_LONG).show() } },
+                { })
+        }
         accessCard.addView(internetOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
 
         hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }

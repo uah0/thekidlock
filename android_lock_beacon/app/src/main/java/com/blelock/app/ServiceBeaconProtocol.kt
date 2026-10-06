@@ -6,16 +6,18 @@ object ServiceBeaconProtocol {
     const val WIFI = 1
     const val WEB_IP = 2
     const val HOLD = 4
+    const val HOME_WIFI = 8
     data class HoldRequest(val id: Int, val enabled: Boolean?) {
         init { require(id != 0) }
     }
     data class Result(val id: Int, val code: Int, val holdOpen: Boolean)
 
-    fun request(wifi: Boolean, webIp: Boolean, hold: HoldRequest?): ByteArray {
+    fun request(wifi: Boolean, webIp: Boolean, hold: HoldRequest?, homeId: Int = 0): ByteArray {
+        require(homeId == 0 || (!wifi && !webIp && hold == null))
         val flags = (if (wifi) WIFI else 0) or (if (webIp) WEB_IP else 0) or
-            (if (hold != null) HOLD else 0)
+            (if (hold != null) HOLD else 0) or (if (homeId != 0) HOME_WIFI else 0)
         val command = when (hold?.enabled) { true -> 1; false -> 2; null -> 0 }
-        val id = hold?.id ?: 0
+        val id = hold?.id ?: homeId
         return byteArrayOf(1, flags.toByte(), command.toByte(),
             (id ushr 24).toByte(), (id ushr 16).toByte(), (id ushr 8).toByte(), id.toByte())
     }

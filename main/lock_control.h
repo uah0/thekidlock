@@ -13,6 +13,8 @@ typedef struct {
     bool mode_persisted;
     int64_t sampled_at_us;
     uint64_t cloud_command_id;
+    uint8_t internet_phase;
+    int64_t internet_started_us;
 } lock_feedback_t;
 void lock_control_get_feedback(lock_feedback_t *out);
 const char *lock_control_feedback_name(const lock_feedback_t *state);
@@ -34,3 +36,5 @@ void lock_control_report_rssi(bool sufficient);
 void lock_control_report_disconnected(void);
 bool lock_control_is_open(void);
 bool lock_control_is_hold_open(void);
+
+bool lock_control_internet_active(void);

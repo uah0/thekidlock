@@ -3,6 +3,7 @@
 #include "app_config.h"
 #include "cloud_link.h"
 #include <stdio.h>
+#include <stdatomic.h>
 #include <string.h>
 #include "event_log.h"
 #include "led.h"
@@ -64,6 +65,7 @@ typedef enum {
     LOCK_EVENT_CLOSE,
     LOCK_EVENT_RSSI_HIGH,
     LOCK_EVENT_DISCONNECTED,
+    LOCK_EVENT_INTERNET_OPEN,
 } lock_event_t;
 
 typedef struct {
@@ -75,12 +77,18 @@ typedef struct {
 static char s_source[12] = "system", s_actor[18];
 static uint64_t s_cloud_id;
 static bool s_mode_persisted = true;
+static atomic_bool s_internet,s_internet_pending;
+static uint8_t s_internet_phase;
+static int64_t s_internet_started_ms, s_internet_opened_ms, s_internet_started_us;
+bool lock_control_internet_active(void) { return atomic_load(&s_internet)||atomic_load(&s_internet_pending); }
+
 
 static esp_err_t request_attributed(const char *operation, const char *source, const char *actor,
                                     uint64_t id, int64_t deadline_us)
 {
     lock_event_item_t item = {.cloud_id = id, .deadline_us = deadline_us};
     if (!operation) return ESP_ERR_INVALID_ARG;
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     if (!strcmp(operation, "open")) item.kind = LOCK_EVENT_OPEN;
     else if (!strcmp(operation, "manual_open")) item.kind = LOCK_EVENT_TEST_OPEN;
     else if (!strcmp(operation, "close")) item.kind = LOCK_EVENT_CLOSE;
@@ -99,7 +107,20 @@ esp_err_t lock_request_attributed(const char *operation, const char *source, con
 
 esp_err_t lock_request_cloud(const char *operation, const char *actor, uint64_t id, int64_t deadline_us)
 {
-    return request_attributed(operation, "cloud", actor, id, deadline_us);
+    if(!operation || strcmp(operation,"internet_open") || !s_events || atomic_load(&s_internet)) return ESP_ERR_INVALID_STATE;
+    bool expected=false;
+    if(!atomic_compare_exchange_strong(&s_internet_pending,&expected,true)) return ESP_ERR_INVALID_STATE;
+    lock_event_item_t item={.kind=LOCK_EVENT_INTERNET_OPEN,.cloud_id=id,.deadline_us=deadline_us};
+    snprintf(item.source,sizeof(item.source),"cloud");
+    snprintf(item.actor,sizeof(item.actor),"%s",actor?actor:"");
+    if(xQueueSendToFront(s_events,&item,0)!=pdTRUE) {
+        lock_event_item_t obsolete;
+        xQueueReceive(s_events,&obsolete,0);
+        if(xQueueSendToFront(s_events,&item,0)!=pdTRUE) {
+            atomic_store(&s_internet_pending,false);return ESP_ERR_TIMEOUT;
+        }
+    }
+    return ESP_OK;
 }
 
 static esp_err_t apply_command(ulp_command_t command)
@@ -138,9 +159,11 @@ static void lock_task(void *arg)
         if (received) {
             if (item.deadline_us && esp_timer_get_time() >= item.deadline_us) {
                 cloud_link_record("expired_in_queue", item.source, item.actor, "not_executed");
+                if(event==LOCK_EVENT_INTERNET_OPEN) atomic_store(&s_internet_pending,false);
                 received = false;
             }
         }
+        if (received && lock_control_internet_active() && event!=LOCK_EVENT_INTERNET_OPEN) received = false;
         if (received) {
             if (item.cloud_id) s_cloud_id = item.cloud_id;
             if (event != LOCK_EVENT_RSSI_HIGH && event != LOCK_EVENT_DISCONNECTED) {
@@ -151,6 +174,20 @@ static void lock_task(void *arg)
                 cloud_link_record("request", s_source, s_actor, operation);
             }
             switch (event) {
+                case LOCK_EVENT_INTERNET_OPEN: {
+                    ulp_diagnostics_t feedback; bool current_valid=ulp_controller_read_diagnostics(&feedback);
+                    s_internet_phase=5; s_internet_started_us=esp_timer_get_time();
+                    xQueueReset(s_events);
+                    if(!current_valid || feedback.fault_flags || feedback.calibration_mode || !feedback.calibration_valid) { atomic_store(&s_internet_pending,false); break; }
+                    s_mode_persisted=save_hold_open(false)==ESP_OK;
+                    if(!s_mode_persisted) { atomic_store(&s_internet_pending,false); break; }
+                    hold_open=false; s_hold_open=false; open_armed=false; test_open_active=false;
+                    if(apply_state(true)!=ESP_OK) { atomic_store(&s_internet_pending,false); break; }
+                    s_internet_started_ms=now_ms; s_internet_opened_ms=0;
+                    s_internet_phase=1; atomic_store(&s_internet,true); atomic_store(&s_internet_pending,false);
+                    cloud_link_record("internet_open",s_source,s_actor,"opening");
+                    break;
+                }
                 case LOCK_EVENT_OPEN:
                     if (!lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
@@ -244,7 +281,7 @@ static void lock_task(void *arg)
             }
         }
 
-        if (lock_control_requested_open() && !hold_open) {
+        if (lock_control_requested_open() && !hold_open && !lock_control_internet_active()) {
             bool close_a = !test_open_active && cfg.timer_a_ms > 0 &&
                            now_ms - last_sufficient_ms > (int64_t)cfg.timer_a_ms;
             bool close_test = test_open_active &&
@@ -262,6 +299,30 @@ static void lock_task(void *arg)
         }
 
         refresh_feedback(now_ms);
+        if(atomic_load(&s_internet)) {
+            lock_feedback_t f; lock_control_get_feedback(&f);
+            if(f.valid && (f.fault_flags || f.state==LOCK_STATE_FAULT)) {
+                apply_state(false); s_internet_phase=5; atomic_store(&s_internet,false);
+            } else if(s_internet_phase==1) {
+                if(f.valid && f.state==LOCK_STATE_UNLOCKED && !f.hold_open) {
+                    s_internet_opened_ms=now_ms; s_internet_phase=2;
+                } else if(now_ms-s_internet_started_ms>=10000) {
+                    apply_state(false); s_internet_phase=5; atomic_store(&s_internet,false);
+                }
+            } else if(s_internet_phase==2) {
+                ulp_diagnostics_t d;
+                bool removed=ulp_controller_read_diagnostics(&d) && d.plate_state==PLATE_FAR;
+                if(removed || now_ms-s_internet_opened_ms>=20000) {
+                    if(apply_state(false)==ESP_OK) {
+                        s_internet_phase=3;
+                        cloud_link_record("internet_close",s_source,s_actor,removed?"plate_removed":"timeout_20s");
+                    }
+                }
+            } else if(s_internet_phase==3 && f.valid && f.state==LOCK_STATE_LOCKED) {
+                s_internet_phase=4; atomic_store(&s_internet,false);
+            }
+            refresh_feedback(now_ms);
+        }
     }
 }
 
@@ -295,24 +356,28 @@ failed:
 
 esp_err_t lock_request_open(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_arm_open(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_ARM_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_close(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_CLOSE};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_test_open(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_TEST_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
@@ -325,25 +390,28 @@ esp_err_t lock_request_manual_open(void)
 
 esp_err_t lock_request_toggle_hold_open(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_TOGGLE_HOLD_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_set_hold_open(bool enabled)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = enabled ? LOCK_EVENT_SET_HOLD_OPEN : LOCK_EVENT_SET_AUTO};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_request_disable_auto_and_close(void)
 {
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_DISABLE_AUTO_CLOSE};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
 }
 
 esp_err_t lock_control_config_changed(void)
 {
-    if (!s_initialized) return ESP_ERR_INVALID_STATE;
+    if (!s_initialized || lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     if (lock_control_is_hold_open()) return apply_command(ULP_CMD_HOLD_OPEN);
     return apply_state(lock_control_requested_open());
 }
@@ -399,6 +467,8 @@ static void refresh_feedback(int64_t now_ms)
     s_feedback.requested_open = s_requested_open;
     s_feedback.sampled_at_us = now_ms * 1000;
     s_feedback.cloud_command_id = s_cloud_id;
+    s_feedback.internet_phase = s_internet_phase;
+    s_feedback.internet_started_us=s_internet_started_us;
     s_feedback.mode_persisted = s_mode_persisted;
     lock_feedback_t current = s_feedback;
     xSemaphoreGive(s_mutex);

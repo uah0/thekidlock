@@ -10,17 +10,11 @@
 #define THINGSPEAK_KEY_MAX 64
 
 typedef struct {
-    char login[THINGSPEAK_LOGIN_MAX + 1];
-    char password[THINGSPEAK_PASSWORD_MAX + 1];
     uint32_t channel_id;
     char channel_url[THINGSPEAK_URL_MAX + 1];
     char read_api_key[THINGSPEAK_KEY_MAX + 1];
     char write_api_key[THINGSPEAK_KEY_MAX + 1];
     bool enabled;
-    bool commands_enabled;
-    uint32_t command_channel_id;
-    uint32_t result_channel_id;
-    char mqtt_client_id[THINGSPEAK_LOGIN_MAX + 1];
 } thingspeak_config_t;
 
 esp_err_t thingspeak_config_get(thingspeak_config_t *out);

@@ -3510,3 +3510,129 @@ SHA-256 установленного через `adb pull` APK совпадае�
 - После успешного сохранения настройки мастер закрывается по окончании фразы «Настройка завершена». Если браузер запрещает закрывать вкладку, открывается главная страница Web UI.
 - На финальном шаге отключено повторение инструкции; ошибки сохранения и промежуточные шаги окно не закрывают.
 - Изменены main/web/calibration.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. ESP 10.0.336 собрана и загружена через OTA, версия и возврат подтверждены.
+
+## Порядок настроек и исправление удаления телефона — 05.10.2026
+
+- Первая панель Web UI — «Управление пользователями», вторая — «Мастер настроек», затем Wi-Fi.
+- Исправлено удаление телефона: URL-кодированный MAC (27 символов) усекался буфером address[24]. Буфер увеличен до 64; декодирование и проверка адреса сохранены.
+- Изменены main/web/index.html, main/web_ui.c, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- ESP 10.0.338 собрана и прошита через device-agent.ps1 OTA; возврат и версия подтверждены.
+
+## Мастер внутри панели телефонов — 05.10.2026
+
+- Кнопка «Мастер настройки замка» перенесена в конец первой панели, под таблицу телефонов. Отдельная панель «Мастер настроек» удалена; заголовок «Управление пользователями» и метка BLE убраны.
+- Выполнены отложенные требования: столбец «Тип» удалён из таблицы; тип BLE-адреса сохранён в API/NVS/логике. Поля SSID и пароля Wi-Fi имеют общие размеры, отступы, рамку, белый фон и чёрный текст; пароль остаётся скрытым.
+- Изменены main/web/index.html, BUILD_NUMBER, AGENTS.md, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Android не изменялся.
+
+## Универсальный MQTT: основной этап — 05.10.2026
+
+- Добавлены отдельные MQTT-настройки/NVS, панель и API; стандартные JSON-топики command/result/state/availability, TLS с обязательной проверкой имени и CA, QoS1 и PUBACK результата, retained state/LWT.
+- ThingSpeak-журнал сохранён отдельно; для старого MQTT предусмотрен профиль совместимости. Проверка подключения при выключенном MQTT не подписывается на команды.
+- ESP build 343 PASS; выполняется обязательная OTA. Существующие 22 сценария команд и клиентская валидация PASS; синтаксис Web UI PASS.
+
+## Универсальный MQTT: завершение — 05.10.2026
+
+- ESP 10.0.344 собрана и загружена; возврат замка и версия подтверждены. Основная сборка 343 также была успешно прошита.
+- Существующее подключение ThingSpeak мигрирует независимо от выключенного журнала. Уточнён асинхронный статус соединения; PUBACK результата обрабатывается только для соответствующего ожидаемого сообщения.
+- Расширены проверки production-команд до 30 сценариев; сохранены 13 сценариев журнала. Добавлена русская инструкция MQTT_SETUP.md с настройками, топиками, ACL и подтверждением результата.
+- Изменены main/mqtt_config.c/h, main/CMakeLists.txt, main/cloud_commands.c/h, main/cloud_policy.c, main/cloud_link.c, main/thingspeak_config.c, main/web_ui.c, main/web/index.html, tools/test-cloud-regressions.py, MQTT_DESIGN.md, MQTT_SETUP.md, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## MQTT LTK: этап ESP — 05.10.2026
+
+- Прежний тракт команд MQTT заменён подписанным интернет-открытием с LTK зарегистрированного телефона; журнал ThingSpeak сохранён. Ключ экспортируется только этому телефону через encrypted+bonded PhoneBeacon GATT.
+- Панель сокращена до включения, адреса брокера и TLS-порта; топик и Client ID формируются из MAC. Plaintext/legacy команды больше не принимаются.
+- В lock_control добавлен приоритетный цикл: отмена hold, факт открытия, FAR/20 секунд, штатное закрытие с ожиданием пластины. Прямые диагностические команды и калибровка блокируются во время цикла.
+- Изменены main/mqtt_config.c/h, main/cloud_auth.c/h, main/cloud_commands.c, main/CMakeLists.txt, main/ble_phone.c/h, main/lock_control.c/h, main/ulp_controller.c, main/web_ui.c, main/web/index.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. ESP build 347 PASS, OTA запущена.
+
+## MQTT LTK: этап Android — 05.10.2026
+
+- Активирована кнопка интернет-открытия; добавлены MQTT TLS/Paho, HMAC команд/ответов, хранение LTK под Android Keystore и приём конфигурации через защищённый BLE.
+- Android 207 собран. Изменены InternetAuth.kt, InternetAccess.kt, InternetOpen.kt, MainActivity.kt, PhoneBeacon.kt, app/build.gradle.kts, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. ESP 347 ранее прошита и подтвердила selftest.
+
+## MQTT LTK: уточнение цикла и защиты — 05.10.2026
+
+- ESP 348 прошита, Android 208 установлен на Redmi Note 15; ориентация сохранена. Уточнены проверки свежего ULP состояния, защита диагностических команд, перенос последнего ID и очистка BLE буферов.
+- Изменены main/cloud_auth.c, main/ble_phone.c, main/ulp_controller.c, main/lock_control.c, android InternetAccess.kt/PhoneBeacon.kt, tools/test-internet-regressions.py, InternetAuthTest.kt, BUILD_NUMBER и Android BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md; все сборки/тесты этапа PASS.
+
+## MQTT LTK: служебный сеанс и удаление legacy — 05.10.2026
+
+- ESP 349 прошита. Получение LTK/параметров доступно при открытии настроек через служебный маяк даже с выключенным AUTO; на Redmi Note 15 передача и защищённое сохранение подтверждены.
+- Удалены legacy cloud_policy.c/h и tools/thingspeak-control.py/test-cloud-regressions.py. API и конфигурация ThingSpeak оставлены только для журнала; бинарная миграция сохраняет существующий канал/ключи.
+- Изменены main/ble_phone.c, main/thingspeak_config.c/h, main/web_ui.c, tools/test-ulp-regressions.py, tools/test-cloud-auth.py, указанные удаления, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. ESP-сборка PASS, новые 21 HMAC/NVS сценарий, 13 journal и 13 ULP PASS.
+
+## MQTT LTK: высший приоритет очереди — 05.10.2026
+
+- ESP 350 прошита: приоритет интернет-команды действует с постановки в очередь, в том числе при полной очереди. Накопленные обычные команды удаляются при начале цикла, чтобы старый запрос не включил hold после закрытия.
+- Актуализированы MQTT_DESIGN.md, MQTT_SETUP.md, THINGSPEAK_SETUP.md. Изменены main/lock_control.c, main/CMakeLists.txt, tools/test-internet-regressions.py, tools/test-cloud-auth.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Сборка и OTA PASS.
+
+## MQTT LTK: завершение — 05.10.2026
+
+- ESP 351 прошита: безопасная диагностика TLS публичного брокера. Реальное подключение к broker.emqx.io:8883 подтверждено; Android 208 установлен на Redmi Note 15.
+- Итоговые проверки: 30 HMAC/команд, 13 интернет-цикла, 13 ULP, 13 журнала и Android debug/release по 31 тесту PASS. Временные параметры брокера сброшены, конфигурация телефона обновлена, мост удалён.
+- Файлы заключительного этапа: main/cloud_commands.c, tools/test-internet-regressions.py, BUILD_NUMBER, MQTT_SETUP.md, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## Брокер по умолчанию — 05.10.2026
+
+- При пустом адресе MQTT конфигурация подставляет broker.emqx.io; сохранённый другой брокер сохраняется. TLS-порт по умолчанию 8883, включение MQTT остаётся ручным.
+- Изменены main/mqtt_config.c, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, MQTT_SETUP.md.
+
+- Итог изменения брокера по умолчанию: ESP 353 собрана и прошита, OTA 352 → 353 и возврат firmware_version PASS.
+
+## MQTT TCP: основной этап — 05.10.2026
+
+- MQTT переведён на обычный TCP; порт 1883 задан константой на ESP и Android. Порт удалён из API/BLE/Web UI, прежнее место NVS только зарезервировано. HMAC и цикл не изменены.
+- Изменены main/mqtt_config.c/h, main/cloud_commands.c, main/ble_phone.c, main/web_ui.c, main/web/index.html, Android InternetOpen.kt/InternetAccess.kt, оба BUILD_NUMBER, MQTT_DESIGN.md, MQTT_SETUP.md, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## MQTT TCP: финальная панель — 05.10.2026
+
+- ESP356 собрана: встроенная панель проверена непосредственно в bin, mPort/TLS-порт отсутствуют. API и BLE-пакет больше не содержат port; попытка его передать отклоняется.
+- Android210 установлен на Redmi Note15, поворот сохранён 0/0. ESP355 уже подтвердила реальное MQTT TCP соединение с broker.emqx.io:1883.
+- Файлы заключительного этапа: main/web/index.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Нового физического открытия в этом этапе не выполнялось.
+
+- Итог OTA355→356 PASS, Android210 установлен. На реальном замке API/HTML подтвердили отсутствие порта и TLS в MQTT настройках.
+
+## MQTT и домашний Wi-Fi — 05.10.2026
+
+- Включённый MQTT требует домашнюю STA независимо от сохранённого флажка Wi-Fi автоподключения. Политика применяется при загрузке, при включении MQTT и при завершении временной телефонной сети Web UI.
+- Проверка запуска не блокирует MQTT задачу ожиданием IP; активные OTA и телефонные сеансы не прерываются. Состояние флажка Wi-Fi не перезаписывается.
+- Изменены main/wifi_ota.c/h, main/cloud_commands.c, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, MQTT_SETUP.md.
+
+- ESP358 прошита, возврат подтверждён. Живые проверки домашней STA после phone_runtime и restart при выключенном Wi-Fi auto_connect PASS; MQTT TCP подключился на6с после загрузки. Исходный флажок Wi-Fi восстановлен.
+
+## Главный экран: этап ESP — 05.10.2026
+
+- ESP360 PASS, создан ELF/bin; обязательная OTA359→360 выполняется. Существующая служебная характеристика принимает HOME_WIFI только отдельным флагом8 с ID и command0 после encrypted proof зарегистрированного телефона. Настройка и текущая сеть проверяются, запуск задачи не ожидает IP.
+- Удалены кнопка проверки MQTT и её JS, статус сохранён. Изменены main/ble_phone.c, main/wifi_ota.c/h, main/web/index.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## Главный экран: этап Android — 05.10.2026
+
+- ESP360 OTA359→360 PASS. Android212 PASS: onResume отправляет краткий HOME_WIFI через BleLockService/PhoneBeacon, существующий служебный режим0x83. ACK и15-секундный таймаут завершают запрос и возвращают прежний AUTO/IDLE.
+- Изменены MainActivity.kt, BleLockService.kt, PhoneBeacon.kt, ServiceBeaconProtocol.kt, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Предстоят проверка переходов настроек/hold и установка итоговой сборки.
+
+## Главный экран: завершение — 05.10.2026
+
+- ESP360 прошита, Android213 установлен на RedmiNote15. Короткий foreground запрос и возврат из Web UI подтверждены на реальном BLE; замок остался закрытым. MQTT кнопка проверки отсутствует в реальном HTML и образе.
+- Уточнены приоритеты и завершение foreground запроса при настройках/hold. Android debug/release по34 теста PASS; поворот сохранён0/0.
+- Итоговые файлы: main/wifi_ota.c/h, main/ble_phone.c, main/web/index.html, оба BUILD_NUMBER; Android MainActivity.kt, BleLockService.kt, PhoneBeacon.kt, ServiceBeaconProtocol.kt, ServiceBeaconProtocolTest.kt; MQTT_SETUP.md, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## MQTT после домашнего IP — 05.10.2026
+
+- При GOT_IP сохранённой домашней STA задача MQTT немедленно снимает отложенный retry и вызывает штатный esp_mqtt_client_reconnect. Для phone_runtime, выключенного MQTT и уже установленного соединения лишнего переподключения нет. Незавершённая попытка не теряет сигнал; клиент/очередь/подтверждения сохраняются.
+- Изменены main/cloud_commands.c/h, main/wifi_ota.c, tools/test-cloud-auth.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, MQTT_SETUP.md.
+
+- Итог: ESP362 прошита,37 production тестов PASS. Реальный переход Web UI→домашняя сеть подтвердил MQTT TCP восстановление в0–1сек после домашнего IP вместо прежнего26-секундного ожидания. Android не менялся.
+
+## 05.10.2026 — ESP364: перезапуск Wi-Fi при возврате из Web UI
+
+- Возврат из точки телефона в домашнюю сеть выполняет esp_wifi_stop→set_config→esp_wifi_start; подключение инициируется один раз событием STA_START.
+- Запоздавший DISCONNECTED предыдущего SSID не сбрасывает состояние новой сети; STA_START при запрещённом reconnect не подключается.
+- HTTP сервер, BLE/OTA, настройки и алгоритмы замка сохранены. Базовая ESP363 и итоговая ESP364 собраны и загружены по OTA; 37 MQTT/HMAC и13 internet-lock проверок PASS. Живая проверка переходов выполняется отдельно в TEST_REPORT.md.
+- Файлы: main/wifi_ota.c, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+
+## 05.10.2026 — ESP365: сохранение MQTT подписки при потере Wi-Fi
+
+- Включена штатная MQTT3.1.1 persistent session для рабочего клиента с существующим постоянным client_id; QoS1 команды доставляются после восстановления соединения, пока проходят исходный TTL/HMAC/NVS проверки.
+- Добавлено событие command subscription ready после SUBACK. Проверка отключённого MQTT использует clean session.
+- Wi-Fi перезапуск364 не устранил NOT_AUTHED полностью; источник сетевого разрыва остаётся отдельно диагностируемым. Три перехода364 выполнены, после третьего интернет-команда дала opened/fault0. Итоговое закрытие той попытки не проверялось: последовала обязательная OTA365.
+- Файлы этапа: main/cloud_commands.c, tools/test-cloud-auth.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- Итог365: три интернет-открытия сразу после выхода из настроек PASS, подтверждены OPEN→LOCKED/fault0. Подробности и оставшееся ограничение NOT_AUTHED в TEST_REPORT.md. Документация MQTT_SETUP.md обновлена.

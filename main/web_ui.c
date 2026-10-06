@@ -14,6 +14,8 @@
 #include "thingspeak_config.h"
 #include "cloud_link.h"
 #include "cloud_commands.h"
+#include "mqtt_config.h"
+#include "cJSON.h"
 #include "ulp_controller.h"
 #include "wifi_ota.h"
 #include "esp_http_server.h"
@@ -307,50 +309,20 @@ static bool thingspeak_field(const char *form, const char *key, char *out,
 static esp_err_t thingspeak_get(httpd_req_t *req)
 {
     thingspeak_config_t cfg;
-    if (thingspeak_config_get(&cfg) != ESP_OK)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak config unavailable");
-    char json[1536];
-    size_t pos = 0;
-    json[pos++] = '{';
-    memcpy(json + pos, "\"login\":", 8); pos += 8;
-    if (!json_append_string(json, sizeof(json), &pos, cfg.login))
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak login too long");
-    int n = snprintf(json + pos, sizeof(json) - pos, ",\"channel_id\":%lu,\"channel_url\":",
-                     (unsigned long)cfg.channel_id);
-    if (n < 0 || (size_t)n >= sizeof(json) - pos)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
-    pos += (size_t)n;
-    if (!json_append_string(json, sizeof(json), &pos, cfg.channel_url))
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak URL too long");
-    n = snprintf(json + pos, sizeof(json) - pos,
-                 ",\"password_configured\":%s,\"read_key_configured\":%s,\"write_key_configured\":%s,"
-                 "\"enabled\":%s,\"commands_enabled\":%s,\"command_channel_id\":%lu,\"result_channel_id\":%lu,"
-                 "\"pending\":%u,\"dropped\":%u,\"time_ready\":%s,\"mqtt_ready\":%s,\"cloud_status\":\"%s\",\"command_status\":\"%s\",\"mqtt_client_id\":",
-                 cfg.password[0] ? "true" : "false",
-                 cfg.read_api_key[0] ? "true" : "false",
-                 cfg.write_api_key[0] ? "true" : "false", cfg.enabled ? "true" : "false",
-                 cfg.commands_enabled ? "true" : "false", (unsigned long)cfg.command_channel_id,
-                 (unsigned long)cfg.result_channel_id, cloud_link_pending(), cloud_link_dropped(),
-                 cloud_link_time_ready() ? "true" : "false", cloud_link_mqtt_ready() ? "true" : "false",
-                 cloud_link_error(), cloud_commands_status());
-    if (n < 0 || (size_t)n >= sizeof(json) - pos)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
-    pos += (size_t)n;
-    if (!json_append_string(json, sizeof(json), &pos, cfg.mqtt_client_id) || pos + 2 >= sizeof(json))
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak response too long");
-    json[pos++] = '}'; json[pos] = '\0';
-    return send_json(req, json);
-}
-
-static bool cloud_number(const char *form, const char *key, uint32_t *out)
-{
-    char value[16] = "";
-    if (!thingspeak_field(form, key, value, sizeof(value), true)) return false;
-    if (!value[0]) return true;
-    char *end; errno = 0;
-    unsigned long number = strtoul(value, &end, 10);
-    if (errno || *end || strspn(value, "0123456789") != strlen(value) || number > UINT32_MAX) return false;
-    *out = number; return true;
+    if(thingspeak_config_get(&cfg)!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"ThingSpeak config unavailable");
+    cJSON *json=cJSON_CreateObject();
+    cJSON_AddNumberToObject(json,"channel_id",cfg.channel_id);
+    cJSON_AddStringToObject(json,"channel_url",cfg.channel_url);
+    cJSON_AddBoolToObject(json,"enabled",cfg.enabled);
+    cJSON_AddBoolToObject(json,"read_key_configured",cfg.read_api_key[0]!=0);
+    cJSON_AddBoolToObject(json,"write_key_configured",cfg.write_api_key[0]!=0);
+    cJSON_AddNumberToObject(json,"pending",cloud_link_pending());
+    cJSON_AddNumberToObject(json,"dropped",cloud_link_dropped());
+    cJSON_AddBoolToObject(json,"time_ready",cloud_link_time_ready());
+    cJSON_AddStringToObject(json,"cloud_status",cloud_link_error());
+    char *text=cJSON_PrintUnformatted(json); cJSON_Delete(json);
+    if(!text) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"No memory");
+    esp_err_t err=send_json(req,text);free(text);return err;
 }
 
 static bool cloud_flag(const char *form, const char *key, bool *out)
@@ -377,9 +349,7 @@ static esp_err_t thingspeak_post_impl(httpd_req_t *req, char *form, size_t capac
     if (thingspeak_config_get(&cfg) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak config unavailable");
     char channel[16];
-    if (!thingspeak_field(form, "login", cfg.login, sizeof(cfg.login), true) ||
-        !thingspeak_field(form, "password", cfg.password, sizeof(cfg.password), true) ||
-        !thingspeak_field(form, "channel_id", channel, sizeof(channel), false) ||
+    if (!thingspeak_field(form, "channel_id", channel, sizeof(channel), false) ||
         !thingspeak_field(form, "read_key", cfg.read_api_key, sizeof(cfg.read_api_key), false) ||
         !thingspeak_field(form, "write_key", cfg.write_api_key, sizeof(cfg.write_api_key), false))
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak fields");
@@ -390,23 +360,16 @@ static esp_err_t thingspeak_post_impl(httpd_req_t *req, char *form, size_t capac
         strspn(channel, "0123456789") != strlen(channel) || number > UINT32_MAX)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak channel");
     cfg.channel_id = (uint32_t)number;
-    if (!cloud_number(form, "command_channel_id", &cfg.command_channel_id) ||
-        !cloud_number(form, "result_channel_id", &cfg.result_channel_id) ||
-        !cloud_flag(form, "enabled", &cfg.enabled) ||
-        !cloud_flag(form, "commands_enabled", &cfg.commands_enabled) ||
-        !thingspeak_field(form, "mqtt_client_id", cfg.mqtt_client_id, sizeof(cfg.mqtt_client_id), true))
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid cloud settings");
+    if(!cloud_flag(form,"enabled",&cfg.enabled))
+        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid journal settings");
     thingspeak_config_t previous;
     if (thingspeak_config_get(&previous) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Config unavailable");
     if (cfg.channel_id != previous.channel_id && cloud_link_pending())
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Deliver journal before changing channel");
-    if ((cfg.command_channel_id != previous.command_channel_id || cfg.result_channel_id != previous.result_channel_id) &&
-        cloud_commands_busy())
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Deliver command result before changing channels");
     esp_err_t err = thingspeak_config_save(&cfg);
     if (err == ESP_ERR_INVALID_ARG)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Fill keys, MQTT credentials and three distinct channels");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Fill journal channel and API keys");
     return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak save failed");
 }
@@ -419,6 +382,92 @@ static esp_err_t thingspeak_post(httpd_req_t *req)
     esp_err_t err = thingspeak_post_impl(req, form, capacity);
     free(form);
     return err;
+}
+
+static esp_err_t mqtt_get(httpd_req_t *req)
+{
+    mqtt_config_t *cfg = malloc(sizeof(*cfg));
+    if (!cfg) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+    esp_err_t err = mqtt_config_get(cfg);
+    cJSON *json = err == ESP_OK ? cJSON_CreateObject() : NULL;
+    if (!json) { free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Настройки MQTT недоступны"); }
+    cJSON_AddBoolToObject(json, "enabled", cfg->enabled);
+    cJSON_AddStringToObject(json,"host",cfg->host);
+    cJSON_AddStringToObject(json,"prefix",cfg->prefix);
+    cJSON_AddBoolToObject(json, "connected", cloud_commands_connected());
+    cJSON_AddBoolToObject(json, "busy", cloud_commands_busy());
+    cJSON_AddBoolToObject(json, "time_ready", cloud_link_time_ready());
+    cJSON_AddStringToObject(json, "status", cloud_commands_status());
+    cJSON_AddStringToObject(json, "test_status", cloud_commands_test_status());
+    char *text = cJSON_PrintUnformatted(json);
+    cJSON_Delete(json); free(cfg);
+    if (!text) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+    err = send_json(req, text); free(text);
+    return err;
+}
+
+static bool mqtt_json_string(cJSON *json, const char *key, char *out, size_t size)
+{
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(json, key);
+    if (!item) return true;
+    if (!cJSON_IsString(item) || strlen(item->valuestring) >= size) return false;
+    strcpy(out, item->valuestring); return true;
+}
+
+static bool mqtt_json_flag(cJSON *json, const char *key, bool *out)
+{
+    cJSON *item = cJSON_GetObjectItemCaseSensitive(json, key);
+    if (!item) return true;
+    if (!cJSON_IsBool(item)) return false;
+    *out = cJSON_IsTrue(item); return true;
+}
+
+static esp_err_t mqtt_post(httpd_req_t *req)
+{
+    if (cloud_commands_busy())
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Дождитесь результата текущей команды MQTT");
+    if (req->content_len <= 0 || req->content_len > 12000)
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Слишком большой запрос MQTT");
+    char *body = malloc(req->content_len + 1);
+    mqtt_config_t *cfg = malloc(sizeof(*cfg));
+    if (!body || !cfg) { free(body); free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти"); }
+    size_t received = 0;
+    while (received < (size_t)req->content_len) {
+        int count = httpd_req_recv(req, body + received, req->content_len - received);
+        if (count <= 0) break;
+        received += count;
+    }
+    body[received] = 0;
+    cJSON *json = NULL;
+    if (received == (size_t)req->content_len && !memchr(body, 0, received) && !strstr(body, "\\u0000"))
+        json = cJSON_ParseWithOpts(body, NULL, true);
+    free(body);
+    bool valid = cJSON_IsObject(json) && mqtt_config_get(cfg) == ESP_OK;
+    cJSON *item;
+    cJSON_ArrayForEach(item, json) {
+        for (cJSON *other = item->next; other; other = other->next)
+            if (item->string && other->string && !strcmp(item->string, other->string)) valid = false;
+    }
+    cJSON_ArrayForEach(item,json) {
+        if(!item->string || (strcmp(item->string,"enabled") && strcmp(item->string,"host"))) valid=false;
+    }
+    if(valid) valid=mqtt_json_flag(json,"enabled",&cfg->enabled)&&
+        mqtt_json_string(json,"host",cfg->host,sizeof(cfg->host));
+    cJSON_Delete(json);
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (valid) err = mqtt_config_save(cfg);
+    free(cfg);
+    if (err == ESP_OK) return send_json(req, "{\"ok\":true}");
+    return httpd_resp_send_err(req, err == ESP_ERR_INVALID_ARG ? HTTPD_400_BAD_REQUEST : HTTPD_500_INTERNAL_SERVER_ERROR,
+                              err == ESP_ERR_INVALID_ARG ? "Проверьте адрес брокера и включение MQTT" : "Не удалось сохранить MQTT");
+}
+
+static esp_err_t mqtt_test_post(httpd_req_t *req)
+{
+    esp_err_t err = cloud_commands_test_connection();
+    if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+        "Сохраните корректные настройки MQTT и дождитесь завершения текущей команды");
+    return send_json(req, "{\"accepted\":true}");
 }
 
 static esp_err_t wifi_auto_post(httpd_req_t *req)
@@ -542,7 +591,7 @@ static esp_err_t bonds_get(httpd_req_t *req)
 
 static esp_err_t bonds_delete(httpd_req_t *req)
 {
-    char query[128], address[24];
+    char query[128], address[64];
     esp_err_t err;
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Specify address or all=1");
@@ -592,6 +641,9 @@ PHONE_ONLY_HANDLER(config_post)
 PHONE_ONLY_HANDLER(serial_log_post)
 PHONE_ONLY_HANDLER(thingspeak_get)
 PHONE_ONLY_HANDLER(thingspeak_post)
+PHONE_ONLY_HANDLER(mqtt_get)
+PHONE_ONLY_HANDLER(mqtt_post)
+PHONE_ONLY_HANDLER(mqtt_test_post)
 PHONE_ONLY_HANDLER(wifi_get)
 PHONE_ONLY_HANDLER(wifi_post)
 PHONE_ONLY_HANDLER(wifi_auto_post)
@@ -612,7 +664,7 @@ esp_err_t web_ui_start(void)
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     /* The Web UI exposes local UI and agent routes (including BLE, ULP, Wi-Fi and OTA
      * controls). Leave a small margin for future routes. */
-    config.max_uri_handlers = 32;
+    config.max_uri_handlers = 40;
     config.stack_size = 6144;
     config.lru_purge_enable = true;
     esp_err_t err = lock_ai_adapter_init();
@@ -630,6 +682,9 @@ esp_err_t web_ui_start(void)
         {.uri="/api/config/serial-log", .method=HTTP_POST, .handler=serial_log_post_phone_only},
         {.uri="/api/thingspeak", .method=HTTP_GET, .handler=thingspeak_get_phone_only},
         {.uri="/api/thingspeak", .method=HTTP_POST, .handler=thingspeak_post_phone_only},
+        {.uri="/api/mqtt", .method=HTTP_GET, .handler=mqtt_get_phone_only},
+        {.uri="/api/mqtt", .method=HTTP_POST, .handler=mqtt_post_phone_only},
+        {.uri="/api/mqtt/test", .method=HTTP_POST, .handler=mqtt_test_post_phone_only},
         {.uri="/api/wifi", .method=HTTP_GET, .handler=wifi_get_phone_only},
         {.uri="/api/wifi", .method=HTTP_POST, .handler=wifi_post_phone_only},
         {.uri="/api/wifi/auto", .method=HTTP_POST, .handler=wifi_auto_post_phone_only},
