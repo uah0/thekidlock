@@ -5664,3 +5664,13 @@ ESP 10.0.330: сборка проектным скриптом PASS, разме�
 - Логи: .device-agent/mqtt-session-365-live.log и .device-agent/mqtt-session-365/esp-monitor.log. Наблюдение завершено, дополнительных мостов/ADB forward не создавалось. Главный экран приложения восстановлен; финально firmware10.0.365, LOCKED, hold_open=false, fault_flags0.
 - Ограничение: первопричина Wi-Fi NOT_AUTHED остаётся неустановленной и не устранена; исправлена потеря команды на время кратких разрывов. При восстановлении дольше исходного TTL30с команда намеренно не выполняется; хранение сессии зависит от брокера. Android не менялся.
 - Итоговые файлы текущей задачи: main/wifi_ota.c, main/cloud_commands.c, tools/test-cloud-auth.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, MQTT_SETUP.md. Диагностические скрипты/журналы сохранены в .device-agent. Коммит не создавался.
+
+## Android — кнопка интернет-открытия, 06.10.2026
+
+- Baseline `build-android.ps1` перед изменениями PASS; затем `assembleDebug` для версии217 PASS. APK собирается в `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk`.
+- Реальная дверь-open телеметрия отсутствует; визуальную открытую створку нельзя вызвать текущими MQTT/BLE данными. Приложение показывает только подтверждённый UNLOCKED до подтверждённого LOCKED.
+- Первоначальная assembleDebug версии217 проходила до последней правки сигнального свечения.
+- Итоговая assembleDebug после accepted-сигнала PASS, Build number218. `build-android.ps1 -Action test`:39 unit tests PASS в debug/release; в том числе пять state reducer checks (QoS publish принят не считается unlock, Closing не меняет физическое состояние, unlock/lock меняются лишь по подтверждённым событиям, ошибки сохраняют последнее физическое состояние, DoorOpen требует явное событие).
+- `lintDebug` завершился с базовыми17 errors/82 warnings/1 hint. Ошибки только в прежних BLE-файлах PassiveBleScan.kt, PhoneBeacon.kt и BleLockService.kt (MissingPermission/UnspecifiedRegisterReceiverFlag); ошибок в новых DoorAction файлах или строках интеграции кнопки нет. Эти несвязанные предупреждения не исправлялись в рамках локальной кнопки.
+- Повторный `lintDebug` после build218 повторил те же17 существующих errors/82 warnings/1 hint; новых замечаний по кнопке нет. APK build218 скопирован по ADB на Redmi Note 8 Pro: `/sdcard/Download/BLELock.apk`, для ручной установки. Установку не выполнял; rotation settings не менялись.
+- Финальный lint report: C:\Dev\ble-lock-project\android_lock_beacon\app\build\reports\lint-results-debug.html; 17 existing errors in PassiveBleScan.kt/PhoneBeacon.kt/BleLockService.kt; no lint findings in new button state/view.

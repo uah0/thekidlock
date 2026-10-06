@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object InternetOpen {
     private const val MQTT_PORT = 1883
     private val busy = AtomicBoolean(false)
-    fun start(context: Context, progress: (String) -> Unit, done: () -> Unit): Boolean {
+    fun start(context: Context, onEvent: (DoorActionEvent) -> Unit, done: () -> Unit): Boolean {
         if (!busy.compareAndSet(false, true)) return false
         val app = context.applicationContext
         Thread {
@@ -31,7 +31,6 @@ object InternetOpen {
                 val signingKey = InternetAccess.key(cfg); key = signingKey
                 val prefix = "locks/" + target.replace(":", "")
                 val replies = LinkedBlockingQueue<ByteArray>(16)
-                progress("Подключение к брокеру…")
                 client = MqttClient("tcp://" + cfg.getString("host") + ":" + MQTT_PORT,
                     "phone-" + UUID.randomUUID().toString(), MemoryPersistence()).apply {
                     timeToWait = 10_000
@@ -50,7 +49,7 @@ object InternetOpen {
                 val request = JSONObject().put("phone", phone).put("time", time.toString())
                     .put("id", id.toString()).put("mac", tag).toString().toByteArray(Charsets.UTF_8)
                 client.publish("$prefix/command", request, 1, false)
-                progress("Команда отправлена. Ожидание замка…")
+                onEvent(DoorActionEvent.BrokerAccepted)
                 val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
                 var completed = false
                 var lastResult = ""
@@ -71,19 +70,25 @@ object InternetOpen {
                     if (result == lastResult) continue
                     lastResult = result
                     when (result) {
-                        "opened" -> progress(if (faults == 0L) "Замок открыт" else "Ошибка замка")
-                        "closing" -> progress("Закрытие: ожидание ответной пластины")
-                        "closed" -> { progress(if (faults == 0L) "Замок закрыт" else "Ошибка замка"); completed = true }
-                        else -> { progress("Замок сообщил об ошибке выполнения"); completed = true }
+                        "opened" -> onEvent(DoorActionEvent.LockUnlocked(healthy = faults == 0L))
+                        "closing" -> onEvent(DoorActionEvent.Closing)
+                        "closed" -> {
+                            onEvent(DoorActionEvent.LockClosed(healthy = faults == 0L))
+                            completed = true
+                        }
+                        else -> {
+                            onEvent(DoorActionEvent.Failed("Замок сообщил об ошибке выполнения"))
+                            completed = true
+                        }
                     }
                     if (completed) break
                 }
-                if (!completed) progress("Нет подтверждения завершения. Проверьте состояние замка")
+                if (!completed) onEvent(DoorActionEvent.Failed("Нет подтверждения завершения. Проверьте состояние замка"))
             } catch (e: Exception) {
-                progress(when (e) {
+                onEvent(DoorActionEvent.Failed(when (e) {
                     is IllegalStateException -> e.message ?: "Нет настроек интернет-открытия"
                     else -> "Не удалось выполнить интернет-открытие. Проверьте связь и настройки"
-                })
+                }))
             } finally {
                 key?.fill(0)
                 runCatching { client?.disconnect(1000) }

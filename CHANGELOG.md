@@ -3636,3 +3636,13 @@ SHA-256 установленного через `adb pull` APK совпадае�
 - Wi-Fi перезапуск364 не устранил NOT_AUTHED полностью; источник сетевого разрыва остаётся отдельно диагностируемым. Три перехода364 выполнены, после третьего интернет-команда дала opened/fault0. Итоговое закрытие той попытки не проверялось: последовала обязательная OTA365.
 - Файлы этапа: main/cloud_commands.c, tools/test-cloud-auth.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
 - Итог365: три интернет-открытия сразу после выхода из настроек PASS, подтверждены OPEN→LOCKED/fault0. Подробности и оставшееся ограничение NOT_AUTHED в TEST_REPORT.md. Документация MQTT_SETUP.md обновлена.
+
+## 06.10.2026 — Android: состояние операции внутри кнопки интернет-открытия
+
+- Существующую кнопку сохранено в тех же размерах252×118dp; её содержимое заменено статичной композицией двери, разделителя и замка с лёгкой Canvas анимацией сигнала, разблокировки и завершения. Тексты прогресса Toast убраны; Toast ошибки оставлен.
+- Поток MQTT не переписывался: после успешного synchronous QoS1 publish визуальный сигнал достигает замка; только HMAC-подтверждения `opened`/`closed` изменяют визуальный замок. `closing` сохраняет предыдущую подтверждённую картину; timeout/error не показывают успех. Повторный тап блокирует и view, и существующий InternetOpen.busy.
+- Реального события двери открыта в API нет; DoorOpen reducer/view предусмотрен для явного подтверждённого сенсорного события, но не вызывается таймером и не имитируется через closing/PLATE_FAR.
+- Android Views/Canvas, сторонних библиотек нет. Контент- и state-description для TalkBack обновляются со state machine. Добавлены тесты reducer.
+- Debug сборка218 PASS после финальной правки accepted-сигнала. Unit tests/lint описаны в TEST_REPORT.md.
+- Затронутые файлы: MainActivity.kt, InternetOpen.kt, DoorActionUiState.kt, DoorActionButton.kt, DoorActionUiStateTest.kt, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
+- Итоговая Android218 сборка PASS,39 unit tests PASS debug/release. Полный lint запуск зафиксировал17 существующих BLE permission/recommendation errors и82 warnings, вне файлов локальной кнопки.
