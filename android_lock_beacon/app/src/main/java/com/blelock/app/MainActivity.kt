@@ -67,8 +67,7 @@ class MainActivity : Activity() {
     private lateinit var permissionButton: Button
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
-    private lateinit var internetOpenButton: DoorActionButton
-    private var internetOpenUiState: DoorActionUiState = DoorActionUiState.Idle()
+    private lateinit var internetOpenButton: InternetOpenProgressButton
     private lateinit var hotspotStatusView: TextView
     private lateinit var hotspotWebUrlView: TextView
     private lateinit var hotspotOpenButton: Button
@@ -772,12 +771,12 @@ class MainActivity : Activity() {
         accessCard.addView(manualOpenButton, controlTileParams(heightDp = 118))
         manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }
         accessCard.addView(manualKeepOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
-        internetOpenButton = DoorActionButton(this).apply {
+        internetOpenButton = InternetOpenProgressButton(this).apply {
             setOnClickListener {
                 val started = InternetOpen.start(this@MainActivity,
-                    { event -> runOnUiThread { renderInternetOpenEvent(event) } },
-                    { runOnUiThread { renderInternetOpenEvent(DoorActionEvent.OperationFinished) } })
-                if (started) renderInternetOpenEvent(DoorActionEvent.Started)
+                    { stage -> runOnUiThread { showStage(stage) } },
+                    { })
+                if (started) isEnabled = false
             }
         }
         accessCard.addView(internetOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
@@ -1328,17 +1327,7 @@ class MainActivity : Activity() {
             topMargin = dp(topMarginDp)
         }
 
-    private fun renderInternetOpenEvent(event: DoorActionEvent) {
-        internetOpenUiState = DoorActionReducer.reduce(internetOpenUiState, event)
-        if (::internetOpenButton.isInitialized) internetOpenButton.setUiState(internetOpenUiState)
-        val message = when (event) {
-            is DoorActionEvent.Failed -> event.message
-            is DoorActionEvent.LockUnlocked -> if (!event.healthy) "Ошибка замка" else null
-            is DoorActionEvent.LockClosed -> if (!event.healthy) "Ошибка замка" else null
-            else -> null
-        }
-        if (!message.isNullOrBlank()) Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
+
 
     private fun updateAdminEntryState() {
         if (::hotspotOpenButton.isInitialized) {

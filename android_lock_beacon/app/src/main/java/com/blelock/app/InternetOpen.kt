@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object InternetOpen {
     private const val MQTT_PORT = 1883
     private val busy = AtomicBoolean(false)
-    fun start(context: Context, onEvent: (DoorActionEvent) -> Unit, done: () -> Unit): Boolean {
+    fun start(context: Context, progress: (InternetOpenStage) -> Unit, done: () -> Unit): Boolean {
         if (!busy.compareAndSet(false, true)) return false
         val app = context.applicationContext
         Thread {
@@ -31,6 +31,7 @@ object InternetOpen {
                 val signingKey = InternetAccess.key(cfg); key = signingKey
                 val prefix = "locks/" + target.replace(":", "")
                 val replies = LinkedBlockingQueue<ByteArray>(16)
+                progress(InternetOpenStage.CONNECTING)
                 client = MqttClient("tcp://" + cfg.getString("host") + ":" + MQTT_PORT,
                     "phone-" + UUID.randomUUID().toString(), MemoryPersistence()).apply {
                     timeToWait = 10_000
@@ -49,7 +50,7 @@ object InternetOpen {
                 val request = JSONObject().put("phone", phone).put("time", time.toString())
                     .put("id", id.toString()).put("mac", tag).toString().toByteArray(Charsets.UTF_8)
                 client.publish("$prefix/command", request, 1, false)
-                onEvent(DoorActionEvent.BrokerAccepted)
+                progress(InternetOpenStage.COMMAND_SENT)
                 val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
                 var completed = false
                 var lastResult = ""
@@ -69,26 +70,20 @@ object InternetOpen {
                             InternetAuth.result(target, phone, stamp, id, result, faults), reply.optString("mac"))) continue
                     if (result == lastResult) continue
                     lastResult = result
-                    when (result) {
-                        "opened" -> onEvent(DoorActionEvent.LockUnlocked(healthy = faults == 0L))
-                        "closing" -> onEvent(DoorActionEvent.Closing)
-                        "closed" -> {
-                            onEvent(DoorActionEvent.LockClosed(healthy = faults == 0L))
-                            completed = true
-                        }
-                        else -> {
-                            onEvent(DoorActionEvent.Failed("Замок сообщил об ошибке выполнения"))
-                            completed = true
-                        }
+                    val stage = internetOpenStageForReply(result, faults)
+                    progress(stage)
+                    when (stage) {
+                        InternetOpenStage.UNLOCKED,
+                        InternetOpenStage.CLOSING -> Unit
+                        InternetOpenStage.CLOSED,
+                        InternetOpenStage.ERROR -> completed = true
+                        else -> Unit
                     }
                     if (completed) break
                 }
-                if (!completed) onEvent(DoorActionEvent.Failed("Нет подтверждения завершения. Проверьте состояние замка"))
+                if (!completed) progress(InternetOpenStage.ERROR)
             } catch (e: Exception) {
-                onEvent(DoorActionEvent.Failed(when (e) {
-                    is IllegalStateException -> e.message ?: "Нет настроек интернет-открытия"
-                    else -> "Не удалось выполнить интернет-открытие. Проверьте связь и настройки"
-                }))
+                progress(InternetOpenStage.ERROR)
             } finally {
                 key?.fill(0)
                 runCatching { client?.disconnect(1000) }

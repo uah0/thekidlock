@@ -3646,3 +3646,8 @@ SHA-256 установленного через `adb pull` APK совпадае�
 - Debug сборка218 PASS после финальной правки accepted-сигнала. Unit tests/lint описаны в TEST_REPORT.md.
 - Затронутые файлы: MainActivity.kt, InternetOpen.kt, DoorActionUiState.kt, DoorActionButton.kt, DoorActionUiStateTest.kt, AUDIT.md, CHANGELOG.md, TEST_REPORT.md.
 - Итоговая Android218 сборка PASS,39 unit tests PASS debug/release. Полный lint запуск зафиксировал17 существующих BLE permission/recommendation errors и82 warnings, вне файлов локальной кнопки.
+
+## 07.10.2026 — Android build216: прогресс интернет-открытия
+
+- В существующей кнопке добавлена пятисекционная индикация: серый сигнал подключения, жёлтая отправка команды, зелёное подтверждённое открытие замка, жёлтое ожидание ответной пластины и красное подтверждённое закрытие.
+- Текстовые этапы внутри кнопки не отображаются. Ошибка выделяется миганием всей кнопки; финальный статус сбрасывается через секунду. Данные MQTT и обработчики замка сохранены.

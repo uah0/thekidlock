@@ -3959,3 +3959,9 @@ foreground `BleLockService` активен, в проверенном окне l
 - План небольшого Android-only этапа: заменить только кнопку интернета специализированной Android View кнопкой Canvas 252×118dp с постоянными пиктограммами двери/замка, разделителем и рябью; отдельный редуктор преобразует существующие operation events в UI state. Toast оставить только для ошибок; success/phase Toast убрать. Accessibility description/state description отражает UI state. Unit tests редуктора; без новых библиотек.
 - Изменяемые файлы: MainActivity.kt, InternetOpen.kt; новые DoorActionUiState.kt, DoorActionButton.kt и DoorActionUiStateTest.kt; после проверки обновить CHANGELOG.md и TEST_REPORT.md. `222.png` в корне проекта отсутствует; ориентироваться на текстовое описание.
 - Верификация финального этапа: build218 PASS;39 unit tests debug/release PASS; lint проверен, 17 прежних BLE security permission errors и82 warnings не относятся к файлам этой задачи. APK build218 скопирован в `/sdcard/Download/BLELock.apk` Redmi Note 8 Pro для ручной установки.
+
+## Android build216 — segmented progress button on main, 07.10.2026
+
+- Перенесена проверенная пятисекционная кнопка интернет-открытия поверх текущей ветки `archive-89-original-apk`, сохранив предшествующие изменения проекта.
+- Сегменты отображают только фактические MQTT события: CONNECTING, COMMAND_SENT, UNLOCKED, CLOSING и CLOSED; подтверждение физически открытой двери отдельно не передаётся, поэтому состояние двери не дорисовывается.
+- Ошибки остаются отдельным красным миганием; повторный запуск блокируется на время операции, TalkBack получает описание состояния. Используются существующие Android Views/Canvas без новых библиотек.

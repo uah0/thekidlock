@@ -5674,3 +5674,10 @@ ESP 10.0.330: сборка проектным скриптом PASS, разме�
 - `lintDebug` завершился с базовыми17 errors/82 warnings/1 hint. Ошибки только в прежних BLE-файлах PassiveBleScan.kt, PhoneBeacon.kt и BleLockService.kt (MissingPermission/UnspecifiedRegisterReceiverFlag); ошибок в новых DoorAction файлах или строках интеграции кнопки нет. Эти несвязанные предупреждения не исправлялись в рамках локальной кнопки.
 - Повторный `lintDebug` после build218 повторил те же17 существующих errors/82 warnings/1 hint; новых замечаний по кнопке нет. APK build218 скопирован по ADB на Redmi Note 8 Pro: `/sdcard/Download/BLELock.apk`, для ручной установки. Установку не выполнял; rotation settings не менялись.
 - Финальный lint report: C:\Dev\ble-lock-project\android_lock_beacon\app\build\reports\lint-results-debug.html; 17 existing errors in PassiveBleScan.kt/PhoneBeacon.kt/BleLockService.kt; no lint findings in new button state/view.
+
+## Android build216 — включение в основную ветку, 07.10.2026
+
+- Базовая Android-сборка из коммита с предыдущей кнопкой прошла до изменений; финальный `build-android.ps1` завершился успешно.
+- `build-android.ps1 -Action test`: 41/41 тестов прошёл в debug и 41/41 в release (82 всего, ошибок и падений нет).
+- `git diff --check`: PASS. `lintDebug` запускается отдельно; результаты зафиксировать после проверки.
+- APK build216 установлен на REDMI Note 15; до/после установки настройки ориентации экрана остались 0/0.
