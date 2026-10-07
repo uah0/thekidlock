@@ -774,7 +774,8 @@ class MainActivity : Activity() {
         internetOpenButton = InternetOpenProgressButton(this).apply {
             setOnClickListener {
                 val started = InternetOpen.start(this@MainActivity,
-                    { stage -> runOnUiThread { showStage(stage) } },
+                    { stage, door -> runOnUiThread { showStage(stage, door) } },
+                    { message -> runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() } },
                     { })
                 if (started) isEnabled = false
             }

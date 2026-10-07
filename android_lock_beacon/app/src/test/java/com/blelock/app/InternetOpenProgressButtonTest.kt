@@ -9,6 +9,9 @@ class InternetOpenProgressButtonTest {
         assertEquals(InternetOpenStage.UNLOCKED, internetOpenStageForReply("opened", 0))
         assertEquals(InternetOpenStage.CLOSING, internetOpenStageForReply("closing", 0))
         assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0))
+        assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0, "closed"))
+        assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0, "unknown"))
+        assertEquals(InternetOpenStage.ERROR, internetOpenStageForReply("closed", 0, "open"))
     }
 
     @Test

@@ -8,8 +8,8 @@ import java.security.MessageDigest
 object InternetAuth {
     fun command(target: String, phone: String, time: Long, id: Long) =
         "BLELOCK1|command|$target|$phone|$time|$id|open"
-    fun result(target: String, phone: String, time: Long, id: Long, result: String, faults: Long) =
-        "BLELOCK1|result|$target|$phone|$time|$id|$result|$faults"
+    fun result(target: String, phone: String, time: Long, id: Long, result: String, faults: Long, door: String? = null) =
+        "BLELOCK1|result|$target|$phone|$time|$id|$result|$faults" + (door?.let { "|$it" } ?: "")
     fun sign(key: ByteArray, text: String): String {
         require(key.size == 16)
         return Mac.getInstance("HmacSHA256").run {

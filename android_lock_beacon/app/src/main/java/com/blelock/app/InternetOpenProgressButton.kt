@@ -21,10 +21,10 @@ enum class InternetOpenStage {
     IDLE, CONNECTING, COMMAND_SENT, UNLOCKED, CLOSING, CLOSED, ERROR
 }
 
-internal fun internetOpenStageForReply(result: String, faults: Long): InternetOpenStage = when {
+internal fun internetOpenStageForReply(result: String, faults: Long, door: String? = null): InternetOpenStage = when {
     result == "opened" && faults == 0L -> InternetOpenStage.UNLOCKED
     result == "closing" -> InternetOpenStage.CLOSING
-    result == "closed" && faults == 0L -> InternetOpenStage.CLOSED
+    result == "closed" && door != "open" && faults == 0L -> InternetOpenStage.CLOSED
     result in listOf("opened", "closed", "error", "interrupted") -> InternetOpenStage.ERROR
     else -> InternetOpenStage.ERROR
 }
@@ -85,13 +85,13 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         minimumWidth = dp(200f).toInt()
     }
 
-    fun showStage(next: InternetOpenStage) {
+    fun showStage(next: InternetOpenStage, doorState: String? = null) {
         handler.removeCallbacksAndMessages(null)
         blinkAnimator?.cancel()
         blinkAnimator = null
         blinkOn = false
         stage = next
-        contentDescription = descriptionFor(next)
+        contentDescription = descriptionFor(next, doorState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
         when (next) {
@@ -141,14 +141,21 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         handler.postDelayed(task, delayMs)
     }
 
-    private fun descriptionFor(value: InternetOpenStage): String = when (value) {
-        InternetOpenStage.IDLE -> idleLabel
-        InternetOpenStage.CONNECTING -> "Подключение к брокеру"
-        InternetOpenStage.COMMAND_SENT -> "Команда отправлена, ожидание замка"
-        InternetOpenStage.UNLOCKED -> "Замок открыт"
-        InternetOpenStage.CLOSING -> "Замок закрывается, ожидание ответной пластины"
-        InternetOpenStage.CLOSED -> "Замок закрыт"
-        InternetOpenStage.ERROR -> "Ошибка интернет-открытия"
+    private fun descriptionFor(value: InternetOpenStage, doorState: String?): String {
+        val base = when (value) {
+            InternetOpenStage.IDLE -> idleLabel
+            InternetOpenStage.CONNECTING -> "Подключение к брокеру"
+            InternetOpenStage.COMMAND_SENT -> "Команда отправлена, ожидание замка"
+            InternetOpenStage.UNLOCKED -> "Замок открыт"
+            InternetOpenStage.CLOSING -> "Замок закрывается, ожидание ответной пластины"
+            InternetOpenStage.CLOSED -> "Замок закрыт"
+            InternetOpenStage.ERROR -> "Ошибка интернет-открытия"
+        }
+        return when (doorState) {
+            "open" -> "$base. Дверь открыта"
+            "closed" -> "$base. Дверь закрыта"
+            else -> base
+        }
     }
 
     override fun onDraw(canvas: Canvas) {

@@ -27,6 +27,16 @@ class InternetAuthTest {
         assertFalse(InternetAuth.verify(key, r.replace("opened", "closed"), tag))
         assertFalse(InternetAuth.verify(key, r.dropLast(1) + "1", tag))
     }
+    @Test fun doorStateIsAuthenticatedAndLegacyResponsesRemainValid() {
+        val target = "a0:f2:62:f1:14:b8"
+        val phone = "04c8e193a7065"
+        val signed = InternetAuth.result(target, phone, 1000, 1001, "closing", 0, "open")
+        val tag = InternetAuth.sign(key, signed)
+        assertTrue(InternetAuth.verify(key, signed, tag))
+        assertFalse(InternetAuth.verify(key, signed.replace("|open", "|closed"), tag))
+        val legacy = InternetAuth.result(target, phone, 1000, 1001, "opened", 0)
+        assertTrue(InternetAuth.verify(key, legacy, InternetAuth.sign(key, legacy)))
+    }
     @Test fun freshnessBoundary() {
         assertTrue(InternetAuth.fresh(970,1000))
         assertTrue(InternetAuth.fresh(1005,1000))
