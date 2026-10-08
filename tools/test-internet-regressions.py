@@ -57,7 +57,6 @@ static esp_err_t save_hold_open(bool held){held_saves++;return test_case==5 ? 1 
 static int64_t esp_timer_get_time(void){return clock_ms*1000;}
 static void app_config_get(app_config_t *cfg){cfg->timer_a_ms=500;}
 static void event_log_add(const char *s,...){}
-static void cloud_link_record(const char*a,const char*b,const char*c,const char*d){}
 static esp_err_t apply_command(ulp_command_t cmd){
     if(cmd==ULP_CMD_HOLD_OPEN)hold_calls++;
     if(cmd==ULP_CMD_OPEN)open_calls++;

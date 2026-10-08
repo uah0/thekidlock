@@ -284,21 +284,9 @@ table.bonds td:first-child{font-family:var(--mono)}
 
 
 <section class="panel">
-  <div class="panel-head"><span class="tag">NET</span><h2>ThingSpeak</h2></div>
-  <div class="field"><label><input id="tsEnabled" type="checkbox"> Отправлять журнал событий</label></div>
-  <div class="field"><label for="tsChannel">Номер канала</label><input id="tsChannel" type="number" min="0" max="4294967295" oninput="updateThingSpeakLink()"></div>
-  <div class="field"><span>Ссылка на веб-канал</span><a id="tsUrl" target="_blank" rel="noopener noreferrer" hidden></a><small id="tsUrlUnavailable">Укажите номер канала</small></div>
-  <div class="field"><label for="tsReadKey">Read API key</label><input id="tsReadKey" type="password" maxlength="64" placeholder="Пусто — сохранить прежний"></div>
-  <div class="field"><label for="tsWriteKey">Write API key</label><input id="tsWriteKey" type="password" maxlength="64" placeholder="Пусто — сохранить прежний"></div>
-  <p class="panel-sub">Закрытый канал журнала событий. Время события UTC находится в field5. MQTT настраивается отдельно ниже.</p>
-  <p id="tsStatus" role="status"></p>
-  <div class="actions-row"><button class="btn-primary" onclick="saveThingSpeak()">Сохранить</button><span class="saved-msg" id="tsSaved"></span></div>
-</section>
-
-<section class="panel">
   <div class="panel-head"><span class="tag">NET</span><h2>MQTT</h2></div>
   <div class="field"><label><input id="mEnabled" type="checkbox"> Открытие через интернет</label></div>
-  <div class="field"><label for="mHost">Адрес публичного брокера</label><input id="mHost" type="text" maxlength="192" placeholder="Домен брокера" autocomplete="off"></div>
+  <div class="field"><input id="mHost" type="text" maxlength="192" aria-label="Адрес публичного брокера" placeholder="Домен брокера" autocomplete="off"></div>
   <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
  </section>
 
@@ -477,15 +465,8 @@ async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_
 async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;serialLog.checked=c.serial_log_enabled}
 async function saveSerialLog(){try{await j('/api/config/serial-log?enabled='+(serialLog.checked?'1':'0'),{method:'POST'});serialLogSaved.textContent='Сохранено';setTimeout(()=>serialLogSaved.textContent='',2000)}catch(e){serialLog.checked=!serialLog.checked;serialLogSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
 function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidden=!open;advancedToggle.setAttribute('aria-expanded',String(open));advancedToggle.textContent=open?'Дополнительные настройки ▴':'Дополнительные настройки ▾'}
-function updateThingSpeakLink(){let id=tsChannel.value.trim(),valid=/^[1-9][0-9]*$/.test(id)&&Number(id)<=4294967295;tsUrl.hidden=!valid;tsUrlUnavailable.hidden=valid;if(valid){let url='https://thingspeak.mathworks.com/channels/'+id;tsUrl.href=url;tsUrl.textContent=url}else{tsUrl.removeAttribute('href');tsUrl.textContent=''}}
-function showCloudStatus(c){tsStatus.textContent='UTC: '+(c.time_ready?'синхронизировано':'ожидание')+' · Очередь: '+c.pending+' · Потери: '+c.dropped+' · '+c.cloud_status}
-async function loadThingSpeak(){try{let c=await j('/api/thingspeak');tsChannel.value=c.channel_id||'';updateThingSpeakLink();tsEnabled.checked=c.enabled;tsReadKey.value='';tsWriteKey.value='';showCloudStatus(c);tsSaved.textContent=[c.read_key_configured?'Read key сохранён':'',c.write_key_configured?'Write key сохранён':''].filter(Boolean).join(' · ')}catch(e){tsSaved.textContent=String(e)}}
-async function refreshCloudStatus(){try{showCloudStatus(await j('/api/thingspeak'))}catch(e){tsStatus.textContent=String(e)}}
-async function saveThingSpeak(){let q=new URLSearchParams({channel_id:tsChannel.value||'0',read_key:tsReadKey.value,write_key:tsWriteKey.value,enabled:tsEnabled.checked?'1':'0'});try{await j('/api/thingspeak',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await loadThingSpeak();tsSaved.textContent='Сохранено'}catch(e){tsSaved.textContent=String(e)}}
-const mqttLabels={disabled:'Отключено',connected:'Подключено',ready:'Готово',connecting:'Подключение…',waiting_time:'Ожидание синхронизации UTC',authentication_failed:'Брокер отклонил логин или пароль',network_failed:'Ошибка сети',mqtt_disconnected:'Соединение потеряно',subscription_denied:'Нет разрешения на подписку команд',config_nvs:'Ошибка чтения настроек',client_failed:'Не удалось создать соединение',no_memory:'Недостаточно памяти',command_nvs:'Ошибка сохранения команды',invalid_command:'Некорректная команда',wrong_target:'Команда адресована другому замку',stale_or_unsynced:'Команда просрочена или UTC не синхронизировано',busy:'Ожидание результата',result_pending:'Отправка результата',waiting_feedback:'Ожидание подтверждения замка',retained_command_rejected:'Сохранённая брокером команда отклонена'};
-function showMqttStatus(c){mStatus.textContent=(mqttLabels[c.status]||c.status)+' · UTC: '+(c.time_ready?'синхронизировано':'ожидание');mSave.disabled=c.busy}
-async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mTopics.textContent=['command','result'].map(t=>c.prefix+'/'+t).join('\n');showMqttStatus(c)}catch(e){mSaved.textContent=String(e)}}
-async function refreshMqttStatus(){try{showMqttStatus(await j('/api/mqtt'))}catch(e){mStatus.textContent='Нет связи: '+e}}
+async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
+async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
 async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wupdate.checked=c.auto_update;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
@@ -503,7 +484,7 @@ async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите 
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
-async function initPage(){await loadConfig();await loadWifi();await loadThingSpeak();await loadMqtt();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshCloudStatus,10000);setInterval(refreshMqttStatus,2000)}
+async function initPage(){await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000)}
 initPage()
 </script>
 </body>

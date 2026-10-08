@@ -10,7 +10,6 @@
 #include "event_log.h"
 #include "led.h"
 #include "lock_control.h"
-#include "cloud_link.h"
 #include "mqtt_config.h"
 #include "cJSON.h"
 #include "esp_mac.h"
@@ -780,7 +779,6 @@ static int central_read_cb(uint16_t handle, const struct ble_gatt_error *error,
     if (secured && valid) {
         char identity[18];
         address_to_string(&desc.peer_id_addr, identity);
-        cloud_link_record("connected", "ble", identity, "bonded_encrypted");
         app_config_t cfg;
         app_config_get(&cfg);
         if (s_central_rssi >= cfg.phone_rssi_threshold) {
@@ -1110,7 +1108,6 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
     struct ble_gap_conn_desc cloud_desc;
     char actor[18] = "";
     if (ble_gap_conn_find(handle, &cloud_desc) == 0) address_to_string(&cloud_desc.peer_id_addr, actor);
-    cloud_link_record("connected", "ble", actor, "bonded_encrypted");
     event_log_add("BLE service: request flags=%u command=%u", request[1], request[2]);
     if (request[1] == PHONE_SERVICE_HOME_WIFI) {
         esp_err_t err = wifi_ota_request_home_wifi();

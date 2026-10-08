@@ -3,7 +3,6 @@ idf_component_register(
         "main.c"
         "ap_mode.c"
         "app_config.c"
-        "thingspeak_config.c"
         "mqtt_config.c"
         "cloud_link.c"
         "cloud_commands.c"

@@ -1,7 +1,6 @@
 #include "lock_control.h"
 
 #include "app_config.h"
-#include "cloud_link.h"
 #include <stdio.h>
 #include <stdatomic.h>
 #include <string.h>
@@ -158,7 +157,6 @@ static void lock_task(void *arg)
 
         if (received) {
             if (item.deadline_us && esp_timer_get_time() >= item.deadline_us) {
-                cloud_link_record("expired_in_queue", item.source, item.actor, "not_executed");
                 if(event==LOCK_EVENT_INTERNET_OPEN) atomic_store(&s_internet_pending,false);
                 received = false;
             }
@@ -171,7 +169,6 @@ static void lock_task(void *arg)
                 snprintf(s_actor, sizeof(s_actor), "%s", item.actor);
                 char operation[24];
                 snprintf(operation, sizeof(operation), "operation=%u", (unsigned)event);
-                cloud_link_record("request", s_source, s_actor, operation);
             }
             switch (event) {
                 case LOCK_EVENT_INTERNET_OPEN: {
@@ -185,7 +182,6 @@ static void lock_task(void *arg)
                     if(apply_state(true)!=ESP_OK) { atomic_store(&s_internet_pending,false); break; }
                     s_internet_started_ms=now_ms; s_internet_opened_ms=0;
                     s_internet_phase=1; atomic_store(&s_internet,true); atomic_store(&s_internet_pending,false);
-                    cloud_link_record("internet_open",s_source,s_actor,"opening");
                     break;
                 }
                 case LOCK_EVENT_OPEN:
@@ -241,7 +237,6 @@ static void lock_task(void *arg)
                     if (!s_mode_persisted) {
                         event_log_add("Замок: ошибка сохранения режима в NVS");
                     }
-                    cloud_link_record("mode", s_source, s_actor, hold_open ? "hold_on" : "hold_off");
                     break;
                 }
                 case LOCK_EVENT_DISABLE_AUTO_CLOSE:
@@ -315,7 +310,6 @@ static void lock_task(void *arg)
                 if(removed || now_ms-s_internet_opened_ms>=20000) {
                     if(apply_state(false)==ESP_OK) {
                         s_internet_phase=3;
-                        cloud_link_record("internet_close",s_source,s_actor,removed?"plate_removed":"timeout_20s");
                     }
                 }
             } else if(s_internet_phase==3 && f.valid && f.state==LOCK_STATE_LOCKED) {
@@ -487,10 +481,6 @@ static void refresh_feedback(int64_t now_ms)
         previous.calibration_required != current.calibration_required) {
         event_log_add("ULP факт: %s fault=0x%lx", lock_control_feedback_name(&current),
                       (unsigned long)current.fault_flags);
-        char result[48];
-        snprintf(result, sizeof(result), "%s;fault=%lx;hold=%u",
-                 lock_control_feedback_name(&current), (unsigned long)current.fault_flags, current.hold_open);
-        cloud_link_record("state", s_source, s_actor, result);
     }
 }
 

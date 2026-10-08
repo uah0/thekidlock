@@ -11,7 +11,6 @@
 #include "ble_phone.h"
 #include "event_log.h"
 #include "lock_control.h"
-#include "thingspeak_config.h"
 #include "cloud_link.h"
 #include "cloud_commands.h"
 #include "mqtt_config.h"
@@ -294,96 +293,6 @@ static esp_err_t serial_log_post(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Serial log save failed");
 }
 
-static bool thingspeak_field(const char *form, const char *key, char *out,
-                             size_t capacity, bool optional)
-{
-    char encoded[THINGSPEAK_URL_MAX * 3 + 1];
-    esp_err_t err = httpd_query_key_value(form, key, encoded, sizeof(encoded));
-    if (optional && err == ESP_ERR_NOT_FOUND) return true;
-    if (err != ESP_OK || !form_url_decode(encoded) ||
-        strlen(encoded) >= capacity) return false;
-    strcpy(out, encoded);
-    return true;
-}
-
-static esp_err_t thingspeak_get(httpd_req_t *req)
-{
-    thingspeak_config_t cfg;
-    if(thingspeak_config_get(&cfg)!=ESP_OK) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"ThingSpeak config unavailable");
-    cJSON *json=cJSON_CreateObject();
-    cJSON_AddNumberToObject(json,"channel_id",cfg.channel_id);
-    cJSON_AddStringToObject(json,"channel_url",cfg.channel_url);
-    cJSON_AddBoolToObject(json,"enabled",cfg.enabled);
-    cJSON_AddBoolToObject(json,"read_key_configured",cfg.read_api_key[0]!=0);
-    cJSON_AddBoolToObject(json,"write_key_configured",cfg.write_api_key[0]!=0);
-    cJSON_AddNumberToObject(json,"pending",cloud_link_pending());
-    cJSON_AddNumberToObject(json,"dropped",cloud_link_dropped());
-    cJSON_AddBoolToObject(json,"time_ready",cloud_link_time_ready());
-    cJSON_AddStringToObject(json,"cloud_status",cloud_link_error());
-    char *text=cJSON_PrintUnformatted(json); cJSON_Delete(json);
-    if(!text) return httpd_resp_send_err(req,HTTPD_500_INTERNAL_SERVER_ERROR,"No memory");
-    esp_err_t err=send_json(req,text);free(text);return err;
-}
-
-static bool cloud_flag(const char *form, const char *key, bool *out)
-{
-    char value[8] = "";
-    if (!thingspeak_field(form, key, value, sizeof(value), true)) return false;
-    if (!value[0]) return true;
-    if (strcmp(value, "0") && strcmp(value, "1")) return false;
-    *out = value[0] == '1'; return true;
-}
-
-static esp_err_t thingspeak_post_impl(httpd_req_t *req, char *form, size_t capacity)
-{
-    if (req->content_len <= 0 || (size_t)req->content_len >= capacity)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ThingSpeak form too long");
-    size_t received = 0;
-    while (received < (size_t)req->content_len) {
-        int count = httpd_req_recv(req, form + received, req->content_len - received);
-        if (count <= 0) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "ThingSpeak form incomplete");
-        received += (size_t)count;
-    }
-    form[received] = '\0';
-    thingspeak_config_t cfg;
-    if (thingspeak_config_get(&cfg) != ESP_OK)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak config unavailable");
-    char channel[16];
-    if (!thingspeak_field(form, "channel_id", channel, sizeof(channel), false) ||
-        !thingspeak_field(form, "read_key", cfg.read_api_key, sizeof(cfg.read_api_key), false) ||
-        !thingspeak_field(form, "write_key", cfg.write_api_key, sizeof(cfg.write_api_key), false))
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak fields");
-    char *end = NULL;
-    errno = 0;
-    unsigned long number = strtoul(channel, &end, 10);
-    if (errno || end == channel || *end ||
-        strspn(channel, "0123456789") != strlen(channel) || number > UINT32_MAX)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid ThingSpeak channel");
-    cfg.channel_id = (uint32_t)number;
-    if(!cloud_flag(form,"enabled",&cfg.enabled))
-        return httpd_resp_send_err(req,HTTPD_400_BAD_REQUEST,"Invalid journal settings");
-    thingspeak_config_t previous;
-    if (thingspeak_config_get(&previous) != ESP_OK)
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Config unavailable");
-    if (cfg.channel_id != previous.channel_id && cloud_link_pending())
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Deliver journal before changing channel");
-    esp_err_t err = thingspeak_config_save(&cfg);
-    if (err == ESP_ERR_INVALID_ARG)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Fill journal channel and API keys");
-    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
-        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ThingSpeak save failed");
-}
-
-static esp_err_t thingspeak_post(httpd_req_t *req)
-{
-    const size_t capacity = 1800;
-    char *form = malloc(capacity);
-    if (!form) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "No memory");
-    esp_err_t err = thingspeak_post_impl(req, form, capacity);
-    free(form);
-    return err;
-}
-
 static esp_err_t mqtt_get(httpd_req_t *req)
 {
     mqtt_config_t *cfg = malloc(sizeof(*cfg));
@@ -639,8 +548,6 @@ PHONE_ONLY_HANDLER(ulp_calibration_post)
 PHONE_ONLY_HANDLER(config_get)
 PHONE_ONLY_HANDLER(config_post)
 PHONE_ONLY_HANDLER(serial_log_post)
-PHONE_ONLY_HANDLER(thingspeak_get)
-PHONE_ONLY_HANDLER(thingspeak_post)
 PHONE_ONLY_HANDLER(mqtt_get)
 PHONE_ONLY_HANDLER(mqtt_post)
 PHONE_ONLY_HANDLER(mqtt_test_post)
@@ -680,8 +587,6 @@ esp_err_t web_ui_start(void)
         {.uri="/api/config", .method=HTTP_GET, .handler=config_get_phone_only},
         {.uri="/api/config", .method=HTTP_POST, .handler=config_post_phone_only},
         {.uri="/api/config/serial-log", .method=HTTP_POST, .handler=serial_log_post_phone_only},
-        {.uri="/api/thingspeak", .method=HTTP_GET, .handler=thingspeak_get_phone_only},
-        {.uri="/api/thingspeak", .method=HTTP_POST, .handler=thingspeak_post_phone_only},
         {.uri="/api/mqtt", .method=HTTP_GET, .handler=mqtt_get_phone_only},
         {.uri="/api/mqtt", .method=HTTP_POST, .handler=mqtt_post_phone_only},
         {.uri="/api/mqtt/test", .method=HTTP_POST, .handler=mqtt_test_post_phone_only},
