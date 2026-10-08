@@ -5711,3 +5711,13 @@ ESP 10.0.330: сборка проектным скриптом PASS, разме�
 - ESP baseline build 372 и итоговый build 373 прошли. В HTML удалён DOM статуса и пользовательская подпись брокера; JavaScript больше не отображает/опросивает статус, но сохраняет периодическую синхронизацию признака занятости.
 - OTA через device-agent: PASS, firmware 10.0.371 → 10.0.373.
 - `git diff --check`: PASS.
+
+## Исправление резерва стека ULP в основной папке — 08.10.2026
+
+- Baseline до изменения: `build-esp32.ps1` PASS, build379; бинарник 1,383,200 байт.
+- Baseline linker map: ULP BSS `0x120c..0x133c`, `__stack_top=0x1400` (196 байт запаса).
+- Установленная версия обнаруженного TheKidLock: 10.0.381. Итоговый firmware number зарезервирован как 10.0.382, чтобы не понижать установленную версию.
+- Итоговая `build-esp32.ps1`: PASS, build382; bin 1,383,200 байт, OTA-раздел оставил 30% запаса. Новая карта: `__stack_top=0x1f80`, данные ULP не пересекают стек.
+- OTA PASS через `device-agent.ps1`: `10.0.381 → 10.0.382`; устройство вернулось, `device_id=a0:f2:62:f1:14:b8`, boot id изменился.
+- Post-flash status/events и три снимка на uptime 57/66/75 с: `LOCKED`, `fault_flags=0`, FSM `Закрыт`, `plate=Зазор 1`, retry=0, close attempts=3 без роста, overlap=0; measurement counter вырос 1397 → 1835. Управляющие команды не отправлялись.
+- `git diff --check`: PASS.
