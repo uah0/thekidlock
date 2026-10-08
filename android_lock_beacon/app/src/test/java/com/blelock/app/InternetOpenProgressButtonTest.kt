@@ -8,8 +8,28 @@ class InternetOpenProgressButtonTest {
     fun mapsConfirmedBrokerResultsToFiveProgressStages() {
         assertEquals(InternetOpenStage.UNLOCKED, internetOpenStageForReply("opened", 0))
         assertEquals(InternetOpenStage.CLOSING, internetOpenStageForReply("closing", 0))
+        assertEquals(
+            InternetOpenStage.UNLOCKED,
+            internetOpenStageForReply("closing", 0, "closed", lockWasOpened = true)
+        )
+        assertEquals(
+            InternetOpenStage.CLOSING,
+            internetOpenStageForReply("closing", 0, "closed", lockWasOpened = true, doorWasOpened = true)
+        )
         assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0))
         assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0, "closed"))
+        assertEquals(
+            InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN,
+            internetOpenStageForReply("closed", 0, "closed", lockWasOpened = true)
+        )
+        assertEquals(
+            InternetOpenStage.CLOSED,
+            internetOpenStageForReply("closed", 0, "closed", lockWasOpened = true, doorWasOpened = true)
+        )
+        assertEquals(
+            InternetOpenStage.CLOSED,
+            internetOpenStageForReply("closed", 0, "unknown", lockWasOpened = true)
+        )
         assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0, "unknown"))
         assertEquals(InternetOpenStage.ERROR, internetOpenStageForReply("closed", 0, "open"))
     }

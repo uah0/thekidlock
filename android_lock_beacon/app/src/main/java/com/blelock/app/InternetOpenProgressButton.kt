@@ -18,12 +18,19 @@ import android.util.AttributeSet
 import android.view.View
 
 enum class InternetOpenStage {
-    IDLE, CONNECTING, COMMAND_SENT, UNLOCKED, CLOSING, CLOSED, ERROR
+    IDLE, CONNECTING, COMMAND_SENT, UNLOCKED, CLOSING, CLOSED, CLOSED_WITHOUT_DOOR_OPEN, ERROR
 }
 
-internal fun internetOpenStageForReply(result: String, faults: Long, door: String? = null): InternetOpenStage = when {
+internal fun internetOpenStageForReply(
+    result: String, faults: Long, door: String? = null,
+    lockWasOpened: Boolean = false, doorWasOpened: Boolean = false
+): InternetOpenStage = when {
     result == "opened" && faults == 0L -> InternetOpenStage.UNLOCKED
+    result == "closing" && door == "closed" && lockWasOpened && !doorWasOpened && faults == 0L ->
+        InternetOpenStage.UNLOCKED
     result == "closing" -> InternetOpenStage.CLOSING
+    result == "closed" && door == "closed" && lockWasOpened && !doorWasOpened && faults == 0L ->
+        InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN
     result == "closed" && door != "open" && faults == 0L -> InternetOpenStage.CLOSED
     result in listOf("opened", "closed", "error", "interrupted") -> InternetOpenStage.ERROR
     else -> InternetOpenStage.ERROR
@@ -36,6 +43,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
     private val rect = RectF()
+    private val progressRect = RectF()
     private val outerPath = Path()
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -95,7 +103,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
         when (next) {
-            InternetOpenStage.CLOSED -> {
+            InternetOpenStage.CLOSED, InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> {
                 isEnabled = false
                 scheduleReset(1000L)
             }
@@ -149,6 +157,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             InternetOpenStage.UNLOCKED -> "Замок открыт"
             InternetOpenStage.CLOSING -> "Замок закрывается, ожидание ответной пластины"
             InternetOpenStage.CLOSED -> "Замок закрыт"
+            InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> "Замок закрылся, дверь не открывалась"
             InternetOpenStage.ERROR -> "Ошибка интернет-открытия"
         }
         return when (doorState) {
@@ -166,44 +175,50 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         outerPath.reset()
         outerPath.addRoundRect(rect, radius, radius, Path.Direction.CW)
 
-        if (stage == InternetOpenStage.IDLE) {
-            fillPaint.color = idleColor
-            canvas.drawRoundRect(rect, radius, radius, fillPaint)
-            val baseline = height / 2f - (textPaint.ascent() + textPaint.descent()) / 2f
-            canvas.drawText(idleLabel, width / 2f, baseline, textPaint)
+        val splitY = rect.centerY()
+        progressRect.set(rect.left, splitY, rect.right, rect.bottom)
+        canvas.save()
+        canvas.clipPath(outerPath)
+        fillPaint.color = idleColor
+        canvas.drawRect(rect, fillPaint)
+        fillPaint.color = inactiveColor
+        canvas.drawRect(progressRect, fillPaint)
+
+        if (stage == InternetOpenStage.ERROR) {
+            if (blinkOn) {
+                fillPaint.color = colors.last()
+                canvas.drawRect(progressRect, fillPaint)
+            }
         } else {
-            canvas.save()
-            canvas.clipPath(outerPath)
-            fillPaint.color = inactiveColor
-            canvas.drawRect(rect, fillPaint)
-            if (stage == InternetOpenStage.ERROR) {
-                if (blinkOn) {
-                    fillPaint.color = colors.last()
-                    canvas.drawRect(rect, fillPaint)
-                }
-            } else {
-                val activeCount = when (stage) {
-                    InternetOpenStage.CONNECTING -> 1
-                    InternetOpenStage.COMMAND_SENT -> 2
-                    InternetOpenStage.UNLOCKED -> 3
-                    InternetOpenStage.CLOSING -> 4
-                    InternetOpenStage.CLOSED -> 5
-                    else -> 0
-                }
-                val segmentWidth = rect.width() / 5f
-                for (index in 0 until activeCount) {
-                    fillPaint.color = colors[index]
-                    val left = rect.left + index * segmentWidth
-                    canvas.drawRect(left, rect.top, left + segmentWidth, rect.bottom, fillPaint)
-                }
+            val activeCount = when (stage) {
+                InternetOpenStage.CONNECTING -> 1
+                InternetOpenStage.COMMAND_SENT -> 2
+                InternetOpenStage.UNLOCKED -> 3
+                InternetOpenStage.CLOSING -> 4
+                InternetOpenStage.CLOSED -> 5
+                InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> 4
+                else -> 0
             }
             val segmentWidth = rect.width() / 5f
-            for (index in 1..4) {
-                val x = rect.left + index * segmentWidth
-                canvas.drawLine(x, rect.top + dp(8f), x, rect.bottom - dp(8f), dividerPaint)
+            for (index in 0 until activeCount) {
+                fillPaint.color = if (stage == InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN && index == 3) {
+                    colors.last()
+                } else colors[index]
+                val left = rect.left + index * segmentWidth
+                canvas.drawRect(left, splitY, left + segmentWidth, rect.bottom, fillPaint)
             }
-            canvas.restore()
         }
+
+        val labelBaseline = rect.top + rect.height() / 4f - (textPaint.ascent() + textPaint.descent()) / 2f
+        canvas.drawText(idleLabel, width / 2f, labelBaseline, textPaint)
+
+        val segmentWidth = rect.width() / 5f
+        for (index in 1..4) {
+            val x = rect.left + index * segmentWidth
+            canvas.drawLine(x, splitY + dp(4f), x, rect.bottom - dp(4f), dividerPaint)
+        }
+        canvas.drawLine(rect.left + dp(8f), splitY, rect.right - dp(8f), splitY, dividerPaint)
+        canvas.restore()
 
         canvas.drawRoundRect(rect, radius, radius, borderPaint)
     }

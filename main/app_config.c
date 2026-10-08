@@ -21,6 +21,7 @@ static void set_defaults(void)
     s_cfg.timer_a_ms = APP_DEFAULT_TIMER_A_MS;
     s_cfg.shunt_gpio = APP_DEFAULT_SHUNT_GPIO;
     s_cfg.serial_log_enabled = true;
+    s_cfg.departure_buzzer_enabled = true;
     s_cfg.configuration_mode = false;
 }
 
@@ -44,9 +45,11 @@ esp_err_t app_config_init(void)
     int8_t phone_rssi = s_cfg.phone_rssi_threshold;
     uint32_t timer_a_ms = s_cfg.timer_a_ms;
     uint8_t serial_log = 1;
+    uint8_t departure_buzzer = 1;
     nvs_get_i8(h, "phone_rssi", &phone_rssi);
     nvs_get_u32(h, "timer_a_ms", &timer_a_ms);
     nvs_get_u8(h, "serial_log", &serial_log);
+    nvs_get_u8(h, "departure_beep", &departure_buzzer);
     nvs_close(h);
 
     nvs_handle_t cleanup;
@@ -70,6 +73,7 @@ esp_err_t app_config_init(void)
         s_cfg.timer_a_ms = timer_a_ms;
     }
     s_cfg.serial_log_enabled = serial_log != 0;
+    s_cfg.departure_buzzer_enabled = departure_buzzer != 0;
     remote_log_set_serial_enabled(s_cfg.serial_log_enabled);
     return ESP_OK;
 }
@@ -132,6 +136,20 @@ esp_err_t app_config_set_serial_log_enabled(bool enabled)
         s_cfg.serial_log_enabled = enabled;
         remote_log_set_serial_enabled(enabled);
     }
+    xSemaphoreGive(s_config_mutex);
+    return err;
+}
+
+esp_err_t app_config_set_departure_buzzer_enabled(bool enabled)
+{
+    if (!s_config_mutex) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_config_mutex, portMAX_DELAY);
+    nvs_handle_t h = 0;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) err = nvs_set_u8(h, "departure_beep", enabled ? 1 : 0);
+    if (err == ESP_OK) err = nvs_commit(h);
+    if (h) nvs_close(h);
+    if (err == ESP_OK) s_cfg.departure_buzzer_enabled = enabled;
     xSemaphoreGive(s_config_mutex);
     return err;
 }

@@ -1,5 +1,60 @@
 # Отчёт о проверках
 
+## Исправление резерва стека ULP в основной папке — 08.10.2026
+
+- Baseline до изменения: `build-esp32.ps1` PASS, build379; бинарник 1,383,200 байт.
+- Baseline linker map: ULP BSS `0x120c..0x133c`, `__stack_top=0x1400` (196 байт запаса).
+- Установленная версия обнаруженного TheKidLock: 10.0.381. Итоговый firmware number зарезервирован как 10.0.382, чтобы не понижать установленную версию.
+- Итоговая `build-esp32.ps1`: PASS, build382; bin 1,383,200 байт, OTA-раздел оставил 30% запаса. Новая карта: `__stack_top=0x1f80`, данные ULP не пересекают стек.
+- OTA PASS через `device-agent.ps1`: `10.0.381 → 10.0.382`; устройство вернулось, `device_id=a0:f2:62:f1:14:b8`, boot id изменился.
+- Post-flash status/events и три снимка на uptime 57/66/75 с: `LOCKED`, `fault_flags=0`, FSM `Закрыт`, `plate=Зазор 1`, retry=0, close attempts=3 без роста, overlap=0; measurement counter вырос 1397 → 1835. Управляющие команды не отправлялись.
+- `git diff --check`: PASS.
+
+## Совместимость подписи APK и установка на Redmi Note 15 — 08.10.2026
+
+- APK build 231 подписана ключом основной папки (`.android/debug.keystore`, SHA-256 `36d8b6f9655e42c3810e495ce676e7cff0e65f0d2c1e3a74a284a4cc09f727c7`). Старое приложение было подписано SHA-256 `1f629c79aac5d699c44873c364fe240e6f57bb7a5e92c81202af1ee251698ade`, поэтому Android отклонял update-in-place.
+- По разрешению пользователя прежнее приложение удалено; установка APK build 231 успешна. Проверочная повторная `adb install -r` с подписью основной папки также успешна.
+- Телефон проверен как Redmi Note 15 (`2510DRA23E`) на ADB endpoint `192.168.1.65:45561`; `adb mdns services` в этой сети не показал объявлений, поэтому подключение проверено по переданному пользователем порту и сверено по модели.
+- Перед обеими установками сохранены, после восстановлены и повторно проверены `accelerometer_rotation=0`, `user_rotation=0` (`artifacts/android-rotation-before-build231-clean-install-20261008.json`, `artifacts/android-rotation-before-build231-upgrade-check-20261008.json`).
+
+## Постоянный ползунок AUTO и двухзонная кнопка интернет-открытия — 08.10.2026
+
+- Базовый `build-android.ps1`: PASS, debug build 230.
+- Архитектура: ползунок уже встроен в `createAutoModeControl()`, long-press был единственным способом его показать; интернет-открытие использует существующий `InternetOpenProgressButton` с пятью этапами.
+- Первый прогон тестовой компиляции обнаружил пропущенный `return container` в `createAutoModeControl()`; исправлено до следующего этапа.
+- `build-android.ps1 -Action test`: PASS для Debug и Release unit tests. Финальный `build-android.ps1`: PASS, debug build 231; APK `android_lock_beacon/app/build/outputs/apk/debug/app-debug.apk` (2371215 байт).
+- Изменены `MainActivity.kt`, `InternetOpenProgressButton.kt`, `android_lock_beacon/BUILD_NUMBER`, `ANDROID_AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`. Long-press/show/hide обработчиков ползунка в `MainActivity.kt` больше нет; `git diff --check`: PASS.
+- После получения порта ADB `45561` устройство `192.168.1.65:45561` подтвердилось как Redmi Note 15 (`2510DRA23E`). До попытки установки сохранены `accelerometer_rotation=0`, `user_rotation=0`; после отказа повторно прочитаны те же `0/0` (`artifacts/android-rotation-before-build231-install-20261008.json`).
+- Установка build 231 завершилась `INSTALL_FAILED_UPDATE_INCOMPATIBLE`: сертификат установленного приложения SHA-256 `1f629c79aac5d699c44873c364fe240e6f57bb7a5e92c81202af1ee251698ade`, сертификат APK `36d8b6f9655e42c3810e495ce676e7cff0e65f0d2c1e3a74a284a4cc09f727c7`. Приложение не удалялось, его данные сохранены. Проектный `.android/debug.keystore` восстановлен после проверки альтернативного ключа.
+
+## Сигнал открытого замка вне зоны маяка — 08.10.2026
+
+- Baseline ESP до изменений: `build-esp32.ps1 -Action build` PASS, firmware 10.0.374; OTA на текущий замок `192.168.1.54` PASS, прежняя версия 10.0.373.
+- Изменения: `main/app_config.h`, `main/app_config.c`, `main/lock_control.h`, `main/lock_control.c`, `main/ble_phone.c`, `main/main.c`, `main/web_ui.c`, `main/web/index.html`, `ESP_AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+- Изменённые исходники: `main/app_config.h`, `main/app_config.c`, `main/lock_control.h`, `main/lock_control.c`, `main/ble_phone.c`, `main/main.c`, `main/web_ui.c`, `main/web/index.html`; документация: `ESP_AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+- `build-esp32.ps1`: PASS, firmware 10.0.375, бинарник 0x151c10; OTA-раздел имеет 30% свободного места.
+- OTA текущему замку `192.168.1.54`: PASS, 10.0.374 → 10.0.375. `device-agent.ps1 status` подтвердил возврат версии 10.0.375, `LOCKED`, ULP «Закрыт», `fault_flags=0`, `calibration_required=false`.
+- Проверка чтения/переключения WebUI API с LAN-хоста вернула 404, потому что проект намеренно разрешает эти маршруты только в runtime-сессии телефона (`wifi_ota_is_runtime_phone_session`). Состояние NVS переключателя через отдельную проверку этой сессии не проверялось; исходный код маршрута собран, а переключатель отображается из `/api/config` и пишет NVS через POST.
+- Физический цикл открытия/выхода телефона из зоны для проверки звукового паттерна не выполнялся. Поведение подтверждено кодовым аудитом; на устройстве проверены только загрузка и безопасное исходное состояние замка.
+- После уточнения BLE grace window собрана финальная ESP 10.0.376: PASS, бинарник 0x151c10, запас OTA-раздела 30%.
+- Финальная OTA текущему замку: PASS, 10.0.375 → 10.0.376. Повторный `device-agent.ps1 status` подтвердил 10.0.376, `LOCKED`, ULP «Закрыт», faults=0, `calibration_required=false`.
+- `git diff --check`: PASS. Live HTTP-чтение/запись настройки с обычного LAN-хоста ограничено существующим phone-only runtime gate и вернуло 404; UI-цикл с телефоном не выполнялся. Физический акустический цикл не тестировался.
+
+## Сигнал при открытом замке в AUTO — 08.10.2026
+
+- Базовая сборка перед изменением: ESP 10.0.377 PASS; OTA на замок PASS, 10.0.376 → 10.0.377.
+- Изменены `main/main.c`, `main/lock_control.c`, `main/lock_control.h`, `main/ble_phone.c`, `ESP_AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`. Удалена лишняя передача состояния маяка в lock-control; теперь бипер проверяет только ULP `UNLOCKED`, `hold_open=false` и настройку разрешения бипера.
+- `build-esp32.ps1`: PASS, firmware 10.0.378, размер бинарника 0x151b20, свободно 30% OTA-раздела.
+- OTA текущему замку: PASS, 10.0.377 → 10.0.378. `device-agent.ps1 status` подтвердил версию 10.0.378, `LOCKED`, ULP «Закрыт», faults=0, `calibration_required=false`.
+- `git diff --check`: PASS. Поиск подтвердил удаление неиспользуемых `report_beacon_zone` / `beacon_in_zone` символов. Физический акустический тест не выполнялся.
+
+## Панель ползунка поверх кнопки AUTO — 08.10.2026
+
+- Базовый `build-android.ps1` до изменения: PASS (`assembleDebug`, build 228).
+- После изменения `MainActivity.kt` повторный `build-android.ps1`: PASS (`assembleDebug`, build 229).
+- APK build 229 установлена на Redmi Note 15 (`192.168.1.65:36249`); подпись совпадает с установленным приложением. До/после установки `accelerometer_rotation=0`, `user_rotation=0`, настройки восстановлены и проверены (`artifacts/android-rotation-before-slider-elevation-build229-install-20261008.json`).
+- Изменение локально меняет elevation и порядок отрисовки View; отдельные тесты состояния не требуются.
+
 ## Web UI только из сети телефона — базовая проверка 04.10.2026
 
 - ESP `build-esp32.ps1`: PASS, ESP-IDF 5.4.4, build 10.0.315.
@@ -5712,12 +5767,19 @@ ESP 10.0.330: сборка проектным скриптом PASS, разме�
 - OTA через device-agent: PASS, firmware 10.0.371 → 10.0.373.
 - `git diff --check`: PASS.
 
-## Исправление резерва стека ULP в основной папке — 08.10.2026
+## Android: ползунок в AUTO и сценарий двери не открывали — 08.10.2026
 
-- Baseline до изменения: `build-esp32.ps1` PASS, build379; бинарник 1,383,200 байт.
-- Baseline linker map: ULP BSS `0x120c..0x133c`, `__stack_top=0x1400` (196 байт запаса).
-- Установленная версия обнаруженного TheKidLock: 10.0.381. Итоговый firmware number зарезервирован как 10.0.382, чтобы не понижать установленную версию.
-- Итоговая `build-esp32.ps1`: PASS, build382; bin 1,383,200 байт, OTA-раздел оставил 30% запаса. Новая карта: `__stack_top=0x1f80`, данные ULP не пересекают стек.
-- OTA PASS через `device-agent.ps1`: `10.0.381 → 10.0.382`; устройство вернулось, `device_id=a0:f2:62:f1:14:b8`, boot id изменился.
-- Post-flash status/events и три снимка на uptime 57/66/75 с: `LOCKED`, `fault_flags=0`, FSM `Закрыт`, `plate=Зазор 1`, retry=0, close attempts=3 без роста, overlap=0; measurement counter вырос 1397 → 1835. Управляющие команды не отправлялись.
-- `git diff --check`: PASS.
+- Базовая сборка до изменений: `build-android.ps1`, build 222, PASS. Итоговая debug-сборка: build 227, `assembleDebug` PASS. Build number 224 был пропущен неуспешной попыткой компиляции lint-аннотации; затем build225, build226 с уточнением логики и build227 для установки прошли.
+- `build-android.ps1 -Action test`: 42/42 unit-теста прошли для debug и 42/42 для release (84 результата, 0 ошибок/падений). Проверки подтверждают, что явный `door=closed` после `opened` удерживает зелёные три сектора на `closing`, а на финальном `closed` показывает красный четвёртый. При ранее открывавшейся двери или неизвестном датчике сохраняется обычный ход.
+- `git diff --check`: PASS. Повторный `lintDebug` завершился с 17 существующими ошибками, 80 предупреждениями и 1 подсказкой; ошибки находятся в прежних BLE-файлах `PassiveBleScan.kt`, `PhoneBeacon.kt`, `BleLockService.kt`. Новых lint-замечаний по изменённым файлам нет.
+- Redmi Note 15 после пустого mDNS обнаружен по ранее указанному адресу `192.168.1.65:36249`, модель подтверждена через `ro.product.marketname`. Первая попытка обновления build226 не прошла из-за несовпадения debug-подписей. APK build227 собран временно с сертификатом уже установленной версии и установлен через `adb install -r`; SHA-256 APK на телефоне совпал с локальным APK. Системные `accelerometer_rotation` и `user_rotation` до/после установки равны `0/0`. Исходный debug.keystore этой рабочей копии после сборки восстановлен; будущие локальные APK с ним снова потребуют соответствующий ключ на телефоне либо повторную сборку с ключом установленного пакета.
+
+## Живой аудит Android build227 по логам Redmi Note 15 — 08.10.2026
+
+- Приложение `com.blelock.app` запустилось в 08:07:54; в текущем запуске падения процесса приложения нет. Единственная запись `AndroidRuntime FATAL` в сохранённом буфере относится к системному `com.android.bluetooth` от 04.10, не к приложению и не к текущей проверке.
+- MIUI зарегистрировал длительное касание с 08:08:11.281 до 08:08:15.207 (3.93 с), затем несколько коротких касаний. В этой серии служба не записала переключение AUTO. Ещё одно удержание было с 08:08:35.853 до 08:08:38.355 (2.50 с): AUTO оставался включённым. Системный журнал не указывает, на каком элементе были касания, поэтому он подтверждает длительность жестов и отсутствие переключения, но сам факт появления панели ползунка по нему доказать нельзя.
+- Короткие касания в 08:08:32–08:08:33 закончились сообщением `Автооткрытие включено` в 08:08:33.253 и состоянием сервиса `automatic mode -> true` в 08:08:33.262. Реклама маяка стартовала в 08:08:33.294. ESP подключалась по BLE, читала характеристику с `status=0`, `accepted=true`; приложение получило подтверждение роли владельца. Это подтверждает короткий клик AUTO и дальнейший BLE путь.
+- Короткое касание 08:08:41.149–08:08:41.248 выключило AUTO: `Auto Open paused` и `automatic mode -> false` записаны в 08:08:41.264. Значит, долгое удержание не отправило переключение, а короткий клик сохранил прежнее действие.
+- В device-protected preferences сейчас записан `auto_open_enabled=false` и `phone_beacon_tx_power_level=0` (минимальный уровень). Это согласуется с последним состоянием сервиса. До обновления значение мощности отдельно не снималось, а в приложении нет лога обработчика ползунка, поэтому утверждать, что именно эта серия касаний изменила настройку, нельзя. Код `PhoneBeacon` использует сохранённый уровень при запуске рекламы и для `0` выбирает `ADVERTISE_TX_POWER_ULTRA_LOW`.
+- Пока AUTO был включён, с 08:08:33.409 по 08:08:40.181 несколько раз появилось системное предупреждение `BluetoothLeAdvertiser: Legacy advertiser should be only disabled on timeout, but was enabled!`. В эти же интервалы BLE GATT чтения ESP завершались успешно, но причина предупреждения и его влияние по одному журналу не устанавливаются. Это стоит наблюдать отдельно при следующей BLE-проверке; в приложении нет соответствующей ошибки `PhoneBeacon advertising failed`.
+- Для кнопки интернет-открытия в этих логах нет событий `InternetOpen`, MQTT, `opened`, `closing`, `closed` или ошибки; текущий код этой операции не пишет в logcat этапы. Поэтому фактическое отображение особого четвёртого красного сектора на устройстве по текущему журналу не подтверждено. Проверены кодовое отображение статусов и unit-тесты, но для живого подтверждения нужен тест с нажатием кнопки и журналирование подписанных ответов/переходов UI.

@@ -379,6 +379,11 @@ table.bonds td:first-child{font-family:var(--mono)}
       <small>При контроле RSSI соединённого телефона ESP32 разрывает соединение, когда медианный сигнал ниже порога. Команда OPEN обрабатывается отдельно.</small>
     </div>
     <div class="switch-row">
+      <label class="switch"><input id="departureBuzzer" type="checkbox" onchange="saveDepartureBuzzer()"><span class="track"><span class="thumb"></span></span></label>
+      <span>Сигнал при открытом замке вне зоны маяка</span>
+      <span class="saved-msg" id="departureBuzzerSaved"></span>
+    </div>
+    <div class="switch-row">
       <label class="switch"><input id="serialLog" type="checkbox" onchange="saveSerialLog()"><span class="track"><span class="thumb"></span></span></label>
       <span>Выводить логи в монитор последовательного порта</span>
       <span class="saved-msg" id="serialLogSaved"></span>
@@ -462,7 +467,8 @@ async function loadStatus(){
   }
 }
 async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ucalcontact.textContent=u.calibration_contact_raw;ucalpaper1.textContent=u.calibration_paper1_raw;ucalpaper2.textContent=u.calibration_paper2_raw;ucalopen.textContent=u.calibration_open_raw;ucalverify.textContent=u.calibration_verify_contact_raw;ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';uthcontact.textContent=u.feature_contact_max;uthgap1.textContent=u.feature_gap1_max;uthgap2.textContent=u.feature_gap2_max;uthgap3.textContent=u.feature_gap3_max;uthgap4.textContent=u.feature_gap4_max;uthgap5.textContent=u.feature_gap5_max+' / далеко от '+u.feature_gap5_max;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
-async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;serialLog.checked=c.serial_log_enabled}
+async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;serialLog.checked=c.serial_log_enabled;departureBuzzer.checked=c.departure_buzzer_enabled}
+async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent='Сохранено';setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
 async function saveSerialLog(){try{await j('/api/config/serial-log?enabled='+(serialLog.checked?'1':'0'),{method:'POST'});serialLogSaved.textContent='Сохранено';setTimeout(()=>serialLogSaved.textContent='',2000)}catch(e){serialLog.checked=!serialLog.checked;serialLogSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
 function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidden=!open;advancedToggle.setAttribute('aria-expanded',String(open));advancedToggle.textContent=open?'Дополнительные настройки ▴':'Дополнительные настройки ▾'}
 async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}

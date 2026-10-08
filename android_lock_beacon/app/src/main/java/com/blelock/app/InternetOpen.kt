@@ -54,6 +54,8 @@ object InternetOpen {
                 val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
                 var completed = false
                 var lastResult = ""
+                var lockWasOpened = false
+                var doorWasOpened = false
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
                     val bytes = replies.poll(1, TimeUnit.SECONDS) ?: continue
                     val reply = runCatching { JSONObject(bytes.toString(Charsets.UTF_8)) }.getOrNull() ?: continue
@@ -75,7 +77,9 @@ object InternetOpen {
                     val eventKey = "$result|$door|$faults"
                     if (eventKey == lastResult) continue
                     lastResult = eventKey
-                    val stage = internetOpenStageForReply(result, faults, door)
+                    if (result == "opened" && faults == 0L) lockWasOpened = true
+                    if (hasDoorState && door == "open") doorWasOpened = true
+                    val stage = internetOpenStageForReply(result, faults, door, lockWasOpened, doorWasOpened)
                     progress(stage, if (hasDoorState) door else null)
                     if (result == "closed" && door == "open") {
                         onError("Датчик всё ещё подтверждает открытую дверь")
@@ -83,7 +87,8 @@ object InternetOpen {
                     } else if (stage == InternetOpenStage.ERROR) {
                         onError(if (faults != 0L) "Ошибка замка" else "Замок сообщил об ошибке выполнения")
                         completed = true
-                    } else if (stage == InternetOpenStage.CLOSED) {
+                    } else if (stage == InternetOpenStage.CLOSED ||
+                        stage == InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN) {
                         completed = true
                     }
                     if (completed) break

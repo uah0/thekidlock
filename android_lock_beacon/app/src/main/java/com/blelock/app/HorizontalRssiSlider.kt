@@ -1,6 +1,7 @@
 package com.blelock.app
 
 import android.content.Context
+import android.annotation.SuppressLint
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.view.MotionEvent
@@ -10,8 +11,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.SeekBar
 import kotlin.math.roundToInt
 
-/** Вертикальный дискретный ползунок с доступностью обычного SeekBar. */
-internal class VerticalLevelSlider(
+/** Горизонтальный дискретный ползунок с доступностью обычного SeekBar. */
+@SuppressLint("ViewConstructor")
+internal class HorizontalLevelSlider(
     context: Context,
     private val minValue: Int,
     private val maxValue: Int,
@@ -42,8 +44,8 @@ internal class VerticalLevelSlider(
     var value: Int = minValue
         private set
     private var dragging = false
-    private val minY get() = paddingTop + 18f * density
-    private val maxY get() = height - paddingBottom - 18f * density
+    private val minX get() = paddingLeft + 18f * density
+    private val maxX get() = width - paddingRight - 18f * density
 
     init {
         isFocusable = true
@@ -65,15 +67,15 @@ internal class VerticalLevelSlider(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        val centerX = width / 2f
-        val top = minY
-        val bottom = maxY.coerceAtLeast(top + 1f)
+        val centerY = height / 2f
+        val left = minX
+        val right = maxX.coerceAtLeast(left + 1f)
         val fraction = (value - minValue).toFloat() / (maxValue - minValue)
-        val thumbY = bottom - fraction * (bottom - top)
-        canvas.drawLine(centerX, top, centerX, bottom, trackPaint)
-        canvas.drawLine(centerX, thumbY, centerX, bottom, activePaint)
-        canvas.drawCircle(centerX, thumbY, 12f * density, thumbPaint)
-        canvas.drawCircle(centerX, thumbY, 12f * density, thumbOutlinePaint)
+        val thumbX = left + fraction * (right - left)
+        canvas.drawLine(left, centerY, right, centerY, trackPaint)
+        canvas.drawLine(left, centerY, thumbX, centerY, activePaint)
+        canvas.drawCircle(thumbX, centerY, 12f * density, thumbPaint)
+        canvas.drawCircle(thumbX, centerY, 12f * density, thumbOutlinePaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -82,17 +84,17 @@ internal class VerticalLevelSlider(
                 parent?.requestDisallowInterceptTouchEvent(true)
                 dragging = true
                 isPressed = true
-                updateFromY(event.y)
+                updateFromX(event.x)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!dragging) return false
-                updateFromY(event.y)
+                updateFromX(event.x)
                 return true
             }
             MotionEvent.ACTION_UP -> {
                 if (!dragging) return false
-                updateFromY(event.y)
+                updateFromX(event.x)
                 dragging = false
                 isPressed = false
                 parent?.requestDisallowInterceptTouchEvent(false)
@@ -109,10 +111,10 @@ internal class VerticalLevelSlider(
         return true
     }
 
-    private fun updateFromY(y: Float) {
-        val top = minY
-        val bottom = maxY.coerceAtLeast(top + 1f)
-        val fraction = (1f - ((y - top) / (bottom - top)).coerceIn(0f, 1f))
+    private fun updateFromX(x: Float) {
+        val left = minX
+        val right = maxX.coerceAtLeast(left + 1f)
+        val fraction = ((x - left) / (right - left)).coerceIn(0f, 1f)
         setValue(minValue + (fraction * (maxValue - minValue)).roundToInt())
     }
 

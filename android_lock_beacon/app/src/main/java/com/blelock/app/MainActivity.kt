@@ -31,7 +31,6 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -63,7 +62,6 @@ class MainActivity : Activity() {
     private lateinit var mainContentView: View
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
-    private var beaconPowerScreenVisible = false
     private lateinit var permissionButton: Button
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
@@ -98,10 +96,9 @@ class MainActivity : Activity() {
     private var manualConnectionActive = false
     private var lastBleState = BleRepository.State.IDLE
     private var activityResumed = false
-    private var beaconPowerSlider: View? = null
-    private var swipeStartX = 0f
-    private var swipeStartY = 0f
-    private var swipeStartedOnSlider = false
+    private lateinit var beaconPowerSlider: HorizontalLevelSlider
+    private lateinit var beaconPowerSliderPanel: View
+    private lateinit var beaconPowerValueLabel: TextView
     private var legacyLocationDialog: AlertDialog? = null
     private var selectedBondAddress: String? = null
     private var otaStartPending = false
@@ -528,83 +525,18 @@ class MainActivity : Activity() {
         }
         mainContentView = createContent()
         setContentView(mainContentView)
-        if (savedInstanceState?.getBoolean(KEY_BEACON_POWER_SCREEN_VISIBLE) == true) {
-            showBeaconPowerScreen(animated = false)
-        }
         showBatteryOptimizationNoticeIfNeeded()
         workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
         bindBleService()
         refreshState()
     }
 
-    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                swipeStartX = event.rawX
-                swipeStartY = event.rawY
-                swipeStartedOnSlider = beaconPowerScreenVisible && isInsideBeaconPowerSlider(
-                    event.rawX,
-                    event.rawY
-                )
-            }
-            MotionEvent.ACTION_UP -> {
-                val dx = event.rawX - swipeStartX
-                val dy = event.rawY - swipeStartY
-                if (beaconPowerScreenVisible) {
-                    if (!swipeStartedOnSlider && kotlin.math.hypot(dx, dy) >= dp(72)) {
-                        window.decorView.post { closeBeaconPowerScreen(animated = true) }
-                    }
-                } else if (::mainContentView.isInitialized && !serviceMenuRequested &&
-                    -dy >= dp(90) && -dy > kotlin.math.abs(dx) * 1.2f) {
-                    window.decorView.post { showBeaconPowerScreen(animated = true) }
-                }
-                swipeStartedOnSlider = false
-            }
-            MotionEvent.ACTION_CANCEL -> swipeStartedOnSlider = false
-        }
-        return super.dispatchTouchEvent(event)
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        outState.putBoolean(KEY_BEACON_POWER_SCREEN_VISIBLE, beaconPowerScreenVisible)
-        super.onSaveInstanceState(outState)
-    }
-
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
-        if (beaconPowerScreenVisible) {
-            closeBeaconPowerScreen(animated = true)
-        } else if (serviceMenuRequested) {
+        if (serviceMenuRequested) {
             closeServiceMenu()
         } else {
             super.onBackPressed()
-        }
-    }
-
-    private fun showBeaconPowerScreen(animated: Boolean) {
-        if (beaconPowerScreenVisible) return
-        beaconPowerScreenVisible = true
-        val screen = createBeaconPowerScreen()
-        setContentView(screen)
-        if (animated) {
-            screen.translationY = resources.displayMetrics.heightPixels.toFloat()
-            screen.animate()
-                .translationY(0f)
-                .setDuration(SCREEN_TRANSITION_DURATION_MS)
-                .start()
-        }
-    }
-
-    private fun closeBeaconPowerScreen(animated: Boolean) {
-        if (!beaconPowerScreenVisible) return
-        beaconPowerScreenVisible = false
-        setContentView(mainContentView)
-        if (animated) {
-            mainContentView.translationY = -resources.displayMetrics.heightPixels.toFloat()
-            mainContentView.animate()
-                .translationY(0f)
-                .setDuration(SCREEN_TRANSITION_DURATION_MS)
-                .start()
         }
     }
 
@@ -767,8 +699,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        manualOpenButton = controlTile(R.string.mode_auto) { toggleAutomaticMode() }
-        accessCard.addView(manualOpenButton, controlTileParams(heightDp = 118))
+        accessCard.addView(createAutoModeControl(), controlTileParams(heightDp = 118))
         manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }
         accessCard.addView(manualKeepOpenButton, controlTileParams(heightDp = 118, topMarginDp = 18))
         internetOpenButton = InternetOpenProgressButton(this).apply {
@@ -1128,16 +1059,26 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createBeaconPowerScreen(): View {
+    private fun createAutoModeControl(): View {
         val powerLabels = resources.getStringArray(R.array.phone_beacon_tx_power_levels)
-        val valueLabel = TextView(this).apply {
-            text = powerLabels[settings.phoneBeaconTxPowerLevel]
-            textSize = 32f
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setTextColor(getColor(R.color.accent_blue))
+        val container = FrameLayout(this)
+        manualOpenButton = controlTile(R.string.mode_auto) {
+            toggleAutomaticMode()
         }
-        val slider = VerticalLevelSlider(
+        container.addView(manualOpenButton, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+
+        beaconPowerValueLabel = TextView(this).apply {
+            text = powerLabels[settings.phoneBeaconTxPowerLevel]
+            textSize = 12f
+            maxLines = 1
+            gravity = Gravity.CENTER_VERTICAL
+            setTextColor(getColor(R.color.secondary_text))
+            contentDescription = getString(R.string.phone_beacon_tx_power_title)
+        }
+        beaconPowerSlider = HorizontalLevelSlider(
             this,
             LockSettings.MIN_PHONE_BEACON_TX_POWER_LEVEL,
             LockSettings.MAX_PHONE_BEACON_TX_POWER_LEVEL,
@@ -1146,70 +1087,40 @@ class MainActivity : Activity() {
             setValue(settings.phoneBeaconTxPowerLevel, notify = false)
             onValueChanged = { value ->
                 settings.phoneBeaconTxPowerLevel = value
-                valueLabel.text = powerLabels[value]
+                beaconPowerValueLabel.text = powerLabels[value]
+                beaconPowerValueLabel.contentDescription = "${getString(R.string.phone_beacon_tx_power_title)}: ${powerLabels[value]}"
                 startService(Intent(this@MainActivity, BleLockService::class.java)
                     .setAction(BleLockService.ACTION_BEACON_TX_POWER_CHANGED))
             }
         }
-        beaconPowerSlider = slider
-
-        val scaleLabels = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            addView(TextView(this@MainActivity).apply {
-                text = powerLabels[LockSettings.MAX_PHONE_BEACON_TX_POWER_LEVEL]
-                setTextColor(getColor(R.color.secondary_text))
-            })
-            addView(Space(this@MainActivity), LinearLayout.LayoutParams(1, 0, 1f))
-            addView(TextView(this@MainActivity).apply {
-                text = powerLabels[LockSettings.MIN_PHONE_BEACON_TX_POWER_LEVEL]
-                setTextColor(getColor(R.color.secondary_text))
-            })
-        }
-
-        val sliderRow = LinearLayout(this).apply {
+        beaconPowerSliderPanel = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            addView(scaleLabels, LinearLayout.LayoutParams(dp(80), ViewGroup.LayoutParams.MATCH_PARENT))
-            addView(slider, LinearLayout.LayoutParams(dp(64), ViewGroup.LayoutParams.MATCH_PARENT))
+            gravity = Gravity.CENTER_VERTICAL
+            elevation = dp(8).toFloat()
+            setPadding(dp(10), 0, dp(10), 0)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(getColor(R.color.card_background))
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), getColor(R.color.accent_blue))
+            }
+            visibility = View.VISIBLE
+            addView(beaconPowerValueLabel, LinearLayout.LayoutParams(dp(78), ViewGroup.LayoutParams.MATCH_PARENT))
+            addView(beaconPowerSlider, LinearLayout.LayoutParams(0, dp(44), 1f))
         }
-
-        val screen = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(24))
-            setBackgroundColor(getColor(R.color.screen_background))
-        }
-        screen.addView(TextView(this).apply {
-            text = getString(R.string.phone_beacon_tx_power_title)
-            textSize = 23f
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setTextColor(getColor(R.color.primary_text))
-        }, topSpacedFullWidth(20))
-        screen.addView(valueLabel, topSpacedFullWidth(12))
-        screen.addView(sliderRow, LinearLayout.LayoutParams(
+        container.addView(beaconPowerSliderPanel, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            0,
-            1f
+            dp(48),
+            Gravity.BOTTOM
         ).apply {
-            topMargin = dp(20)
-            bottomMargin = dp(20)
+            leftMargin = dp(8)
+            rightMargin = dp(8)
+            bottomMargin = dp(6)
         })
-        screen.addView(TextView(this).apply {
-            text = getString(R.string.phone_beacon_tx_power_description)
-            textSize = 14f
-            setTextColor(getColor(R.color.secondary_text))
-            setPadding(dp(8), dp(12), dp(8), dp(12))
-        }, fullWidth())
-        return screen
-    }
-
-    private fun isInsideBeaconPowerSlider(rawX: Float, rawY: Float): Boolean {
-        val slider = beaconPowerSlider ?: return false
-        val location = IntArray(2)
-        slider.getLocationOnScreen(location)
-        return rawX >= location[0] && rawX <= location[0] + slider.width &&
-            rawY >= location[1] && rawY <= location[1] + slider.height
+        beaconPowerSliderPanel.bringToFront()
+        manualOpenButton.gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        manualOpenButton.setPadding(dp(20), dp(10), dp(20), dp(54))
+        manualOpenButton.contentDescription = "${getString(R.string.mode_auto)}. ${getString(R.string.phone_beacon_tx_power_title)}"
+        return container
     }
 
     private fun selectableBackground(): android.graphics.drawable.Drawable? {
@@ -2283,8 +2194,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val KEY_BEACON_POWER_SCREEN_VISIBLE = "beacon_power_screen_visible"
-        private const val SCREEN_TRANSITION_DURATION_MS = 220L
         private const val REQUEST_BLE_PERMISSIONS = 100
         private const val REQUEST_HOTSPOT_PERMISSIONS = 101
         private const val ADMIN_SIGNAL_POLL_INTERVAL_MS = 2_000L

@@ -145,10 +145,12 @@ static esp_err_t config_get(httpd_req_t *req)
              "{\"phone_rssi_threshold\":%d,"
              "\"shunt_gpio\":%u,"
              "\"serial_log_enabled\":%s,"
+             "\"departure_buzzer_enabled\":%s,"
              "\"timer_a_ms\":%lu}",
              cfg.phone_rssi_threshold,
              cfg.shunt_gpio,
              cfg.serial_log_enabled ? "true" : "false",
+             cfg.departure_buzzer_enabled ? "true" : "false",
              (unsigned long)cfg.timer_a_ms);
     return send_json(req, json);
 }
@@ -291,6 +293,19 @@ static esp_err_t serial_log_post(httpd_req_t *req)
     esp_err_t err = app_config_set_serial_log_enabled(strcmp(enabled, "1") == 0);
     return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Serial log save failed");
+}
+
+static esp_err_t departure_buzzer_post(httpd_req_t *req)
+{
+    char query[48], enabled[8];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "enabled", enabled, sizeof(enabled)) != ESP_OK ||
+        (strcmp(enabled, "0") != 0 && strcmp(enabled, "1") != 0)) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid enabled");
+    }
+    esp_err_t err = app_config_set_departure_buzzer_enabled(strcmp(enabled, "1") == 0);
+    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Departure buzzer save failed");
 }
 
 static esp_err_t mqtt_get(httpd_req_t *req)
@@ -547,6 +562,7 @@ PHONE_ONLY_HANDLER(ulp_get)
 PHONE_ONLY_HANDLER(ulp_calibration_post)
 PHONE_ONLY_HANDLER(config_get)
 PHONE_ONLY_HANDLER(config_post)
+PHONE_ONLY_HANDLER(departure_buzzer_post)
 PHONE_ONLY_HANDLER(serial_log_post)
 PHONE_ONLY_HANDLER(mqtt_get)
 PHONE_ONLY_HANDLER(mqtt_post)
@@ -587,6 +603,7 @@ esp_err_t web_ui_start(void)
         {.uri="/api/config", .method=HTTP_GET, .handler=config_get_phone_only},
         {.uri="/api/config", .method=HTTP_POST, .handler=config_post_phone_only},
         {.uri="/api/config/serial-log", .method=HTTP_POST, .handler=serial_log_post_phone_only},
+        {.uri="/api/config/departure-buzzer", .method=HTTP_POST, .handler=departure_buzzer_post_phone_only},
         {.uri="/api/mqtt", .method=HTTP_GET, .handler=mqtt_get_phone_only},
         {.uri="/api/mqtt", .method=HTTP_POST, .handler=mqtt_post_phone_only},
         {.uri="/api/mqtt/test", .method=HTTP_POST, .handler=mqtt_test_post_phone_only},

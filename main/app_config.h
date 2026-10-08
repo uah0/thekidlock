@@ -24,6 +24,7 @@ typedef struct {
     int8_t phone_rssi_threshold;      /* единственный порог зоны открытия/ухода */
     uint8_t shunt_gpio;
     bool serial_log_enabled;
+    bool departure_buzzer_enabled;
     uint32_t timer_a_ms;
     bool configuration_mode;
 } app_config_t;
@@ -33,3 +34,4 @@ void app_config_get(app_config_t *out);
 esp_err_t app_config_set_logic(int phone_rssi_threshold,
                                uint32_t timer_a_ms);
 esp_err_t app_config_set_serial_log_enabled(bool enabled);
+esp_err_t app_config_set_departure_buzzer_enabled(bool enabled);

@@ -278,6 +278,17 @@ static bool close_failure_alarm_active(ulp_diagnostics_t *d, unsigned *count)
     return *count != 0;
 }
 
+static bool beacon_departure_alarm_active(void)
+{
+    app_config_t cfg;
+    lock_feedback_t feedback;
+    app_config_get(&cfg);
+    if (!cfg.departure_buzzer_enabled) return false;
+    lock_control_get_feedback(&feedback);
+    return feedback.valid && feedback.state == LOCK_STATE_UNLOCKED &&
+           !feedback.hold_open;
+}
+
 static bool buzzer_wait(uint32_t duration_ms, uint32_t overlap_seen)
 {
     uint32_t elapsed = 0;
@@ -356,8 +367,12 @@ static void close_failure_buzzer_task(void *arg)
 
         unsigned count = 0;
         if (!close_failure_alarm_active(&d, &count)) {
-            buzzer_set(false);
-            (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+            if (beacon_departure_alarm_active()) {
+                if (!buzzer_tone(20, 200, overlap_seen)) continue;
+            } else {
+                buzzer_set(false);
+                (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
+            }
             continue;
         }
 
