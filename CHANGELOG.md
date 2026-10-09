@@ -1,5 +1,11 @@
 # Журнал изменений
 
+## Откат BLE Peripheral/GATT имени из сборок после 407 — 09.10.2026
+
+- Сборка 10.0.431 удаляет добавленные в 408–413 GAP/GATT Peripheral services и изменения NimBLE для Device Name; также убран сброс suppression после успешного восстановления LTK. Сохранены Central/Observer, bonding/NVS, SMP guard из 406, алгоритм замка, OTA, Secure Boot V2, Flash Encryption Release, NVS HMAC, anti-rollback и таблица разделов.
+- Сборка `factory-test` прошла на ESP-IDF v5.4.4; OTA-образ RSA-подписан и encrypted round-trip проверен. Зашифрованный файл: `build-factory-test/encrypted/ble_lock_stage1_s3.bin`, 1,446,400 байт, SHA-256 `9a882175355c5391564512401b7731df209f22a1b2ac6873bfce4c8e0167e49f`.
+- Пользователь подтвердил, что 10.0.430 оставляла проблему pairing после reboot, а после установки 10.0.431 проблема исчезла. Это подтверждает откат GAP/GATT/NimBLE-функции имени как рабочее исправление; точное число циклов перезагрузки не указано.
+
 ## Увеличен резерв стека ULP — 08.10.2026
 
 - В основной папке проекта `C:\Dev\ble-main-build216` резерв `CONFIG_ULP_COPROC_RESERVE_MEM` увеличен с 5120 до 8064 байт: исходная linker map оставляла между BSS и стеком лишь 196 байт.

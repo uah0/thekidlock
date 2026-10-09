@@ -1,5 +1,16 @@
 # Отчёт о проверках
 
+## BLE: откат имени GAP/GATT после сборки 407 — 09.10.2026
+
+- Пользователь подтвердил: 10.0.430 установлена, проблема восстановления pairing после reboot сохраняется.
+- Изменён только post-407 этап GAP/GATT Device Name (сборки 408–413): выключены Peripheral/GATT Server/GAP service; в итоговом `main/ble_phone.c` не регистрируются эти сервисы; отменены проектные NimBLE backports GAP name trace и ATT Read By Type. Оставлены Central/Observer и SMP guard. Suppression больше не очищается дополнительным действием при LTK restore.
+- Сборка `build-esp32.ps1 -Action build -Profile factory-test`: PASS, 10.0.431, ESP-IDF v5.4.4. Защищённый профиль и partition table сохранены; приложение 1,445,888 байт, OTA-раздел 0x1e0000.
+- RSA signature verification и encrypted OTA round-trip: PASS. Plaintext signed app SHA-256 `4EB2314073D4FA397617C6A5B54F6F48049D176B7B791FB23604253669002495`; encrypted OTA 1,446,400 байт, SHA-256 `9a882175355c5391564512401b7731df209f22a1b2ac6873bfce4c8e0167e49f`.
+- Проверено: Peripheral/GATT Server/GAP service выключены; BLE Central/Observer включены; NimBLE SMP guard присутствует ровно на ожидаемых точках, GAP-name и Read By Type backports отсутствуют. Диагностика/rollback не меняет порядок MTU/security, таймеры, bonding API, NVS, security parameters и алгоритм открытия замка.
+- Установка 10.0.431 и проверка выполнены пользователем. Пользователь сообщил, что проблема pairing после reboot исчезла. Число повторов и дополнительные raw BLE-логи не предоставлены; результат фиксируется как успешная пользовательская проверка, без утверждения о точном внутреннем callback.
+- После успешной сборки 431 сохранён прежний cache 430 внутри приложения (SHA-256 `400608a50e3400a136fbada62f8946acc09844eeb1be146bf1db1d28477bac15`), затем в основной cache приложения записан encrypted OTA 431. Проверка телефона: размер 1,446,400 байт, SHA-256 `9a882175355c5391564512401b7731df209f22a1b2ac6873bfce4c8e0167e49f`.
+- Перед установкой из-за состояния «Настройки · ожидание ESP32» Web UI не открылся и `/api/ota` не вызывался; позднее пользователь самостоятельно установил 431. Предыдущая копия OTA 430 оставлена в cache приложения для отката.
+
 ## Исправление резерва стека ULP в основной папке — 08.10.2026
 
 - Baseline до изменения: `build-esp32.ps1` PASS, build379; бинарник 1,383,200 байт.
