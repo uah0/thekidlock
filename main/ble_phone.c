@@ -527,6 +527,34 @@ static void central_disconnect(uint16_t handle)
     if (rc != 0) central_schedule_retry();
 }
 
+/* Called by the version-pinned NimBLE guard, before sending any Pairing Request. */
+int ble_lock_pairing_allowed(uint16_t handle);
+int ble_lock_pairing_allowed(uint16_t handle)
+{
+    bool allowed = false;
+    uint32_t remaining_s = 0;
+    ble_phone_get_registration(&allowed, &remaining_s);
+    if (handle != s_central_handle || atomic_load(&s_central_reset_pending)) return 0;
+    if (!allowed) {
+        atomic_store(&s_central_suppressed_device_id, s_central_device_id);
+        atomic_store(&s_central_suppressed_device_id_valid, true);
+        event_log_add("BLE central: SMP запрещён вне регистрации; ключи сохранены, peer подавлен до BOOT window");
+        return 0;
+    }
+    if (!s_central_registration_candidate) {
+        s_central_registration_candidate = true;
+        s_central_existing_ltk_restored = false;
+        s_central_existing_ltk_before_connect = false;
+        uint32_t timeout_ms = CENTRAL_REGISTRATION_SECURITY_TIMEOUT_MS;
+        if (remaining_s != UINT32_MAX && remaining_s * 1000U < timeout_ms)
+            timeout_ms = remaining_s * 1000U;
+        central_set_phase(CENTRAL_PHASE_SECURITY, timeout_ms);
+        event_log_add("BLE central: восстановление SMP разрешено в окне регистрации; ожидаю Android до %lu мс",
+                      (unsigned long)timeout_ms);
+    }
+    return 1;
+}
+
 static void central_reject_stale_pairing(uint16_t handle, const char *cause)
 {
     struct ble_gap_conn_desc desc;
@@ -540,18 +568,8 @@ static void central_reject_stale_pairing(uint16_t handle, const char *cause)
     address_to_string(&desc.peer_id_addr, address);
     atomic_store(&s_central_suppressed_device_id, s_central_device_id);
     atomic_store(&s_central_suppressed_device_id_valid, true);
-    if (s_central_existing_ltk_restored) {
-        event_log_add("BLE central: existing LTK restored; keep bond, suppress peer");
-    } else {
-        esp_err_t delete_err = ble_phone_delete_bond(address);
-        if (delete_err == ESP_OK) {
-            event_log_add("BLE central: %s; stale bond %s удалён, peer подавлен до BOOT window",
-                          cause, address);
-        } else {
-            event_log_add("BLE central: %s; stale bond %s не удалён (%s), peer подавлен до BOOT window",
-                          cause, address, esp_err_to_name(delete_err));
-        }
-    }
+    event_log_add("BLE central: %s; bond %s сохранён, peer подавлен до BOOT window",
+                  cause, address);
     s_central_registration_candidate = false;
     central_disconnect(handle);
 }
@@ -1305,8 +1323,7 @@ static int central_gap_event(struct ble_gap_event *event, void *arg)
             if (registration_allowed) {
                 atomic_store(&s_central_suppressed_device_id_valid, false);
             } else if (atomic_load(&s_central_suppressed_device_id_valid) &&
-                       atomic_load(&s_central_suppressed_device_id) == device_id &&
-                       !service_beacon) {
+                       atomic_load(&s_central_suppressed_device_id) == device_id) {
                 return 0;
             }
             app_config_t cfg;
