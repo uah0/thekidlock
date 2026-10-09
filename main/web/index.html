@@ -52,6 +52,7 @@ button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
 .versions{display:flex;flex-wrap:wrap;gap:14px 28px;padding:14px 16px;margin:0 0 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
 .version-item{flex:1;min-width:200px;display:flex;flex-direction:column;gap:5px}
 .version-item[hidden]{display:none}
+.version-update{flex:1 1 300px;min-width:0}
 .version-label{font-size:11px;color:var(--text-dim);letter-spacing:.04em}
 .version-value{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
 .version-date{font-size:11px;color:var(--text-dim);font-variant-numeric:tabular-nums}
@@ -235,6 +236,15 @@ table.bonds td:first-child{font-family:var(--mono)}
     <span class="version-value" id="verTxt">Версия —</span>
     <span class="version-date" id="buildTxt">Собрано: —</span>
   </div>
+  <div class="version-update">
+    <div class="actions-row">
+      <label class="file-label" id="fwPicker" for="fw">Выбрать файл .bin</label>
+      <input id="fw" type="file" accept=".bin" style="display:none" onchange="fwName.textContent=fw.files[0]?fw.files[0].name:''">
+      <button class="btn-primary" id="uploadFwButton" onclick="uploadFw()">Передать прошивку</button>
+    </div>
+    <span id="fwName"></span>
+    <div id="ota"></div>
+  </div>
 </div>
 
 <section class="panel">
@@ -412,13 +422,6 @@ table.bonds td:first-child{font-family:var(--mono)}
         <span>Автоматически обновлять прошивку при появлении новой версии</span>
         <span class="saved-msg" id="updateSaved"></span>
       </div>
-      <div class="dropzone">
-        <label class="file-label" for="fw">Выбрать файл .bin</label>
-        <input id="fw" type="file" accept=".bin" style="display:none" onchange="fwName.textContent=fw.files[0]?fw.files[0].name:''">
-        <span id="fwName"></span>
-        <button class="btn-primary" onclick="uploadFw()">Загрузить</button>
-      </div>
-      <div id="ota"></div>
     </section>
   </div>
 </div>
@@ -486,7 +489,40 @@ async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'
 async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
 async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
 async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все телефоны» ещё раз',async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice('Все телефоны удалены')}catch(e){showNotice(String(e),true)}})}
-async function uploadFw(){let f=fw.files[0];if(!f){showNotice('Выберите файл .bin',true);return}ota.textContent='Загрузка…';try{let r=await fetch('/api/ota',{method:'POST',body:f});ota.textContent=await r.text()}catch(e){ota.textContent=e}}
+function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';ota.textContent='Будет установлена прошивка, сохранённая в приложении'}
+async function uploadFw(){
+  if(uploadFwButton.disabled)return;
+  let f=fw.files[0];
+  if(!window.bleLockInternalFirmware&&!f){showNotice('Выберите файл .bin',true);return}
+  uploadFwButton.disabled=true;
+  ota.textContent='Подготовка прошивки…';
+  try{
+    if(window.bleLockInternalFirmware){
+      let cached=await fetch('/__app/firmware',{cache:'no-store'});
+      if(!cached.ok)throw new Error(await cached.text());
+      f=await cached.blob();
+    }
+    let before=await j('/api/status');
+    ota.textContent='Передача прошивки… Не закрывайте окно';
+    let r=await fetch('/api/ota',{method:'POST',body:f});
+    let message=await r.text();
+    if(!r.ok)throw new Error(message||'Не удалось установить прошивку');
+    ota.textContent=message+' · Ожидание перезапуска…';
+    for(let attempt=0;attempt<60;attempt++){
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      try{
+        let after=await j('/api/status');
+        if(after.version!==before.version||after.uptime_s<before.uptime_s){
+          ota.textContent='Обновление установлено · Версия '+after.version;
+          await loadStatus();
+          return;
+        }
+      }catch(e){}
+    }
+    ota.textContent='Файл принят. Возврат замка после перезапуска пока не подтверждён';
+  }catch(e){ota.textContent=String(e)}
+  finally{uploadFwButton.disabled=false}
+}
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}

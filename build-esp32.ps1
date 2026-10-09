@@ -2,6 +2,8 @@
 param(
     [ValidateSet("build","fullclean","flash","monitor","flash-monitor")]
     [string]$Action = "build",
+    [ValidateSet("default","signed-dev","release")]
+    [string]$Profile = "signed-dev",
     [string]$IdfVersion = "v5.4.4",
     [string]$Port = ""
 )
@@ -9,7 +11,13 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = $PSScriptRoot
-$BuildDir = Join-Path $ProjectRoot "build"
+$BuildDir = if ($Profile -eq "default") {
+    Join-Path $ProjectRoot "build"
+} else {
+    Join-Path $ProjectRoot "build-$Profile"
+}
+$SigningKey = Join-Path $ProjectRoot ".security\ota_signing_key.pem"
+$Sdkconfig = Join-Path $BuildDir "sdkconfig"
 $EimStateDir = Join-Path $ProjectRoot ".eim-codex"
 $EimLog = Join-Path $EimStateDir "eim.log"
 $SourceConfig = "C:\Espressif\tools\eim_idf.json"
@@ -37,10 +45,19 @@ $env:PYTHONDONTWRITEBYTECODE = "1"
 function Invoke-EimIdf {
     param([Parameter(Mandatory=$true)][string]$IdfCommand)
 
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($IdfCommand))
+    $childCodes = [System.Collections.Generic.List[int]]::new()
     & eim `
         --log-file $EimLog `
         --esp-idf-json-path $EimStateDir `
-        run $IdfCommand $IdfVersion
+        run "python tools/invoke_idf_checked.py $encodedCommand" $IdfVersion |
+        ForEach-Object {
+            $line = [string]$_
+            if ($line -match '^CODEX_IDF_EXIT_CODE=(-?\d+)\s*$') {
+                $childCodes.Add([int]$Matches[1])
+            }
+            Write-Host $line
+        }
 
     $code = $LASTEXITCODE
     if ($null -eq $code) { $code = 1 }
@@ -48,10 +65,27 @@ function Invoke-EimIdf {
         Write-Error "ESP-IDF command failed (exit code $code)"
         exit $code
     }
+    if ($childCodes.Count -ne 1 -or $childCodes[0] -ne 0) {
+        throw "ESP-IDF child command failed or did not report its exit status: $IdfCommand"
+    }
 }
 
 function Apply-NimbleSecurityGuard {
     Invoke-EimIdf "python tools/apply_nimble_sec_req_guard.py"
+}
+
+function Invoke-ProjectIdf {
+    param([Parameter(Mandatory=$true)][string]$IdfAction)
+    if ($Profile -eq "default") {
+        Invoke-EimIdf "idf.py $IdfAction"
+    } else {
+        if (-not (Test-Path $SigningKey)) {
+        throw "Для профиля '$Profile' нужен закрытый ключ $SigningKey. Создайте его командой: idf.py secure-generate-signing-key $SigningKey"
+        }
+        $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.$Profile"
+        $command = "idf.py -B `"$BuildDir`" -D `"SDKCONFIG=$Sdkconfig`" -D `"SDKCONFIG_DEFAULTS=$defaults`" $IdfAction"
+        Invoke-EimIdf $command
+    }
 }
 
 function Resolve-EspPort {
@@ -84,7 +118,7 @@ function Invoke-DirectFlash {
 
     if (-not (Test-Path $flashArgs)) {
         Apply-NimbleSecurityGuard
-        Invoke-EimIdf "idf.py build"
+            Invoke-ProjectIdf "build"
     }
     if (-not (Test-Path $flashArgs)) {
         throw "Не найден $flashArgs"
@@ -121,11 +155,14 @@ function Invoke-DirectFlash {
 switch ($Action) {
     "build" {
         Apply-NimbleSecurityGuard
-        Invoke-EimIdf "idf.py build"
+        Invoke-ProjectIdf "build"
+        if ($Profile -ne "default") {
+            Invoke-EimIdf "python tools/prepare_encrypted_ota.py `"$BuildDir`""
+        }
         Write-Host "ESP32 BUILD SUCCESSFUL"
     }
     "fullclean" {
-        Invoke-EimIdf "idf.py fullclean"
+        Invoke-ProjectIdf "fullclean"
         Write-Host "ESP32 FULLCLEAN SUCCESSFUL"
     }
     "flash" {

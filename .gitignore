@@ -15,8 +15,10 @@ _codex_setup_backup_*/
 # Build results
 build/
 **/build/
+build-*/
 out/
 **/out/
+.security/
 
 # Android Studio
 .idea/

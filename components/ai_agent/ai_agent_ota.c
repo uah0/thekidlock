@@ -3,6 +3,8 @@
 #include "esp_ota_ops.h"
 #include "esp_system.h"
 #include "esp_log.h"
+#include "ota_decrypt.h"
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -42,25 +44,49 @@ esp_err_t ai_agent_http_ota(httpd_req_t *req)
     if (ai_agent_http_guard(req, "ota") != ESP_OK) return ESP_OK;
     const esp_partition_t *partition = esp_ota_get_next_update_partition(NULL);
     if (!partition) return ai_agent_http_error(req, "501 Not Implemented", "No OTA partition");
-    if (req->content_len <= 0 || (size_t)req->content_len > partition->size)
+    size_t header_size = esp_encrypted_img_get_header_size();
+    if ((size_t)req->content_len <= header_size ||
+        (size_t)req->content_len > partition->size + header_size)
         return ai_agent_http_error(req, "400 Bad Request", "Invalid firmware size");
     if (atomic_flag_test_and_set(&updating))
         return ai_agent_http_error(req, "409 Conflict", "Restart or OTA in progress");
     esp_ota_handle_t handle;
-    esp_err_t err = esp_ota_begin(partition, req->content_len, &handle);
+    esp_decrypt_handle_t decrypt = ota_decrypt_start();
+    esp_err_t err = decrypt ? ESP_OK : ESP_ERR_NO_MEM;
+    if (err != ESP_OK) goto failed;
+    err = esp_ota_begin(partition, req->content_len - header_size, &handle);
     if (err != ESP_OK) goto failed;
     char buffer[2048];
     int remaining = req->content_len;
     unsigned timeouts = 0;
+    size_t written = 0;
     while (remaining > 0) {
         int received = httpd_req_recv(req, buffer, remaining > (int)sizeof(buffer) ? sizeof(buffer) : remaining);
         if (received == HTTPD_SOCK_ERR_TIMEOUT && ++timeouts <= 3) continue;
         if (received <= 0) { err = ESP_ERR_TIMEOUT; esp_ota_abort(handle); goto failed; }
         timeouts = 0;
-        err = esp_ota_write(handle, buffer, received);
+        pre_enc_decrypt_arg_t data = {.data_in = buffer, .data_in_len = received};
+        err = esp_encrypted_img_decrypt_data(decrypt, &data);
+        if (err == ESP_OK || err == ESP_ERR_NOT_FINISHED) {
+            err = written + data.data_out_len <= partition->size ? ESP_OK : ESP_ERR_INVALID_SIZE;
+            if (err == ESP_OK && data.data_out_len > 0) {
+                err = esp_ota_write(handle, data.data_out, data.data_out_len);
+                written += data.data_out_len;
+            }
+        }
+        free(data.data_out);
         if (err != ESP_OK) { esp_ota_abort(handle); goto failed; }
         remaining -= received;
     }
+    if (!esp_encrypted_img_is_complete_data_received(decrypt) ||
+        written != req->content_len - header_size) {
+        err = ESP_ERR_INVALID_SIZE;
+        esp_ota_abort(handle);
+        goto failed;
+    }
+    err = esp_encrypted_img_decrypt_end(decrypt);
+    decrypt = NULL;
+    if (err != ESP_OK) { esp_ota_abort(handle); goto failed; }
     err = esp_ota_end(handle);
     if (err != ESP_OK) goto failed;
     err = reserve_restart();
@@ -73,6 +99,7 @@ esp_err_t ai_agent_http_ota(httpd_req_t *req)
     xTaskNotifyGive(restart_task_handle);
     return err;
 failed:
+    if (decrypt) esp_encrypted_img_decrypt_abort(decrypt);
     atomic_flag_clear(&updating);
     return ai_agent_http_error(req, "500 Internal Server Error", esp_err_to_name(err));
 }

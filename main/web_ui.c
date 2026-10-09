@@ -19,6 +19,7 @@
 #include "wifi_ota.h"
 #include "esp_http_server.h"
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 static const char *TAG = "web_ui";
 static httpd_handle_t s_server;
@@ -588,7 +589,9 @@ esp_err_t web_ui_start(void)
     /* The Web UI exposes local UI and agent routes (including BLE, ULP, Wi-Fi and OTA
      * controls). Leave a small margin for future routes. */
     config.max_uri_handlers = 40;
-    config.stack_size = 6144;
+    /* esp_ota_end() verifies RSA-PSS signatures on the HTTPD task. The default 6 KiB
+     * stack is not enough for the OTA handler's buffer plus this verification path. */
+    config.stack_size = 12 * 1024;
     config.lru_purge_enable = true;
     esp_err_t err = lock_ai_adapter_init();
     if (err != ESP_OK) return err;
@@ -628,12 +631,15 @@ esp_err_t web_ui_start(void)
             return err;
         }
     }
+#if !CONFIG_SECURE_BOOT
+    /* Agent/debug endpoints are not part of the hardware-secured release surface. */
     err = ai_agent_register_http_handlers(s_server);
     if (err != ESP_OK) {
         httpd_stop(s_server);
         s_server = NULL;
         return err;
     }
+#endif
     event_log_add("Web UI started");
     return ESP_OK;
 }

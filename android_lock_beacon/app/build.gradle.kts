@@ -2,12 +2,23 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Properties
 import java.io.FileInputStream
+import java.net.URI
 
 val releaseKeystoreFile = rootProject.file("keystore.properties")
 val releaseKeystore = Properties()
 if (releaseKeystoreFile.exists()) {
     FileInputStream(releaseKeystoreFile).use { releaseKeystore.load(it) }
 }
+val releaseFirmwareUrl =
+    "https://github.com/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin"
+val debugFirmwareUrl = providers.gradleProperty("otaFirmwareUrl").orNull ?: releaseFirmwareUrl
+val debugFirmwareUri = URI(debugFirmwareUrl)
+val localDebugFirmware = debugFirmwareUri.scheme == "http" &&
+    debugFirmwareUri.host in setOf("127.0.0.1", "localhost")
+if (debugFirmwareUrl != releaseFirmwareUrl && !localDebugFirmware) {
+    throw GradleException("otaFirmwareUrl must be the pinned GitHub asset or localhost HTTP for a debug test")
+}
+fun buildConfigString(value: String) = "\"${value.replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
 plugins {
     id("com.android.application")
@@ -26,6 +37,7 @@ android {
         applicationId = "com.blelock.app"
         minSdk = 26
         targetSdk = 36
+        testInstrumentationRunner = "com.blelock.app.WebUiOtaInstrumentation"
         versionCode = 1
         versionName = "1.0.0"
         val buildNumber = rootProject.file("BUILD_NUMBER").readText().trim().toInt()
@@ -33,16 +45,19 @@ android {
         val buildTimestamp = LocalDateTime.now()
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
         buildConfigField("String", "BUILD_TIMESTAMP", "\"$buildTimestamp\"")
+        buildConfigField("String", "OTA_FIRMWARE_URL", buildConfigString(releaseFirmwareUrl))
     }
 
     buildTypes {
         debug {
             buildConfigField("boolean", "ENABLE_DIAGNOSTIC_LOGS", "true")
+            buildConfigField("String", "OTA_FIRMWARE_URL", buildConfigString(debugFirmwareUrl))
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             buildConfigField("boolean", "ENABLE_DIAGNOSTIC_LOGS", "false")
+            buildConfigField("String", "OTA_FIRMWARE_URL", buildConfigString(releaseFirmwareUrl))
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseKeystoreFile.exists()) {
                 signingConfig = signingConfigs.create("playRelease")

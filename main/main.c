@@ -13,6 +13,7 @@
 #include "wifi_ota.h"
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_rom_sys.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
@@ -22,6 +23,46 @@
 static const char *TAG = "main";
 static volatile uint32_t s_buzzer_test_request;
 static volatile bool s_ulp_diagnostics_verbose;
+
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+static bool s_startup_critical_ok;
+
+static void ota_boot_confirmation_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(5000));
+
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    esp_err_t state_err = running ? esp_ota_get_state_partition(running, &state)
+                                  : ESP_ERR_NOT_FOUND;
+    if (state_err != ESP_OK || state != ESP_OTA_IMG_PENDING_VERIFY) {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    bool healthy = true;
+#if CONFIG_SECURE_BOOT
+    healthy = s_startup_critical_ok;
+#endif
+    if (!healthy) {
+        ESP_LOGE(TAG, "OTA boot self-check failed; rolling back to previous app");
+        event_log_add("OTA: NVS/ULP/BLE не прошли стартовую проверку; откат");
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+        vTaskDelete(NULL);
+        return;
+    }
+
+    esp_err_t err = esp_ota_mark_app_valid_cancel_rollback();
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTA boot self-check passed; image marked valid");
+        event_log_add("OTA: ULP и BLE запущены, образ подтверждён");
+    } else {
+        ESP_LOGE(TAG, "OTA image confirmation failed: %s", esp_err_to_name(err));
+    }
+    vTaskDelete(NULL);
+}
+#endif
 
 static esp_err_t init_buzzer_off(void)
 {
@@ -427,6 +468,13 @@ void app_main(void)
     if (web_err != ESP_OK && web_err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Web UI start not scheduled: %s", esp_err_to_name(web_err));
     }
+#if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
+    s_startup_critical_ok = nvs_err == ESP_OK && ulp_err == ESP_OK && ble_initialized;
+    if (xTaskCreate(ota_boot_confirmation_task, "ota_boot_check", 4096, NULL, 5, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "OTA boot self-check task could not start; requesting rollback");
+        esp_ota_mark_app_invalid_rollback_and_reboot();
+    }
+#endif
     event_log_add("Startup: ULP=%s BLE=%d WiFi=%s NVS=%s", esp_err_to_name(ulp_err),
                   ble_initialized, esp_err_to_name(wifi_err), esp_err_to_name(nvs_err));
 }

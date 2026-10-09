@@ -12,6 +12,7 @@
 #include "esp_event.h"
 #include "esp_http_client.h"
 #include "esp_https_ota.h"
+#include "ota_decrypt.h"
 #include "esp_app_format.h"
 #include "esp_log.h"
 #include "esp_netif.h"
@@ -29,7 +30,7 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAILED_BIT BIT1
 #define WIFI_OTA_STATUS_MAX 32
-#define WIFI_OTA_FIRMWARE_URL "https://github.com/uah007/ble-lock-project/releases/latest/download/ble_lock_stage1_s3.bin"
+#define WIFI_OTA_FIRMWARE_URL "https://github.com/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin"
 
 static const char *TAG = "wifi_ota";
 static EventGroupHandle_t s_wifi_events;
@@ -934,6 +935,7 @@ static int64_t build_timestamp_value(const esp_app_desc_t *description)
 
 static void ota_task(void *arg)
 {
+    esp_decrypt_handle_t decrypt = NULL;
     bool check_only_if_newer = arg != NULL;
     set_status("CONNECTING_WIFI");
     ESP_LOGI(TAG, "OTA task started; automatic=%d target URL='%s'",
@@ -955,7 +957,14 @@ static void ota_task(void *arg)
         .buffer_size = 8192,
         .buffer_size_tx = 4096,
     };
-    esp_https_ota_config_t ota = {.http_config = &http};
+    decrypt = ota_decrypt_start();
+    if (!decrypt) { err = ESP_ERR_NO_MEM; set_status("ERROR_OTA"); goto done; }
+    esp_https_ota_config_t ota = {
+        .http_config = &http,
+        .decrypt_cb = ota_decrypt_https,
+        .decrypt_user_ctx = decrypt,
+        .enc_img_header_size = esp_encrypted_img_get_header_size(),
+    };
     esp_https_ota_handle_t handle = NULL;
     err = esp_https_ota_begin(&ota, &handle);
     if (err == ESP_OK && check_only_if_newer) {
@@ -986,6 +995,14 @@ static void ota_task(void *arg)
     if (err == ESP_OK && !esp_https_ota_is_complete_data_received(handle)) {
         err = ESP_ERR_INVALID_SIZE;
     }
+    if (err == ESP_OK) {
+        if (!esp_encrypted_img_is_complete_data_received(decrypt)) {
+            err = ESP_ERR_INVALID_SIZE;
+        } else {
+            err = esp_encrypted_img_decrypt_end(decrypt);
+            decrypt = NULL;
+        }
+    }
     if (handle) {
         esp_err_t finish_err = err == ESP_OK ? esp_https_ota_finish(handle)
                                              : esp_https_ota_abort(handle);
@@ -1002,6 +1019,7 @@ static void ota_task(void *arg)
         ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(err));
     }
 done:
+    if (decrypt) esp_encrypted_img_decrypt_abort(decrypt);
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     if (s_wifi_stack_ready && !s_web_active) {
         esp_err_t stop_err = esp_wifi_stop();

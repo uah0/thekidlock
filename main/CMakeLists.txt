@@ -18,6 +18,7 @@ idf_component_register(
         "lock_ai_adapter.c"
     INCLUDE_DIRS "." "ulp" "${CMAKE_BINARY_DIR}/generated"
     REQUIRES
+        ota_decrypt
         ai_agent
         bt
         nvs_flash

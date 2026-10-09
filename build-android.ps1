@@ -3,7 +3,8 @@ param(
     [ValidateSet("debug","clean","install","test")]
     [string]$Action = "debug",
     [ValidateSet("android_lock_beacon")]
-    [string]$ProjectName = "android_lock_beacon"
+    [string]$ProjectName = "android_lock_beacon",
+    [string]$OtaFirmwareUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,18 @@ Set-Content -Path $localProperties -Value "sdk.dir=$sdkEscaped" -Encoding ASCII
 
 Set-Location $ProjectDir
 
+$gradleProperties = @("--no-daemon")
+if (-not [string]::IsNullOrWhiteSpace($OtaFirmwareUrl)) {
+    $parsedOtaUrl = [Uri]$OtaFirmwareUrl
+    $isLocalTestUrl = $parsedOtaUrl.Scheme -eq "http" -and
+        $parsedOtaUrl.Host -in @("127.0.0.1", "localhost")
+    $pinnedReleaseUrl = "https://github.com/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin"
+    if ($OtaFirmwareUrl -ne $pinnedReleaseUrl -and -not $isLocalTestUrl) {
+        throw "OtaFirmwareUrl должен совпадать с закреплённым GitHub asset или использовать HTTP только для localhost."
+    }
+    $gradleProperties += "-PotaFirmwareUrl=$OtaFirmwareUrl"
+}
+
 if ($Action -in @("debug", "install")) {
     $buildNumberFile = Join-Path $ProjectDir "BUILD_NUMBER"
     $buildNumber = [int](Get-Content -LiteralPath $buildNumberFile -Raw).Trim()
@@ -59,16 +72,16 @@ if ($Action -in @("debug", "install")) {
 
 switch ($Action) {
     "test" {
-        & ".\gradlew.bat" --no-daemon test
+        & ".\gradlew.bat" @gradleProperties test
     }
     "debug" {
-        & ".\gradlew.bat" --no-daemon assembleDebug
+        & ".\gradlew.bat" @gradleProperties assembleDebug
     }
     "clean" {
         & ".\gradlew.bat" --no-daemon clean
     }
     "install" {
-        & ".\gradlew.bat" --no-daemon assembleDebug
+        & ".\gradlew.bat" @gradleProperties assembleDebug
         if ($LASTEXITCODE -eq 0) {
             $apk = Join-Path $ProjectDir "app\build\outputs\apk\debug\app-debug.apk"
             if (-not (Test-Path $apk)) {

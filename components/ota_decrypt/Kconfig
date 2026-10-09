@@ -1,0 +1,4 @@
+config BLE_LOCK_ENCRYPTED_OTA
+    bool
+    default y
+    select ESP_HTTPS_OTA_DECRYPT_CB

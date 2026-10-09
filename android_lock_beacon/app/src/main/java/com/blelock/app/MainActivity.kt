@@ -49,6 +49,8 @@ import android.widget.Switch
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import java.io.File
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private enum class WebUiConnectionState {
@@ -106,6 +108,9 @@ class MainActivity : Activity() {
     private var webUiRequestPending = false
     private var hotspotProvisioningStarted = false
     private var webUiBrowserOpen = false
+    private var lockWebUiDialog: LockWebUiDialog? = null
+    private var firmwarePrefetchRunning = false
+    private val firmwarePrefetchExecutor = Executors.newSingleThreadExecutor()
     private var otaStartToastShown = false
     private var adminProbeRetries = 0
     private var manualOpenCommandPending = false
@@ -124,6 +129,52 @@ class MainActivity : Activity() {
     private var webUiStartedAtMs = 0L
     private var webUiCountdownStartSeconds = 6
     private val signalHandler = Handler(Looper.getMainLooper())
+    private val firmwareCheckRunnable: Runnable = object : Runnable {
+        override fun run() {
+            if (localHotspotReservation != null || firmwarePrefetchRunning) {
+                signalHandler.postDelayed(this, FIRMWARE_CHECK_RETRY_MS)
+                return
+            }
+            firmwarePrefetchRunning = true
+            firmwarePrefetchExecutor.execute {
+                var nextDelayMs = FIRMWARE_CHECK_RETRY_MS
+                try {
+                    val metadata = FirmwareUpdateClient.checkLatestFirmware()
+                    val preferences = getSharedPreferences(FIRMWARE_PREFETCH_PREFS, MODE_PRIVATE)
+                    val previousMarker = preferences.getString(FIRMWARE_PREFETCH_MARKER, null)
+                    val fileAvailable = FirmwareUpdateClient.hasPublishedFirmware(applicationContext)
+                    if (FirmwareUpdateClient.shouldDownloadFirmware(
+                            previousMarker, metadata.marker, fileAvailable
+                        )) {
+                        val temporaryImage = File(cacheDir, "$FIRMWARE_DOWNLOAD_NAME.tmp")
+                        try {
+                            FirmwareUpdateClient.downloadLatest(temporaryImage)
+                            FirmwareUpdateClient.publishForWebUi(applicationContext, temporaryImage)
+                            preferences.edit()
+                                .putString(FIRMWARE_PREFETCH_MARKER, metadata.marker)
+                                .putBoolean(FIRMWARE_PREFETCH_NOTICE_PENDING, true)
+                                .apply()
+                            runOnUiThread { showPendingFirmwareNotice() }
+                            nextDelayMs = FIRMWARE_CHECK_INTERVAL_MS
+                        } finally {
+                            temporaryImage.delete()
+                        }
+                    } else {
+                        nextDelayMs = FIRMWARE_CHECK_INTERVAL_MS
+                    }
+                } catch (error: Exception) {
+                    runOnUiThread {
+                        if (!isFinishing) appendLog("Проверка новой прошивки не выполнена: ${error.message}")
+                    }
+                } finally {
+                    runOnUiThread {
+                        firmwarePrefetchRunning = false
+                        if (!isFinishing) signalHandler.postDelayed(firmwareCheckRunnable, nextDelayMs)
+                    }
+                }
+            }
+        }
+    }
     private val webUiCountdown = object : Runnable {
         override fun run() {
             if (!webUiRequestPending) return
@@ -557,11 +608,10 @@ class MainActivity : Activity() {
         workingModeState = workingModeState.copy(holdCommandConfirmed = false)
         refreshState()
         showLegacyBleLocationNoticeIfNeeded()
-        if (webUiBrowserOpen) {
+        if (webUiBrowserOpen && lockWebUiDialog?.isShowing != true) {
             webUiBrowserOpen = false
             if (localHotspotReservation != null) {
                 closeLocalHotspot("Возврат из Web UI")
-                setWebUiConnectionState(WebUiConnectionState.IDLE)
             } else {
                 finishWebUiIpRequest()
             }
@@ -571,6 +621,9 @@ class MainActivity : Activity() {
                 .setAction(BleLockService.ACTION_HOME_WIFI_REQUEST)) }
                 .onFailure { appendLog("Не удалось запросить домашний Wi-Fi: ${it.message}") }
         }
+        showPendingFirmwareNotice()
+        signalHandler.removeCallbacks(firmwareCheckRunnable)
+        signalHandler.postDelayed(firmwareCheckRunnable, FIRMWARE_CHECK_INITIAL_DELAY_MS)
     }
 
     override fun onPause() {
@@ -627,11 +680,14 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        lockWebUiDialog?.dismiss()
+        lockWebUiDialog = null
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
         signalHandler.removeCallbacks(adminSignalPoll)
         signalHandler.removeCallbacks(resumeService)
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
         signalHandler.removeCallbacks(webUiCountdown)
+        signalHandler.removeCallbacks(firmwareCheckRunnable)
         if (serviceBound) {
             boundService?.unregisterClient(bleListener)
             unbindService(serviceConnection)
@@ -642,6 +698,7 @@ class MainActivity : Activity() {
         localHotspotReservation?.close()
         localHotspotReservation = null
         hotspotSessionId = null
+        firmwarePrefetchExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -1841,7 +1898,18 @@ class MainActivity : Activity() {
         webUiBrowserOpen = hadPendingRequest || keepHotspotForEsp
         setWebUiConnectionState(WebUiConnectionState.OPENING_BROWSER)
         appendLog("Открываю Web UI ESP32: $url")
-        runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        runCatching {
+            lockWebUiDialog?.setOnDismissListener(null)
+            lockWebUiDialog?.dismiss()
+            lockWebUiDialog = LockWebUiDialog(this, url).apply {
+                setOnDismissListener {
+                    webUiBrowserOpen = false
+                    if (localHotspotReservation != null) closeLocalHotspot("Закрыт Web UI")
+                    else finishWebUiIpRequest()
+                }
+                show()
+            }
+        }
             .onSuccess {
                 setWebUiConnectionState(WebUiConnectionState.COMPLETE)
                 if (keepHotspotForEsp) {
@@ -1852,7 +1920,7 @@ class MainActivity : Activity() {
             .onFailure {
                 webUiBrowserOpen = false
                 setWebUiConnectionState(WebUiConnectionState.ERROR)
-                appendLog("Не удалось открыть браузер: ${it.message}")
+                appendLog("Не удалось открыть Web UI: ${it.message}")
                 finishWebUiIpRequest()
             }
     }
@@ -2021,6 +2089,15 @@ class MainActivity : Activity() {
         hotspotWebUrlView.visibility = View.GONE
         setWebUiConnectionState(WebUiConnectionState.ERROR)
         appendLog("Локальная точка доступа отключена: $reason")
+    }
+
+    private fun showPendingFirmwareNotice() {
+        if (!activityResumed || isFinishing) return
+        val preferences = getSharedPreferences(FIRMWARE_PREFETCH_PREFS, MODE_PRIVATE)
+        if (!preferences.getBoolean(FIRMWARE_PREFETCH_NOTICE_PENDING, false)) return
+        preferences.edit().putBoolean(FIRMWARE_PREFETCH_NOTICE_PENDING, false).apply()
+        Toast.makeText(this, R.string.firmware_download_ready, Toast.LENGTH_LONG).show()
+        appendLog("Новая зашифрованная прошивка сохранена внутри приложения для установки из Web UI")
     }
 
     private fun sendHotspotCredentials(
@@ -2201,6 +2278,13 @@ class MainActivity : Activity() {
         private const val HOTSPOT_IP_CHECK_INTERVAL_MS = 10_000L
         private const val HOTSPOT_PROVISIONING_TIMEOUT_SECONDS = 60
         private const val HOTSPOT_PROVISIONING_TIMEOUT_MS = 60_000L
+        private const val FIRMWARE_CHECK_INITIAL_DELAY_MS = 10_000L
+        private const val FIRMWARE_CHECK_INTERVAL_MS = 6 * 60 * 60_000L
+        private const val FIRMWARE_CHECK_RETRY_MS = 15 * 60_000L
+        private const val FIRMWARE_PREFETCH_PREFS = "firmware_prefetch"
+        private const val FIRMWARE_PREFETCH_MARKER = "release_marker"
+        private const val FIRMWARE_PREFETCH_NOTICE_PENDING = "notice_pending"
+        private const val FIRMWARE_DOWNLOAD_NAME = FirmwareUpdateClient.DOWNLOAD_NAME
         private const val HOTSPOT_INTERFACE_RESOLVE_ATTEMPTS = 20
         private const val HOTSPOT_INTERFACE_RESOLVE_INTERVAL_MS = 250L
         private const val ADMIN_PROBE_RETRY_DELAY_MS = 500L

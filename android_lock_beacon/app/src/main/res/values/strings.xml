@@ -8,6 +8,7 @@
     <string name="legacy_location_open_settings">Открыть настройки</string>
     <string name="local_hotspot_status">Локальная точка доступа не запущена</string>
     <string name="control_settings">Настройки</string>
+    <string name="firmware_download_ready">Новая прошивка готова. Нажмите «Установить обновление» в Web UI замка.</string>
     <string name="mode_auto">Автоматический режим</string>
     <string name="mode_always_open">Замок постоянно открыт</string>
     <string name="open_via_internet">Открыть через интернет</string>

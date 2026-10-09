@@ -1,0 +1,53 @@
+name: ESP32-S3 encrypted and signed OTA release
+
+on:
+  push:
+    tags:
+      - 'esp-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v5.4.4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare private build keys
+        shell: bash
+        env:
+          OTA_SIGNING_KEY_PEM: ${{ secrets.OTA_SIGNING_KEY_PEM }}
+          OTA_DECRYPTION_KEY_PEM: ${{ secrets.OTA_DECRYPTION_KEY_PEM }}
+        run: |
+          test -n "$OTA_SIGNING_KEY_PEM"
+          test -n "$OTA_DECRYPTION_KEY_PEM"
+          mkdir -p .security
+          umask 077
+          printf '%s' "$OTA_SIGNING_KEY_PEM" > .security/ota_signing_key.pem
+          printf '%s' "$OTA_DECRYPTION_KEY_PEM" > .security/ota_decryption_key.pem
+      - name: Build compatible signed OTA firmware
+        shell: bash
+        run: |
+          python tools/apply_nimble_sec_req_guard.py
+          idf.py -B build-signed-dev \
+            -D SDKCONFIG=build-signed-dev/sdkconfig \
+            -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.signed-dev' \
+            build
+          test -s build-signed-dev/ble_lock_stage1_s3.bin
+          espsecure.py extract_public_key --version 2 \
+            --keyfile .security/ota_signing_key.pem .security/ota_public_key.pem
+          espsecure.py verify_signature --version 2 \
+            --keyfile .security/ota_public_key.pem build-signed-dev/ble_lock_stage1_s3.bin
+          python tools/prepare_encrypted_ota.py build-signed-dev
+      - name: Publish encrypted firmware asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python tools/publish_esp32_release.py "$GITHUB_REF_NAME" \
+            build-signed-dev/encrypted/ble_lock_stage1_s3.bin
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: rm -f .security/ota_signing_key.pem .security/ota_public_key.pem .security/ota_decryption_key.pem .security/ota_encryption_public_key.pem

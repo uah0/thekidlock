@@ -5784,6 +5784,196 @@ ESP 10.0.330: сборка проектным скриптом PASS, разме�
 - Пока AUTO был включён, с 08:08:33.409 по 08:08:40.181 несколько раз появилось системное предупреждение `BluetoothLeAdvertiser: Legacy advertiser should be only disabled on timeout, but was enabled!`. В эти же интервалы BLE GATT чтения ESP завершались успешно, но причина предупреждения и его влияние по одному журналу не устанавливаются. Это стоит наблюдать отдельно при следующей BLE-проверке; в приложении нет соответствующей ошибки `PhoneBeacon advertising failed`.
 - Для кнопки интернет-открытия в этих логах нет событий `InternetOpen`, MQTT, `opened`, `closing`, `closed` или ошибки; текущий код этой операции не пишет в logcat этапы. Поэтому фактическое отображение особого четвёртого красного сектора на устройстве по текущему журналу не подтверждено. Проверены кодовое отображение статусов и unit-тесты, но для живого подтверждения нужен тест с нажатием кнопки и журналирование подписанных ответов/переходов UI.
 
+## OTA: signed-dev и приложение — 08.10.2026
+
+- Базовый `build-esp32.ps1` до изменений: PASS, 10.0.383; OTA текущему замку PASS, устройство подтвердило 10.0.383.
+- Базовый `build-android.ps1`: PASS.
+- `build-esp32.ps1` с профилем `signed-dev`: PASS, RSA-PSS image 10.0.384. OTA на текущий замок PASS, 10.0.383 → 10.0.384; устройство вернулось, ULP/NVS/BLE/Wi-Fi/Web UI запустились.
+- `build-android.ps1 -Action test`: PASS, Debug и Release unit tests; Kotlin компиляция обоих вариантов прошла.
+- Тесты охватывают постоянство URL GitHub Releases и ограничение размера OTA-раздела. Полная передача через телефон и отказ изменённого файла ещё не проверялись.
+- Аппаратные Secure Boot/Flash Encryption eFuse не включались. Release-профиль не установлен на рабочий замок.
+- GitHub Actions secret не создан: `gh` CLI отсутствует в окружении. Публикация релиза не запускалась.
+
+## Проверка причины возврата подписанной OTA на 10.0.384 — 08.10.2026
+
+- Перед пробой: device id `a0:f2:62:f1:14:b8`, firmware 10.0.384, состояние `LOCKED`, faults=0, ULP calibration valid.
+- Во время валидной OTA-пробы boot id сменился; в 2-секундном опросе после перезапуска API сразу сообщал 10.0.384 и продолжал сообщать её до конца наблюдения. Сборка 10.0.388 в работающем API не появилась (`artifacts/ota-boot-observation-20261008.txt`).
+- Сетевой журнал нового старого запуска показывает `auto_update=0`; автоматический HTTPS OTA не мог сам заменить кандидата.
+- `/api/agent/log` содержит только журнал уже запущенной 10.0.384, не ROM/bootloader сообщения предыдущего старта. На компьютере не найден COM-порт или USB-UART/ESP устройство.
+- Вывод: установлено, что новая версия не доходит до доступного HTTP API после выбора OTA. Точная причина загрузчика пока не установлена; для различения проверки ключа/eFuse, метаданных OTA и раннего сбоя приложения нужен UART захват следующей загрузки. eFuse не менялись, Release-образ не загружался.
+
+## Диагностика нажатия «Обновить прошивку» — 08.10.2026
+
+- Устройство: Redmi Note 15, ADB 192.168.1.65:42965; ESP UART COM7 подключён.
+- Android logcat: загрузка подписанного образа началась, затем завершилась ошибкой Загрузка GitHub Releases завершилась с кодом 404 (повторная попытка дала тот же результат).
+- Независимый HTTP HEAD к закреплённому URL вернул 404 Not Found.
+- На ESP после нажатия не зафиксирован приём OTA/перезагрузка; прошивка не дошла до устройства.
+- Вывод: данная попытка остановилась до OTA-запроса к ESP из-за отсутствующего GitHub asset. Код не менялся, сборки/прошивки в этом диагностическом шаге не выполнялись.
+- Лог телефона: artifacts/android-ota-attempt-20261008.txt.
+
+## Подготовка тестовой доставки OTA с компьютера — 08.10.2026
+
+- До изменений базовая Android debug-сборка прошла успешно.
+- `pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\build-android.ps1 -Action test` — успешно, debug и release unit tests прошли.
+- Собрана debug-сборка 235 с источником `http://127.0.0.1:38483/ble_lock_stage1_s3.bin`; установлена на Redmi Note 15 (`192.168.1.65:42965`).
+- До установки и после неё `accelerometer_rotation=0`, `user_rotation=0`; значения совпадают.
+- Локальный сервер отдаёт образ 10.0.388 (1,445,888 байт, проверка esptool успешна); ADB reverse `tcp:38483` настроен на этом телефоне.
+- End-to-end передача пока не запускалась: экран телефона заблокирован после установки. OTA-запрос к ESP не выполнялся, состояние ESP не менялось.
+- Изменённые файлы: `build-android.ps1`, `android_lock_beacon/app/build.gradle.kts`, `android_lock_beacon/app/src/main/java/com/blelock/app/FirmwareUpdateClient.kt`, `android_lock_beacon/app/src/test/java/com/blelock/app/FirmwareUpdateClientTest.kt`; отчёты: `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.
+
+## OTA на 100% и загрузка исправленного образа — 08.10.2026
+
+- Локальный тестовый HTTP сервер подтвердил GET файла для Redmi Note 15 (ответ 200, размер 1,445,888 байт).
+- UART ESP подтвердил `Signature verified successfully!`, затем панику Core 1 `LoadProhibited` в `vTaskSwitchContext` при работающей 10.0.384; устройство перезагрузилось на 10.0.384. OTA клиент не получил нормальный ответ и истёк по 120-секундному таймауту.
+- Вероятный, но пока не подтверждённый фактор: 6 КиБ HTTPD task stack при обработке `esp_ota_end()` и RSA-PSS. Изменён `main/web_ui.c`: HTTPD stack увеличен до 12 КиБ.
+- Baseline ESP signed-dev сборка 10.0.389 успешна. Изменённая ESP signed-dev сборка 10.0.390 успешна и проверка размера прошла: 0x161000 при OTA-разделе 0x1e0000.
+- OTA-попытка 10.0.390 через старый 10.0.384 receiver тоже завершилась паникой; это не проверяет фикс, поскольку активным оставался старый HTTPD код.
+- Из-за таймаута старого OTA receiver образ 10.0.390 записан через USB COM7 с помощью проектного `build-esp32.ps1 -Action flash -Profile signed-dev`. После загрузки устройство отвечает: версия 10.0.390, `LOCKED`, `fault_flags=0`, `calibration_required=false`, `stack_http_bytes=10016`.
+- Новый OTA receiver пока не тестировался. После повторного запуска Web UI на телефоне требуется проверить OTA из установленного приложения с локально раздаваемым файлом 10.0.390.
+- Изменён файл прошивки: `main/web_ui.c`. Предыдущие Android-тестовые изменения находятся в `build-android.ps1`, `android_lock_beacon/app/build.gradle.kts`, `android_lock_beacon/app/src/main/java/com/blelock/app/FirmwareUpdateClient.kt`, `android_lock_beacon/app/src/test/java/com/blelock/app/FirmwareUpdateClientTest.kt`. UART наблюдения: `artifacts/ota-signature-panic-20261008.txt`.
+
+## Проверка штатной и повреждённой OTA — 08.10.2026
+
+- На Redmi Note 15 установлена debug-сборка приложения 235; локальная тестовая раздача доступна через loopback и ADB reverse.
+- Валидный подписанный образ 10.0.390 скачан приложением (HTTP 200), ESP перезапустилась, UART: `OTA boot self-check passed; image marked valid`. Boot id сменился на `40b9ad14805b60aa`; версия осталась 10.0.390, поскольку повторно ставился тот же образ.
+- Изменение байта в содержимом образа вызвало `Checksum failed`; приложение получило `ESP_ERR_OTA_VALIDATE_FAILED`.
+- Для отдельной проверки подписи изменён байт сигнатурного блока (offset 1,441,892). Локальный `espsecure signature_info_v2` пометил блок подписи недействительным, при этом `esptool image_info` подтвердил правильные checksum и validation hash. UART ESP: `Secure boot signature verification failed`, `image valid, signature bad`; приложение получило `ESP_ERR_OTA_VALIDATE_FAILED`.
+- После обеих отказанных попыток ESP не перезагружалась и сохранила рабочую версию 10.0.390. После закрытия тестовой точки доступа вернулась в домашнюю сеть `Cisco`, IP `192.168.1.54`; MQTT TCP подключился. Статус: `LOCKED`, `fault_flags=0`, калибровка действительна.
+- Тестовый OTA-файл на сервере восстановлен; SHA-256 совпадает с резервной копией: `65D46AA44C467A551AA73E45FB72BC54857FCE6DDB57E39C36C2A434C86DD1E6`.
+- Код проекта в этом шаге не менялся; отрицательные проверки завершились ожидаемым отказом.
+
+## Автоматическая подготовка OTA-файла — 08.10.2026
+
+- Android Debug/Release unit tests и сборки выполнены проектным `build-android.ps1`; APK Debug установлен на Redmi Note 15 (`192.168.1.65:43621`).
+- На установке сохранены и восстановлены системные настройки ориентации; до/после: `accelerometer_rotation=0`, `user_rotation=0`.
+- По коду проверено: Android больше не отправляет файл на `/api/ota` и не показывает кнопку «Обновить прошивку» на главном экране. Web UI со своим выбором файла и кнопкой `/api/ota` оставлен без изменений.
+- Проверка автоматической загрузки с закреплённого адреса в настоящий момент невозможна: GitHub asset отвечает HTTP 404 (зафиксировано в предыдущей проверке). Приложение сохраняет текущий файл, если он есть, пишет ошибку проверки в журнал и повторяет попытку через 15 минут.
+- На Redmi установочный пакет присутствует; UI-проверка отложена, поскольку устройство перешло в спящий режим и запущенный Activity не стал видимым. Сам APK установлен успешно.
+
+## Проверки OTA-публикации — 09.10.2026
+
+- До изменения кода: проектный build-esp32.ps1 -Action build -Profile signed-dev успешно собрал 10.0.392. espsecure подтвердил RSA-подпись, esptool подтвердил формат ESP32-S3 и checksum/hash. Первоначальная попытка OTA не началась из-за временной недоступности 192.168.1.54.
+- После изменений: проектный скрипт успешно собрал 10.0.393 с CODEX_IDF_EXIT_CODE=0; журнал artifacts/esp32-ota-build-20261009.log.
+- Финальный файл: 1445888 байт (0x161000), OTA-раздел 1966080 байт (0x1E0000), запас 520192 байт (0x7F000). Таблица остаётся на 0x8000. SHA-256: d398dbd755909ad3fa2e9b77052f409dc68ffdddc33527a679a69dca882a4f6c.
+- espsecure verify_signature --version 2 с публичным ключом: Signature block 0 verification successful. Пустые блоки 1/2 ожидаемо пропущены. secure_version=0; в app descriptor версия проекта 1.0.0, прикладная firmware_version определяется номером сборки и подтверждена API как 10.0.393.
+- device-agent discover нашёл прежний замок 10.0.390. OTA через device-agent flash успешно завершилась; тот же device_id a0:f2:62:f1:14:b8 вернулся с 10.0.393 и новым boot_id 56d7da6e9c289681. Журнал и снимок сохранены в artifacts. eFuse/таблица/загрузчик через OTA не изменялись.
+- Проверка ложного успеха: реальный EIM для дочернего Python exit 7 вернул EIM_EXIT_CODE=0, обёртка сообщила CODEX_IDF_EXIT_CODE=7. Проверка PowerShell с имитацией такого EIM отвергла результат; сообщение BUILD SUCCESSFUL не выдано.
+- Python-синтаксис новых скриптов проверен. Локальная имитация GitHub API подтвердила последовательность создание draft → загрузка asset → публикация latest → сравнение публичного SHA-256; реальных сетевых записей в тесте нет.
+- git diff --check для сборочного скрипта/workflow/новых скриптов прошёл. Android не изменялся и не собирался в этом этапе.
+- Git ls-remote origin и авторизованный GitHub get_repo: Repository not found / HTTP 404. Доступный подключённый аккаунт: uah0. Настоящие CI, установка секрета и публикация не выполнены; фиксированный URL пока не подтверждён как рабочий.
+
+## Проверка миграции на uah0/thekidlock — 09.10.2026
+
+- Базовые сборки до изменения URL: ESP signed-dev 10.0.394 и Android debug успешны. 10.0.394 загружена через device-agent; версия подтверждена. Журналы artifacts/esp32-repo-migration-baseline.log, android-repo-migration-baseline.log, esp32-repo-migration-baseline-flash.log.
+- После изменений: ESP signed-dev 10.0.395 и Android debug build239 успешны проектными скриптами. Android build-android.ps1 -Action test успешно выполнил существующие debug/release unit tests. Журналы artifacts/esp32-repo-migration-build.log, android-repo-migration-build.log, android-repo-migration-tests.log.
+- BuildConfig debug содержит новый фиксированный URL. Release BuildConfig использует ту же обновлённую Gradle-константу. Старый репозиторий не найден в действующем коде main, Android src, Gradle-конфигурации, Android build script, publisher или workflow.
+- Образ: 1445888 байт при OTA-разделе 0x1E0000, RSA-подпись valid (espsecure), SHA-256 073ae2107beec3ddfbb0bc3e95df8b14eaa2c386911078fc9704312103bf30c3. Смещение таблицы 0x8000 сохранено.
+- OTA 10.0.394 → 10.0.395 успешна. Версия и возврат того же device_id a0:f2:62:f1:14:b8 подтверждены; boot_id 871cd74e1831d950, LOCKED, fault_flags=0, calibration_required=false. Снимок artifacts/esp32-after-repo-migration-395.json.
+- Git ls-remote https://github.com/uah0/thekidlock.git успешен. Авторизованный API GitHub подтвердил push=true для uah0. Токен получен из Credential Manager только в памяти и не выводился/не сохранялся в проект.
+- Реальный релиз https://github.com/uah0/thekidlock/releases/tag/esp-v10.0.395 опубликован через REST API. Неавторизованные HEAD/GET по новому latest/download URL успешны; размер и SHA-256 совпадают с локальным файлом. Метаданные: artifacts/thekidlock-public-ota-check.json.
+- git diff --check затронутых tracked source/config файлов успешен. Android APK сохранён отдельно, установка на физический телефон не выполнялась. CI не запускался, OTA_SIGNING_KEY_PEM на GitHub не устанавливался, исходники/workflow не отправлялись.
+
+## Зашифрованный OTA: сборка интеграции — 09.10.2026
+
+- Базовая 10.0.396 до интеграции собрана и установлена через device-agent; возврат с 10.0.396 подтверждён.
+- Первая попытка интеграции остановилась на отсутствии esp_partition.h в зависимостях ota_decrypt. Зависимость esp_partition добавлена; последующая проектная сборка 10.0.398 успешна. Скрипт корректно отверг неуспешную сборку, ложный BUILD SUCCESSFUL не появился.
+- esp_encrypted_img 2.5.1 зафиксирован в dependencies.lock. RSA-PSS подпись 10.0.398 проверена espsecure. Официальный esp_enc_img_gen encrypt/decrypt подтвердил побайтовое совпадение с подписанным исходником; временный verification-plaintext удалён.
+- Зашифрованный контейнер 1446400 байт (512 байт header + 1445888 байт подписанного приложения). SHA-256 14d62515168ee282ebde1b3bf3dbac176aeb2f7aba596d45a7c3590e21be3e75. Существующий OTA-раздел 0x1E0000 достаточен; таблица 0x8000.
+- Publisher при plaintext-файле завершился до любых запросов GitHub: Only Espressif pre-encrypted OTA containers may be published.
+- CONFIG_ESP_HTTPS_OTA_DECRYPT_CB=y, PRE_ENCRYPTED_OTA_USE_RSA=y; аппаратные Secure Boot/Flash Encryption не включались, eFuse не прожигались. Проверки реального encrypted OTA/повреждений и публикация ещё выполняются следующим этапом.
+
+Bootstrap 10.0.398 локально установлен поверх 10.0.396 через device-agent. Возврат с новой firmware_version подтверждён; открытый bin не публиковался. Следующая сборка/установка будет уже зашифрованной.
+
+## Зашифрованный OTA: проверка на замке и GitHub — 09.10.2026
+
+- build-esp32.ps1 -Profile signed-dev: PASS, 10.0.399, CODEX_IDF_EXIT_CODE=0 для сборки и подготовки encrypted image. Подпись проверена espsecure; официальный encrypt/decrypt tool подтвердил побайтовое совпадение. Контейнер 1446400 байт, plaintext приложение 1445888 байт при OTA slot 1966080 байт.
+- device-agent flash -Firmware build-signed-dev/encrypted/ble_lock_stage1_s3.bin: PASS, 10.0.398 → 10.0.399. Сохранён device_id a0:f2:62:f1:14:b8, новый boot_id 4ef8356e9b20e618. Финальный LOCKED, fault_flags=0, calibration_required=false, stack_http_bytes=6208.
+- На /api/agent/ota четыре отрицательных теста: повреждённый шифротекст → HTTP 500 ESP_FAIL (GCM); корректное шифрование/повреждённая подпись → HTTP 500 ESP_ERR_OTA_VALIDATE_FAILED; открытый signed bin → HTTP 500 ESP_FAIL; обрезанный контейнер → HTTP 500 ESP_ERR_INVALID_SIZE. После каждого firmware_version 10.0.399 и boot_id не изменились. Результаты artifacts/encrypted-ota-negative-tests-agent.json.
+- Первоначальная попытка этих тестов на phone-only /api/ota из домашней сети получила 404 по штатному guard; эти ответы не засчитываются как криптографические проверки. Затем все тесты повторены на agent endpoint, вызывающем тот же ai_agent_http_ota. Во время первого прогона был единичный таймаут чтения info; для проверки использован повторный опрос, перезапуск не обнаружен.
+- Публикация: https://github.com/uah0/thekidlock/releases/tag/esp-v10.0.399, единственный asset ble_lock_stage1_s3.bin является Espressif encrypted container (magic cfb68807). Последний URL GET HTTP 200; полученные байты совпадают с локальным encrypted file. SHA-256 12eb46471f1fe1f10fccbc397ce865bcec8066dccfaca875fc18508d7c895b91. В публичном ciphertext не найден PEM marker. Signing/decryption ключи и открытый bootstrap не загружались в GitHub.
+- Publisher перед реальной загрузкой расшифровал контейнер официальным инструментом и проверил RSA-PSS. Временные plaintext и public verification key удалены из .security/temp автоматически. Публикация ordinary app bin запрещена до API-запросов.
+- Android build239 (код не менялся после ранее успешных debug/release unit tests) пытались установить на физический Redmi Note 8 Pro 192.168.1.168:39103. MIUI отклонила установку INSTALL_FAILED_USER_RESTRICTED; app не обновлено. accelerometer_rotation/user_rotation до и после = 0/0. Команды settings put были отклонены WRITE_SETTINGS, фактические исходные значения сохранились; их повторное чтение подтверждено.
+- Полный сценарий GitHub → Android Download/BLE Lock → браузер phone-only Web UI пока не подтверждён физически, требуется разрешить установку на телефоне. По коду Android и fetch('/api/ota', {body:f}) передают ciphertext без расшифровки; расшифровка выполняется только на ESP.
+- Разметка 0x8000 и все существующие разделы сохранены; аппаратные eFuse/Flash Encryption/Secure Boot/ROM Download/JTAG не менялись. git diff --check затронутых tracked code/config файлов успешен. Исходники/workflow и CI secrets на GitHub не размещались; опубликован только encrypted bin.
+
+## Полный encrypted OTA на Redmi Note 15 — 09.10.2026
+
+- ADB 192.168.1.65:37403 подключён; установка подготовленного Android build239 через adb install -r: Success. Данные приложения сохранены. Ориентация accelerometer_rotation=0/user_rotation=0 до установки, после восстановления и после запуска; все повторные чтения совпали.
+- Физический Android prefetch: файл Download/BLE Lock/ble_lock_stage1_s3.bin, 1446400 байт, SHA-256 12eb46471f1fe1f10fccbc397ce865bcec8066dccfaca875fc18508d7c895b91. Файл скачан приложением по новому GitHub URL, не перенесён с компьютера. firmware_prefetch release_marker обновлён приложением.
+- Web UI открыт через штатную кнопку настроек и существующий LocalOnlyHotspot: ESP IP 172.18.51.177, телефон ap0 172.18.51.2. Системный file picker выбрал файл из BLE Lock. Браузер прочитал header cfb68807 и полное содержимое; SHA-256 выбранного File совпал с GitHub.
+- Существующий uploadFw() вызван в реальной странице Chrome через DevTools, без внедрения нового транспорта: fetch('/api/ota',{method:'POST',body:f}). Ответ Web UI: «Прошивка записана». Передача ciphertext из браузера и расшифровка на ESP завершились успешно.
+- Возврат после OTA: firmware_version 10.0.399, device_id a0:f2:62:f1:14:b8, boot_id до 4ef8356e9b20e618, после 701abecbadc6fbcc. Повторная установка того же 399 — смены номера не ожидается. Финальный LOCKED, fault_flags=0, calibration_required=false, stack_http_bytes=10020.
+- Первое чтение device-agent сразу после ответа браузера попало в перезапуск и не получило ответа; последующий опрос подтвердил возврат того же устройства. Успех подтверждён состоянием после reboot, не только HTTP-ответом.
+- Установка/прогон на Note 15 устранили ранее незавершённую phone-only проверку. MIUI отказ предыдущего Note 8 Pro не обходился. Никакие eFuse/Secure Boot/Flash Encryption/JTAG/ROM Download настройки не менялись.
+- Артефакты: artifacts/encrypted-ota-phone-webui-transfer.json, phone-webui-ota-return.json, esp32-after-phone-webui-ota.json и rotation-*-37403-install.json. Код не менялся, повторная сборка без изменений не запускалась; использованы ранее успешно проверенные бинарники 399/239.
+
+## Кнопка OTA рядом с информацией о сборке — 09.10.2026
+
+- Базовая сборка signed-dev 10.0.400 до правок: PASS; немедленная OTA установка и возврат устройства: PASS. Лог artifacts/webui-ota-panel-baseline-build.log и baseline-flash.log.
+- Итоговая сборка signed-dev 10.0.401: PASS; RSA-PSS и официальный encrypt/decrypt roundtrip проверены сборочным скриптом. Контейнер 1446400 байт, SHA-256 90a9ae5e8b21a72a1c495f08b19ad6fe4b5ac3ee1d6b403a93ae2fd72789fb51. Лог artifacts/webui-ota-panel-final-build.log.
+- Немедленная установка encrypted 401: PASS; последующий snapshot artifacts/webui-ota-panel-final-state.json подтверждает device_id a0:f2:62:f1:14:b8, firmware_version 10.0.401, boot_id eac909d1a50617d1, LOCKED, fault_flags=0. Лог artifacts/webui-ota-panel-final-flash.log.
+- Публичный esp-v10.0.401 содержит encrypted bin. Первоначальная проверка publisher получила старый 399 из кеша latest/download; после обновления кеша неизменённый latest/download отдаёт 401 с указанным SHA-256. Новая сборка для этого не требовалась.
+- Проверка diff: кнопка, file input и результат находятся внутри той же .versions, что verTxt/buildTxt; uploadFw и endpoint неизменны. git diff --check main/web/index.html: PASS.
+- Повторный тест нового расположения на физическом телефоне не завершён: штатное подключение ожидает ESP32, в состоянии BLE отсутствует соединение, восстановление шифрования выдаёт ENC 520. Ранее полный телефонный путь с тем же uploadFw подтверждён на 399; это не является проверкой нового расположения на 401.
+- Попытка открыть временный локальный предпросмотр в Chrome автоматически отклонена системой проверки действий с причиной «blocked by policy». Обход не выполнялся; временный HTTP-сервер остановлен, ADB reverse/forward удалены.
+- Изменённые файлы этапа: main/web/index.html, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Android не менялся; никаких eFuse или изменений разметки.
+
+## Встроенный Web UI и внутренний OTA — 09.10.2026, этап реализации
+
+- Baseline: Android debug build240 PASS; ESP signed-dev 10.0.402 PASS. Немедленная прошивка baseline не состоялась: ESP отсутствовала в домашней сети/ARP, проверка через прежний Chrome сеанс также не получила ответа. Код менялся после успешных сборок; недоступность устройства не считалась прошивкой.
+- Итог: Android debug build241 PASS; build-android.ps1 -Action test PASS (debug/release unit tests), в том числе запрет чужих origin/file/content и plaintext/усечённых encrypted контейнеров.
+- ESP signed-dev 10.0.403 PASS: RSA-PSS verification и официальный encryption/decryption roundtrip PASS. Контейнер 1446400 байт, SHA-256 5dd2ec6c9ad1035fbcd06f31e39cb9d33325e71be77d4cd97b6fa22d0f525964. Публикация encrypted-only PASS, stable latest/download hash совпал сразу.
+- OTA первоначально недоступна по 192.168.1.54. После завершения старого hotspot устройство найдено; повторный POST вернул таймаут через 120 секунд, но отдельный snapshot подтверждает 401 → 403 и новый boot_id bcbb2c7ff1efa8e2, LOCKED/fault_flags=0. Не считать HTTP-запрос скрипта успешным; установка подтверждена независимо.
+- APK установлена на Note 15 192.168.1.65:37403: Success. Ориентация до/после 0/0. Внутренний файл files/firmware/ble_lock_stage1_s3.bin получен приложением с GitHub: 1446400 байт, SHA-256 совпал с release. Сохранение в общие Downloads больше не выполняется.
+- Нормальный запуск Web UI останавливается на «ожидание ESP32» из-за существующей ENC 520, до загрузки нового WebView. Проверка обычного полного пути на новой кнопке ещё не завершена; существующий bond не удаляли.
+- Изменённые файлы: FirmwareUpdateClient.kt, MainActivity.kt, strings.xml, новые LockWebUiDialog.kt/WebUiRequestPolicy.kt и WebUiRequestPolicyTest.kt, FirmwareUpdateClientTest.kt, main/web/index.html, автоматические BUILD_NUMBER обоих проектов, AUDIT.md/CHANGELOG.md/TEST_REPORT.md.
+- Логи artifacts/internal-ota-*-baseline.log, android-build.log, android-tests.log, esp-build.log, esp-flash-retry.log, esp-state.json, publish.log и rotation-*.json.
+
+### Итог проверок внутреннего образа — Android build242
+
+- build-android.ps1: PASS, debug build242. Основной APK установлен на Note 15: Success; ориентация до/после 0/0, artifacts/internal-ota-final-rotation-*.json.
+- build-android.ps1 -Action test: PASS, debug/release unit tests. Дополнительная assembleDebugAndroidTest в окружении проектного скрипта: PASS. Артефакты internal-ota-android-final-build.log, android-final-tests.log и android-test-apk.log.
+- Новые тестовые файлы: app/src/androidTest/java/com/blelock/app/WebUiOtaInstrumentation.kt; в app/build.gradle.kts установлен testInstrumentationRunner. applicationId/versionCode/signing/release-настройки не изменены.
+- Реальные useInternalFirmware/uploadFw из main/web/index.html проверены в Node VM: PASS; при готовом файле POST получает исходный Blob без изменений, выбор файла скрыт; при отсутствии файла POST не выполняется, кнопка разблокируется, ошибка выводится. artifacts/internal-ota-webui-js-tests.json.
+- Внутренний файл повторно проверен через run-as: SHA-256 соответствует зашифрованному asset 403. artifacts/internal-ota-private-image-verification.json. Расшифровка в Android отсутствует.
+- Попытка установки тестового APK на физический телефон: BLOCKED, INSTALL_FAILED_USER_RESTRICTED: Install canceled by user. Instrumentation не запускалась, результаты физического WebView-моста отсутствуют; не считать её PASS. Ориентация сохранилась 0/0: internal-ota-test-rotation-*.json. У пользователя запрошено разрешить системный запрос установки тестового APK; обход ограничения не выполнялся.
+- Обычное открытие Web UI по-прежнему блокируется существующей BLE ENC 520. Реальный полный сценарий новой кнопки на замке 403 не подтверждён; прежний ручной сценарий на 399 и расшифровка/подпись на ESP остаются отдельными успешными проверками.
+- Временный localhost fixture остановлен; созданные ADB DevTools forwarding удалены. Reverse для fixture не создавался: команда завершилась после отказа установки test APK.
+
+## Озвучивание мастера после перехода в WebView — 09.10.2026
+
+- Baseline Android debug build243: PASS до изменений, artifacts/wizard-tts-baseline.log.
+- Android debug build244 и итоговый build245: PASS, artifacts/wizard-tts-build.log и wizard-tts-final-build.log. Только Android изменения; ESP сборка/прошивка не требуется.
+- node tools/test_wizard_speech.cjs: PASS. Проверены аннулирование старого browser fallback timer, начало collecting только после актуального speech completion, повтор инструкции, игнорирование старого callback, ошибка TTS без молчаливого сбора измерений, expiry/cancel речи и однократность подключения адаптера.
+- На Note 15 обнаружен системный Google TTS service; STREAM_MUSIC не muted, speaker volume 11. Громкость/системные аудионастройки не менялись. Это проверка окружения, не доказательство фактического звучания.
+- Основной APK build245 установлен на 192.168.1.65:37403: Success. accelerometer_rotation/user_rotation до/после 0/0: artifacts/wizard-tts-rotation-*.json.
+- Default proguard-android-optimize.txt содержит keepclassmembers для @android.webkit.JavascriptInterface; собственные signing/release/R8 настройки не менялись.
+- Физический контроль озвучивания пока не подтверждён: после установки нет событий LockWizardSpeech onStart/onDone в текущем логе. Пользователю предложено открыть мастер и нажать «Повторить инструкцию». Не считать логическую JS-проверку подтверждением слышимого звука.
+- Изменённые файлы этапа: AndroidManifest.xml, LockWebUiDialog.kt, WebUiRequestPolicy.kt, WebUiRequestPolicyTest.kt, новые LockWizardSpeech.kt, assets/lock_wizard_speech.js, tools/test_wizard_speech.cjs, автоматический android_lock_beacon/BUILD_NUMBER и AUDIT.md/CHANGELOG.md/TEST_REPORT.md.
+
+- build-android.ps1 -Action test после исправления: PASS, debug/release unit tests, в том числе доступ native speech только к /calibration текущего ESP. Лог artifacts/wizard-tts-android-tests.log. git diff --check tracked файлов этапа PASS.
+
+### Физическая озвучка и обрыв окончания — build246
+
+- Пользователь подтвердил наличие слышимой речи на build245, но сообщил об обрыве в конце.
+- artifacts/wizard-tts-cutoff-runtime.log: Google TTS bound, Russian TTS available=true; 1:1 и 2:2 имеют onStart и success=true onDone, 3:3 имеет onStart без finish перед возвратом страницы на /. Read-only DevTools подтвердил speechSynthesis=undefined и native speech bridge. Именно полный фильтр logcat выявил события; предыдущий -t 300 ограничивал окно общих логов до фильтра и не доказывал отсутствие речи.
+- По коду выявлена гонка tick после successful save → expired → отмена финальной речи. JS adapter теперь проверяет finished перед expired. Это исправление воспроизводимого дефекта; точная причина предыдущей отмены не подтверждена отдельным событием stop, поэтому добавлен reason в native cancellation log.
+- node tools/test_wizard_speech.cjs: PASS; дополнительно финальная фраза не отменяется устаревшим expired, после её completion мастер закрывается, настоящий expired продолжает отменять речь. Лог artifacts/wizard-tts-cutoff-js-tests.log.
+- Android debug build246: PASS, artifacts/wizard-tts-cutoff-build.log. Установка на Note 15: Success. Ориентация до/после 0/0: artifacts/wizard-tts-cutoff-rotation-*.json. APK artifacts/android-wizard-tts-build246.apk.
+- Debug/release unit tests уже PASS для build245; после исправления только JS finished guard и diagnostic log повторно выполнены целевой JS regression и debug сборка. Изменения policy/manifest после предыдущих unit tests отсутствуют.
+- Физический повтор полного звучания build246 пока не подтверждён. Повторную калибровку/сохранение параметров автоматически не запускали; у пользователя уточнено, затронута ли только заключительная фраза или окончания остальных тоже.
+- Дополнительные изменённые файлы: assets/lock_wizard_speech.js, LockWizardSpeech.kt, tools/test_wizard_speech.cjs, Android BUILD_NUMBER и AUDIT.md/CHANGELOG.md/TEST_REPORT.md. ESP/OTA/разметка/eFuse не менялись, DevTools forwarding удалён.
+
+## BLE Scanner/Central и видимость MAC на телефоне — 09.10.2026
+
+- Read-only архитектурная проверка: main/ble_phone.c central_scan_work/ble_gap_connect, PhoneBeacon.kt advertising; собственных ble_gap_adv_start в ESP проекте нет.
+- Фактический build-signed-dev/config/sdkconfig.h: CONFIG_BT_NIMBLE_ROLE_CENTRAL=1, OBSERVER=1; PERIPHERAL/BROADCASTER не определены. Это проверка сборки, не только defaults.
+- Перед OTA устройство 10.0.403, LOCKED/fault_flags=0. Журнал: SEC_START path=RESTORE_EXISTING bond=1 cand=0, ENC st=0/e=1/b=1, existing LTK restore confirmed. Обнаружение NEW_PAIRING/рекламы ESP не подтверждено. Артефакты ble-role-current-state.json.
+- Baseline signed-dev 10.0.404 без функциональных изменений: PASS; подпись и official encrypted roundtrip PASS. Немедленная encrypted OTA 403 → 404: PASS, HTTP-запрос и подтверждение device-agent успешны. Новый boot_id 9c9e1129c02a7343, тот же device_id a0:f2:62:f1:14:b8, LOCKED/fault_flags=0. Startup подтвердил NimBLE Scanner/Central и passive scan; образ подтверждён через 5 секунд.
+- Артефакты artifacts/ble-role-baseline-build.log, baseline-flash.log, after-baseline.json и events-after.json. Публикация GitHub на этом этапе не выполнялась; стабильный encrypted release остаётся 403.
+- Изменены только автоматически BUILD_NUMBER и отчёты AUDIT.md/CHANGELOG.md/TEST_REPORT.md. Код BLE/Android, NVS/bond, регистрация/eFuse/разметка не менялись.
+- Отдельная диагностика нового системного подтверждения сопряжения зависит от ответа пользователя: один раз при регистрации или каждый раз при соединении. Не считать отображение MAC доказательством advertising ESP.
+
 ## 09.10.2026 — повторные диалоги сопряжения, ESP 406
 
 Базовая проверка: ESP signed-dev 405 и Android 247 собраны успешно; ESP 405 установлен и проверен. Телефон ADB 192.168.1.65:35329. Логи до исправления: Android BOND_NONE -> BOND_BONDING/CONSENT, ESP хранит LTK, разрыв каждые 10 секунд.
