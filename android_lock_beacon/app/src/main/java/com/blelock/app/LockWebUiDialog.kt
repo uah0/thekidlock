@@ -6,13 +6,14 @@ import android.app.Dialog
 import android.graphics.Color
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Build
 import android.view.KeyEvent
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.widget.Button
 import android.widget.LinearLayout
 import java.io.ByteArrayInputStream
 import java.io.IOException
@@ -30,11 +31,20 @@ internal class LockWebUiDialog(activity: Activity, private val url: String) :
         val layout = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.WHITE)
+            setOnApplyWindowInsetsListener { view, insets ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val safeArea = insets.getInsets(
+                        WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                    view.setPadding(safeArea.left, safeArea.top, safeArea.right, safeArea.bottom)
+                } else {
+                    @Suppress("DEPRECATION")
+                    view.setPadding(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                        insets.systemWindowInsetRight, insets.systemWindowInsetBottom)
+                }
+                insets
+            }
+            post { requestApplyInsets() }
         }
-        layout.addView(Button(context).apply {
-            text = "Назад"
-            setOnClickListener { goBack() }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         webView = WebView(context).apply {
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true

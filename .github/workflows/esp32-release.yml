@@ -12,6 +12,10 @@ jobs:
   build-and-publish:
     runs-on: ubuntu-latest
     container: espressif/idf:v5.4.4
+    env:
+      OTA_PROFILE: ${{ vars.OTA_PROFILE || 'signed-dev' }}
+      OTA_HARDWARE_PROTECTED: ${{ vars.OTA_HARDWARE_PROTECTED || 'false' }}
+      OTA_FINAL_ROM_DISABLE_AUTHORIZED: ${{ vars.OTA_FINAL_ROM_DISABLE_AUTHORIZED || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - name: Prepare private build keys
@@ -29,24 +33,41 @@ jobs:
       - name: Build compatible signed OTA firmware
         shell: bash
         run: |
+          case "$OTA_PROFILE" in
+            signed-dev) defaults='sdkconfig.defaults;sdkconfig.defaults.signed-dev' ;;
+            factory-test)
+              test "$OTA_HARDWARE_PROTECTED" = true
+              defaults='sdkconfig.defaults;sdkconfig.defaults.release;sdkconfig.defaults.factory-test'
+              ;;
+            release)
+              test "$OTA_HARDWARE_PROTECTED" = true
+              test "$OTA_FINAL_ROM_DISABLE_AUTHORIZED" = true
+              defaults='sdkconfig.defaults;sdkconfig.defaults.release'
+              ;;
+            *) echo 'Unsupported OTA profile'; exit 1 ;;
+          esac
+          [[ "$GITHUB_REF_NAME" =~ ^esp-v10\.0\.([0-9]+)$ ]]
+          test "${BASH_REMATCH[1]}" -gt 0
+          printf '%s\n' "$((10#${BASH_REMATCH[1]} - 1))" > BUILD_NUMBER
+          build_dir="build-$OTA_PROFILE"
           python tools/apply_nimble_sec_req_guard.py
-          idf.py -B build-signed-dev \
-            -D SDKCONFIG=build-signed-dev/sdkconfig \
-            -D 'SDKCONFIG_DEFAULTS=sdkconfig.defaults;sdkconfig.defaults.signed-dev' \
+          idf.py -B "$build_dir" \
+            -D "SDKCONFIG=$build_dir/sdkconfig" \
+            -D "SDKCONFIG_DEFAULTS=$defaults" \
             build
-          test -s build-signed-dev/ble_lock_stage1_s3.bin
+          test -s "$build_dir/ble_lock_stage1_s3.bin"
           espsecure.py extract_public_key --version 2 \
             --keyfile .security/ota_signing_key.pem .security/ota_public_key.pem
           espsecure.py verify_signature --version 2 \
-            --keyfile .security/ota_public_key.pem build-signed-dev/ble_lock_stage1_s3.bin
-          python tools/prepare_encrypted_ota.py build-signed-dev
+            --keyfile .security/ota_public_key.pem "$build_dir/ble_lock_stage1_s3.bin"
+          python tools/prepare_encrypted_ota.py "$build_dir"
       - name: Publish encrypted firmware asset
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python tools/publish_esp32_release.py "$GITHUB_REF_NAME" \
-            build-signed-dev/encrypted/ble_lock_stage1_s3.bin
+            "build-$OTA_PROFILE/encrypted/ble_lock_stage1_s3.bin"
       - name: Remove signing material
         if: always()
         shell: bash

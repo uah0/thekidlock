@@ -1,5 +1,23 @@
 # Отчёт о проверках
 
+## Уточнение по сообщению о стабильности 10.0.431 — 09.10.2026
+
+- Пользователь сообщил, что на Web UI установлена 10.0.431, но исходный сбой сохранился; это корректирует более раннее сообщение о восстановлении работы. Последний снимок Web UI подтверждает версию 10.0.431 и запись зарегистрированного телефона, однако имя записи отображается как «Имя не сохранено». Снимка BLE reconnect после reboot или raw GAP/SMP/ENC статусов нет.
+- Сам файл в app cache проверен: encrypted SHA-256 `9A882175355C5391564512401B7731DF209F22A1B2AC6873BFCE4C8E0167E49F`; контейнер расшифрован локально, RSA Secure Boot V2 signature valid; signed app SHA-256 `4EB2314073D4FA397617C6A5B54F6F48049D176B7B791FB23604253669002495`; внутри есть version `10.0.431` и build timestamp `2026-10-09 21:46:32`. Это совпадает с сохранённым отчётом сборки 431.
+- Точную воспроизводимость от Git revision подтвердить нельзя: timestamp сборки 21:46:32 предшествует commit `eb4c1ef` от 22:03:19; Git SHA в app descriptor не записан. Commit меняет NimBLE guard и Central/Observer defaults, но это само по себе не доказывает точное дерево сборки. Файл подтверждён как подписанный артефакт 10.0.431, но не как доказанное исправление регрессии.
+- Read-only значение Android `auto_open_enabled` сейчас `false`. Настройка не изменялась; её включение может менять автоматическое поведение замка и требует решения пользователя после уточнения наблюдаемого симптома.
+
+## OTA и проверка кандидата rollback — 09.10.2026
+
+- 10.0.432, профиль `factory-test`: сборка прошла на ESP-IDF v5.4.4; Secure Boot V2, Flash Encryption Release, anti-rollback, NVS HMAC key ID 2, Secure ROM Download и текущая таблица разделов сохранены. RSA-подпись и encrypted OTA round-trip проверены; зашифрованный файл 1,446,400 байт, SHA-256 `599c8608b6a42ac03caced56bb01f1bcd351594b4c9fdcd4433beacc0b0c27c2`. OTA передан через штатную кнопку Web UI; Web UI подтвердил 10.0.432.
+- Для негативной проверки собран кандидат 10.0.433 с `CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4`, при неизменённых eFuse, NVS, bonding и разметке. RSA signature verification: PASS; encrypted-container decrypt round-trip: PASS. RSA-подписанное приложение: 1,445,888 байт; encrypted OTA: 1,446,400 байт; SHA-256 реально отправленного контейнера `5E7565609906C37409C08E017B88D5C05EC0A80CEAA63641405918C93671E0C3`. Настройки кандидата сохранены в закрытой копии `.security/factory/.../rollback-candidate-433-sdkconfig`.
+- OTA-операция 433 прошла передачу; UI оставался на «Завершение обновления…». После force-stop/reopen Android-приложения и повторного входа в Web UI показана версия 10.0.432. Наблюдение согласуется с откатом, но результат rollback **не подтверждён однозначно**: на устройстве не читался OTA image state и нет runtime/boot trace; `/api/status` предоставляет версию и BLE/lock/NVS summary, но не состояние OTA.
+- В Android app cache восстановлен 10.0.432; SHA-256 файла на телефоне совпадает с локальным. В `build-factory-test/sdkconfig` восстановлен HMAC key ID 2. eFuse, NVS, bonding, partition table и алгоритм открытия замка не изменялись; pairing не запускался.
+- Текущий GitHub Release по закреплённому URL остаётся 10.0.426. Credential Manager содержит авторизованные данные GitHub, но release не создан: `main` расходится с `origin/main` (ahead 102 / behind 2), а исходники и workflow содержат незакоммиченные изменения. Сначала нужно закрепить точный исходный commit, иначе tag может ссылаться на другой код. В `build-factory-test` восстановлены проверенные app/OTA-артефакты 10.0.432 и заголовок версии; приложение RSA-подписано, encrypted OTA round-trip проверен. SHA-256 signed app `4E52F95A8DEDD37F9496D4C48FE02D3CFA8F9F67E88762ED966BF7AF6EA4BEE8`. Публичный plaintext upload не выполнялся.
+- Остаётся получить прямое свидетельство rollback на тестовом образе (boot log или OTA image state) перед тем, как считать rollback проверенным. `DIS_DOWNLOAD_MODE=1` не записывался.
+- Подготовлен корректный OTA 10.0.434 с HMAC key ID 2, Secure Boot V2, Flash Encryption Release и Secure ROM Download; RSA-подпись и encrypted round-trip прошли. Signed app SHA-256 `0B93BFF1C6EFA2A7ED6E018A85C33BA31C1FA8F3104E1438BEAEAE0DE281B387`; encrypted OTA 1,446,400 байт, SHA-256 `7779A88CC4C6BD9989760926802B986F8C0134EB82A965B3B225D1319CEB191C`. Контейнер записан в app cache и его SHA совпал. Пользователь нажал установку в Web UI; приложение вернулось на главный экран, но последующий Web UI остался в «ожидание ESP32». Версию 10.0.434 подтвердить не удалось; последняя подтверждённая до этой OTA — 10.0.432. Запросы provisioning создавали hotspot без подключившегося клиента. Не открывал pairing и не переключал режим замка.
+- По просьбе пользователя подготовлен откат к последней подтверждённой стабильной 10.0.431: в основной Android app cache скопирован существующий зашифрованный файл; SHA-256 `9a882175355c5391564512401b7731df209f22a1b2ac6873bfce4c8e0167e49f`. Сеть ESP сейчас недоступна для OTA: BLE/Web UI provisioning ждёт ESP32, локальный hotspot не видит клиента. Текущая версия замка после попытки OTA 434 не подтверждена; кэш не означает установленную прошивку. Пользователю предложен один обычный reset без BOOT/erase, после которого можно повторить OTA; pairing/eFuse/NVS не трогались.
+
 ## BLE: откат имени GAP/GATT после сборки 407 — 09.10.2026
 
 - Пользователь подтвердил: 10.0.430 установлена, проблема восстановления pairing после reboot сохраняется.
@@ -10,6 +28,16 @@
 - Установка 10.0.431 и проверка выполнены пользователем. Пользователь сообщил, что проблема pairing после reboot исчезла. Число повторов и дополнительные raw BLE-логи не предоставлены; результат фиксируется как успешная пользовательская проверка, без утверждения о точном внутреннем callback.
 - После успешной сборки 431 сохранён прежний cache 430 внутри приложения (SHA-256 `400608a50e3400a136fbada62f8946acc09844eeb1be146bf1db1d28477bac15`), затем в основной cache приложения записан encrypted OTA 431. Проверка телефона: размер 1,446,400 байт, SHA-256 `9a882175355c5391564512401b7731df209f22a1b2ac6873bfce4c8e0167e49f`.
 - Перед установкой из-за состояния «Настройки · ожидание ESP32» Web UI не открылся и `/api/ota` не вызывался; позднее пользователь самостоятельно установил 431. Предыдущая копия OTA 430 оставлена в cache приложения для отката.
+
+## BLE: контрольный откат MTU/security — 09.10.2026
+
+- По `TEST_REPORT.md` build 406 имеет успешные NEW_PAIRING, protected proof, RESTORE_EXISTING и проверку после reboot. В отчёте по 426 машинный код подтверждает MTU-first, но runtime-причина disconnect не установлена.
+- В `main/ble_phone.c` выполнен узкий откат: security снова запускается сразу при CONNECT; MTU больше не предшествует security. GAP Device Name и SMP guard не менялись.
+- `build-esp32.ps1 -Action build -Profile factory-test`: PASS, ESP-IDF v5.4.4; bootloader 0x7000, подписанное приложение 1,445,888 байт, размер OTA-раздела 0x1e0000. BUILD_NUMBER обновлён проектом до 430.
+- RSA signature verification и encrypted OTA round-trip: PASS. SHA-256 plaintext signed app `546D6713BE0EFF82326C83EC23547500CF5324DAF1BFD996DF54AE0886039D70`; encrypted OTA 1,446,400 байт, SHA-256 `400608A50E3400A136FBADA62F8946ACC09844EEB1BE146BF1DB1D28477BAC15`.
+- Устройство не прошивалось. Текущий Secure Boot build отключает device-agent endpoints; установка через Android требует релиза, точно соответствующего исходникам, а текущие исходники не зафиксированы отдельным commit. Для этого этапа опубликованный asset не менялся.
+- По отдельному запросу на установку encrypted 430 передан в приватный firmware cache приложения на Redmi Note 15. Исходный cache 426 сохранён как `artifacts/phone-cache-426-before-430.bin` (SHA-256 совпадает с публичным asset 426); новый cache на телефоне проверен: SHA-256 `400608a50e3400a136fbada62f8946acc09844eeb1be146bf1db1d28477bac15`.
+- OTA не запускался: две попытки открыть Web UI завершились возвратом в приложение до отправки Wi-Fi credentials. Android logcat показывает GATT CONNECTED → DISCONNECTED при `bondState=12` и `Ignoring disconnect before Wi-Fi credentials were read by this peer`; версия Web UI оставалась 10.0.426. Ни pairing, ни reset, ни POST `/api/ota` не выполнялись. Ориентация Android не менялась (0/0).
 
 ## Исправление резерва стека ULP в основной папке — 08.10.2026
 
@@ -6001,3 +6029,168 @@ AUTO proof проверен перед restart. Физическое автом�
 ## 09.10.2026 — проверка самостоятельного репозитория
 
 До и после миграции полностью совпали HEAD a579c3cad24de13dbbba815f79493a9d04b37e59, все refs, origin и porcelain status включая untracked. Новый git-common-dir находится в C:\Dev\ble-main-build216\.git; alternates отсутствует, объектная база скопирована без hardlink. git fsck --full --no-dangling завершился успешно. Резервная копия старого gitdir-указателя и контрольных состояний сохранена в игнорируемой .device-agent/git-migration-20261009-105128. Исходники не менялись; повторная сборка и прошивка для переноса метаданных Git не выполнялись. Изменены только AUDIT.md, CHANGELOG.md, TEST_REPORT.md и локальная структура .git.
+
+## 09.10.2026 — стандартное имя Bluetooth, ESP 408
+
+До изменений успешно собрана и установлена baseline 407; до baseline устройство сообщало 403. Signed-dev 408 успешно собран проектным build-esp32.ps1 и установлен device-agent encrypted OTA: 407 -> 408. Подпись RSA проверена, официальное шифрование/обратная проверка выполнены; подписанное приложение 1445888 байт, encrypted SHA256 f474b93a287d468ef81834df824949773797309d786be7bf442322f4e4e97d8f. Разметка и eFuse не менялись.
+Boot log: GAP Device Name = BLELock A0:F2:62:F1:14:BA; NimBLE phone scanner/Central synced, passive scan 100ms/100ms, ULP LOCKED fault=0x0, Wi-Fi/NVS/OTA healthy. Map подтверждает включение настоящих ble_svc_gap_init, ble_svc_gatt_init и ble_svc_gap_device_name_set. Actual sdkconfig: CENTRAL/PERIPHERAL/OBSERVER enabled, BROADCASTER disabled, GATT_SERVER/GAP_SERVICE enabled, name max length 31, NAME_WRITE disabled. Поддержка PERIPHERAL включена из-за Kconfig-зависимости GATT-сервера, рекламные пакеты не запускаются.
+Generated build-signed-dev/sdkconfig актуализирован только для новых флагов GAP/GATT/PERIPHERAL (старый файл сохранён рядом как sdkconfig.before-gap-name); настройки defaults не переопределяют уже сохранённые значения sdkconfig автоматически. Fresh builds получают флаги из sdkconfig.defaults.
+Изменены main/ble_phone.c, sdkconfig.defaults, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Android-код/APK не менялись. Артефакты: ble-device-name-baseline-build.log, ble-device-name-baseline-flash.log, ble-device-name-build.log, ble-device-name-flash.log, ble-device-name-events.json. Проверка имени в paired list на телефоне ожидает стандартного сопряжения: сейчас Android не хранит пару, существующий ESP bond не сбрасывался. Имя ESP одинаково для всех телефонов; отображение сохранённого alias/cache зависит от ОС.
+
+### ESP 409 — проверка реального GAP-атрибута
+
+Добавлена проверка ble_gatts_find_chr + ble_att_svr_read_local при sync: содержимое реального Device Name должно точно совпасть с BLELock <MAC>, иначе central scan не запускается с ложным успехом. Signed-dev 409 собран успешно и установлен ciphertext через тот же /api/agent/ota, используя ADB/телефон как сетевой маршрут к hotspot (ПК не имел прямого доступа). Agent подтвердил 10.0.409, новый boot_id d9542340787cc76e; existing LTK восстановлен, encrypted/bonded=1. SHA256 encrypted image 5fc4ed4f92e1482ec3b8600293a142635915859fdf9fdde0b83349b3a1d6a3e8. Временный encrypted файл на телефоне удалён. Android не переустанавливался.
+Android paired list всё ещё показывает MAC; native RNR получает HOST_TIMEOUT. Это реальная неуспешная проверка отображения, а не доказательство успеха по имени в boot log. Продолжается диагностика стандартного чтения GAP на соединении Android в роли Peripheral. Артефакты ble-device-name-attribute-build.log, ble-device-name-409-phone-ota.txt, ble-device-name-409-events.json, ble-device-name-paired-list.xml, ble-device-name-native-bluetooth.log.
+
+### ESP 410 — проверка паузы перед SMP
+
+410 успешно собран, encrypted SHA256 e44122d7fd6de58241f06f9c593f7fb25eb905a20ac185ec372de29355b09587, установлен agent OTA 409 -> 410. Boot log впервые сохранён целиком: GAP Device Name read verified h=3, точное имя BLELock A0:F2:62:F1:14:BA. Пауза 300 мс не дала доказанного изменения имени, выявила нежелательный побочный порядок Security Request (запрет SMP с подавлением peer до последующего успешного LTK restore). Экспериментальную паузу удалить; не оставлять этот вариант итоговым. Проверить стандартное MTU negotiation: имя 25 байт не помещается в Read By Type response при стандартном ATT MTU 23, а Android GAP reader получает имя именно по Read By Type. Текущие команды защищены encryption/bond, eFuse и NVS не менялись. Проектный build успешен; дальнейший этап допустим.
+
+### ESP 411 — стандартное MTU negotiation
+
+411 собран успешно и немедленно установлен agent encrypted OTA: 410 -> 411. SHA256 encrypted 36a42e796786c16557917b7c94e1aceb6d3f3b87860318e5fe3a20ceb7567f9a. На телефоне MTU=256, existing LTK restore/encrypted/bonded=1, service commands проходят. Экспериментальный callout 300 мс удалён. При успешном LTK restore снимается временное подавление этого peer; отсутствие ключа по-прежнему не запускает SMP вне регистрации. Android Remote Name Request всё ещё возвращает HOST_TIMEOUT. Следующий шаг — безопасно журналировать только факт/offset/result чтения стандартного GAP имени, без HCI/SMP содержимого, ключей и изменения ответа. Не объявлять отображение исправленным до реального подтверждения.
+
+### ESP 412 — подтверждённый источник ошибки имени
+
+412 собран и установлен agent encrypted OTA, версия 412 проверена. SHA256 encrypted 8d8704d9ec59cb88cf95f9b15637e033c517773420bdcff9dc388bd94427cb82. Безопасный trace подтверждает, что Android действительно читает GAP имя: name read h=1 offset=0 status=0, затем MTU=256, encrypted/bonded=1. Android всё равно получает RNR HOST_TIMEOUT.
+Аудит фактического IDF 5.4.4 выявил ограничение ble_att_svr_build_read_type_rsp: uint8_t buf[19] и вызов ble_att_svr_read_flat с max_len=19. Последний возвращает BLE_HS_EMSGSIZE/ATT UNLIKELY для значений длиннее 19 байт до усечения по MTU. Наше имя 25 байт, поэтому успешный provider callback превращается в ATT error в обёртке. Размер negotiated MTU этого не исправляет. Требуется небольшой version-pinned исправляющий patch стандартного ATT ответа с соблюдением лимитов MTU и однобайтного length; пользовательское имя/протокол/криптографию не менять.
+
+### ESP 413 — стандартное системное чтение имени работает
+
+Точечный backport Read By Type из актуального Apache NimBLE использует временный mbuf вместо buf[19], соблюдает min(MTU-4,253) и освобождает буфер на всех выходах. Проектный patcher проверяет исходник IDF 5.4.4 до записи. Проверено на настоящем stock source из Git установленного SDK: миграция, идемпотентность, отсутствие изменений за пределами нужной функции, отказ при неизвестной сигнатуре.
+413 успешно собран и установлен encrypted OTA 412 -> 413, SHA256 fbc74e4ef22bd98c58e89937f556d340375b3438896be31e4e5207b4b3dca4fe. Android native Remote Name Request впервые завершился HCI_SUCCESS (11:39:56.874), вместо постоянного HOST_TIMEOUT. Это подтверждает устранение ошибки ATT, но точная строка в paired list пока не проверена — телефон заблокирован; пользователь запрошен.
+Программный restart сохранён: firmware_version 10.0.413, новый boot_id 87902731f0723ede, LOCKED, fault_flags=0, encrypted=true/bonded=true, MTU=256, существующий LTK восстановлен. Никакие bonds/owner/NVS вручную не удалялись, eFuse не менялись, Android APK не переустанавливался. Временные файлы диагностики на телефоне и DevTools forward удалены; приложение/ориентация не менялись.
+Итоговые изменённые проектные файлы: main/ble_phone.c, sdkconfig.defaults, tools/apply_nimble_sec_req_guard.py, BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. История экспериментальных проверок выше не означает наличие 300-мс паузы в итоговом коде: она удалена. Артефакты ble-device-name-read-type-fix-build.log, ble-device-name-read-type-fix-flash.log, ble-device-name-read-type-fix-events.json, ble-device-name-413-before-restart.json, ble-device-name-413-after-restart.json. GitHub asset пока не обновлялся.
+
+09.10.2026 пользователь подтвердил: имя замка отображается правильно в списке сопряжённых устройств телефона. Проверка отображения для этого телефона завершена успешно на ESP 10.0.413. Проверка остальных моделей телефонов не выполнялась. Обновлены только отчёты; повторная сборка и прошивка не требуются.
+## 09.10.2026 — Web UI, ESP 416 / Android 250
+
+Исходные проектные сборки ESP 414 и Android 248 успешны, ESP 414 установлен encrypted OTA. После изменений ESP 415 и 416 собраны с проверкой RSA-подписи и официальным encrypt/decrypt roundtrip; Android 249 и 250 собраны. APK 250 установлен на Note 15; перед обеими установками сохранены значения accelerometer_rotation/user_rotation, после установок восстановлены и проверены. Android unit tests прошли (webui-layout-android-tests.log).
+
+Реальный экран Web UI на Android 249 подтверждает отсутствие перекрытия системных значков: screenshot webui-layout-after.png. Удаление кнопки реализовано в Android 250; дополнительная визуальная проверка этой версии ожидается. JavaScript страницы проверен с фактическим uploadFw: возврат после временного offline при той же версии, отсутствие возврата, отказ подписи, отсутствие внутреннего образа, сохранение результата после повторной инициализации. Все проверки успешны, ложного сообщения об успехе нет (webui-layout-ota-results.json). Instrumentation APK до последнего удаления кнопки успешно собран; обновлённый тест требуется пересобрать для физического запуска.
+
+Во время пользовательской проверки OTA телефон установил ранее скачанную опубликованную 403 вместо локальной 415. На экране подтверждён возврат 403; затем начато восстановление текущей 416. Первая попытка через телефон не подтверждена из-за закрытия hotspot, после возврата домашнего адреса выполнена штатная agent OTA. Итог версии проверяется отдельно; GitHub asset пока 403, это не считать актуальным образом для проверки новых изменений. Последняя сборка 416 encrypted SHA256 e11427031630ec768c73adbfc566a4603716ae245a20fd7b9e51dd06a00d1280, приложение 1445888 байт, encrypted 1446400 байт.
+
+Изменённые файлы текущего этапа: main/web/index.html, android_lock_beacon/app/src/main/java/com/blelock/app/LockWebUiDialog.kt, android_lock_beacon/app/src/androidTest/java/com/blelock/app/WebUiOtaInstrumentation.kt, BUILD_NUMBER, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Артефакты проверки отдельно в artifacts; ключи не публиковались, изменения eFuse не выполнялись.
+## 09.10.2026 — завершение подготовки защиты и проверка Web UI
+
+Заключительно проверен внутренний файл Android: после повторного запуска приложение само скачало опубликованную 423, 1446400 байт, SHA256 391960f4b61efd4d03914b6e79b0e7426bc2ffa2aa9d047e911a1e2138e429fb. Байты совпадают с GitHub/локальным encrypted OTA; прежняя 403 заменена. Результат factory-phone-423-cache-check.json. Ручного копирования прошивки в приложение не выполнялось.
+
+Физическая instrumentation-проверка Android 250 прошла: верхний край WebView ниже системной панели, кнопка использует приватный зашифрованный файл без выбора, реальный WebView передал в локальный стенд ровно 1446400 байт без изменения ciphertext и получил «Замок обновлён · Версия fixture-416». Стенд не прошивал ESP. Результаты webui-final-instrument-results.txt, webui-final-physical-upload.json; rotation 0/0 до/после установки тестового APK. Reverse/DevTools forward и временные файлы на телефоне удалены.
+
+Release baseline 417 корректно завершился ошибкой размера; после отключения bootloader logs signed loader уменьшен с 0xB000 до 0x7000. Сборка 418 выявила старые GAP flags; 419 после исправления успешна. Release 420 с HMAC NVS собран, signature/encrypted roundtrip прошли. Чистая factory-test 421 выявила S3 override PERIPHERAL=n; исправлены sdkconfig.defaults.esp32s3 и точечная актуализация в скрипте, factory-test 422 успешно собран. Оба аппаратных профиля на замок не загружались по ограничению AGENTS.md.
+
+COM7: read-only get_security_info и полный eFuse snapshot подтвердили SB/FE disabled, ROM/JTAG доступны, все KEY0…5 пусты. Копия флеша 4194304 байта и NVS 24576 байт сохранены только в .security; partition table byte-for-byte совпадает. Полный SHA256: ea1ff9edc0fcca44cb03e050fbe483391875394c707a267db124a30a70876890. Офлайн пакеты: final 420 SHA256 cebf84afe134e599f02f1e1d6d46e7040749e985dbd20ed5000c45cdb1317c1a; hardware-test 422 SHA256 d915c5a4adfc2d23b0ad7dd80c5f53aa530bb27614844a8bd3deb39e85269c46. В обоих 51 значение NVS совпало после официального decrypt, максимальный blob 4640 байт не обрезан. CRC повреждённой живой NVS-записи отклоняется.
+
+Виртуальная модель espefuse с обязательным --virt (без COM) подтвердила защиту KEY0/KEY2 от чтения/записи, читаемый защищённый digest KEY1, Secure ROM test stage и отдельное финальное отключение ROM. Обычный Release flash блокируется до доступа к COM. Publisher отклоняет неподтверждённый Release до сети. YAML/Bash workflow и все варианты profile gate проверены. Python compile и git diff --check прошли. Артефакты factory-virtual-results.json, factory-negative-results.json, factory-workflow-check.json.
+
+Signed-dev 423 успешно собран, проверен, установлен OTA 416 -> 423 и опубликован по закреплённому адресу uah0/thekidlock. Публично скачанный encrypted SHA256 391960f4b61efd4d03914b6e79b0e7426bc2ffa2aa9d047e911a1e2138e429fb совпал с локальным; app 1445888, encrypted 1446400 байт. На GitHub нет фабричных файлов/ключей. После USB-диагностики esptool завершился serial error; обычный RTS reset восстановил устройство, firmware 423, новый boot_id 497829a26c271af0, LOCKED, fault_flags=0. Повторное финальное USB-чтение не засчитано как успешное. Никаких команд записи eFuse/флеша через USB не выполнялось: только чтение, RAM stub и reset; запись текущей прошивки шла штатным encrypted OTA.
+
+Ограничение: холодный старт/OTA/rollback/восстановление на устройстве с включённой аппаратной защитой ещё не проверены. Такие проверки потребуют отдельно разрешённого первого необратимого этапа; финальная блокировка ROM выполняется только после них и отдельного разрешения. Snapshot NVS необходимо обновить перед активацией. Сборка/офлайн-симуляция не означает выполненное закрытие интерфейсов.
+
+Изменённые файлы этапа: build-esp32.ps1, sdkconfig.defaults.release, sdkconfig.defaults.factory-test, sdkconfig.defaults.esp32s3, tools/prepare_factory_security.py, tools/publish_esp32_release.py, .github/workflows/esp32-release.yml, FACTORY_SECURITY_PLAN.md, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, BUILD_NUMBER. Предыдущие изменения BLE имени/Web UI сохранены. Android исходники этого этапа не менялись после успешной физической проверки.
+
+## 09.10.2026 — разрешение первого аппаратного этапа
+
+Пользователь явно разрешил первый необратимый этап: Secure Boot, Flash Encryption,
+HMAC NVS и отключение JTAG, с сохранением Secure ROM Download для восстановления.
+Окончательное DIS_DOWNLOAD_MODE=1 не разрешено; требует нового отдельного разрешения
+после аппаратных испытаний. Перед записью обязательны свежая резервная копия,
+проверка идентификатора и устойчивый ROM-доступ. ENABLE_SECURITY_DOWNLOAD записывать
+последним, после ключей и защит RD_DIS/SPI_BOOT_CRYPT_CNT: после его активации
+обычные операции espefuse недоступны. Не устанавливать final Release на этом этапе.
+
+Текущая попытка: COM7 обнаружен, агент подтвердил a0:f2:62:f1:14:b8 и 10.0.423.
+Чтение eFuse через default_reset и usb_reset завершилось Guru Meditation
+(IllegalInstruction/StoreProhibited), get_security_info также не прочитан.
+Свежая резервная копия пока не снята. Команд записи ключей/eFuse/USB-флеша не было.
+Запрошен ручной вход BOOT+RESET в ROM перед повторным чтением.
+
+Первый этап: baseline factory-test 424 и повторная сборка 425 успешны. Python syntax/YAML/Bash syntax PASS. Свежая полная ROM-копия 4194304 байт, SHA256 1b13f7a9e3b886a615cc4d19e1e76f436e505f359fd4a60c8266fdc832cd127e. Проверены подписи, совпадение таблицы, roundtrip AES-XTS и HMAC NVS (51 значение). Пакет аппаратного теста 425: loader 0x7000, app 1445888, SHA256 00d7650d63f22c9de4594b40fe1129c0f4b5cad637a20a086fb86dd7d3816403. Точная последовательность eFuse протестирована только с --virt; ENABLE_SECURITY_DOWNLOAD последним. DIS_DIRECT_BOOT — стандартное отключение обходного direct boot в политике Espressif Secure Boot/Flash Encryption. DIS_DOWNLOAD_MODE не записывается. Запись аппаратного пакета начата через ROM без stub; результат аппаратной защиты ещё не подтверждён.
+
+Аппаратная запись первого этапа: PASS. ROM write 4194304 байт, hash verified; burn_key PASS; readback целей, защиты и signing digest PASS; Security eFuse PASS; write protection RD_DIS/SPI_BOOT_CRYPT_CNT PASS; Secure ROM PASS (flags 0x6c5, FE count 7, JTAG Permanently Disabled). Final DIS_DOWNLOAD_MODE отсутствует. HTTP после reset отвечает, agent/debug маршруты отсутствуют по защищённой политике. Web UI, hardware NVS/OTA/rollback ещё требуют проверки через телефон; firmware_version не считать подтверждённой через API до этого. Workflow gates/Python publisher запреты до сети PASS. Изменения исходников publisher/workflow собраны профилем factory-test 425; сборка успешна.
+
+Физический Android 250 через Web UI связался с защищённым замком и показал 10.0.425, имя/таблицу сохранённых телефонов. Публичный fixed URL обновлён на подписанный encrypted factory-test 426: SHA256 a9396d7e541509e81b45bef91a7bba2d32be61781bbe90343e1ca10fbff7f660; publisher расшифровал контейнер локально, проверил RSA подпись, точную бинарную идентичность, тег/версию и публичный download hash. В приложение целевой asset пока не установлен кнопкой; ждём prefetch/hash и затем явное нажатие пользователя для проверки реального OTA перехода 425→426.
+
+Физический OTA factory-test 425→426 PASS. ADB телефон 192.168.1.65:40877; перед установкой внутренний app cache SHA256 a9396d7e541509e81b45bef91a7bba2d32be61781bbe90343e1ca10fbff7f660 совпал с encrypted GitHub asset 1446400 байт. OTA запускался кнопкой из Web UI; после передачи/перезапуска Web UI панели показывает версия 10.0.426, timestamp 2026-10-09 13:46:38. Settings снова загрузили таблицу зарегистрированных телефонов (REDMI Note 15), подтверждая доступ к сохранённой конфигурации/ BLE после обновления. Security API прямого агента настраиваемо отвечает 404 по CONFIG_SECURE_BOOT; это запланированное отключение debug endpoints. Автоповорот Android перед/после этой операции: 0/0; APK не устанавливался. Проверка отката, намеренного отказа повреждённого OTA и ROM-восстановления на защищённом устройстве остаётся отдельным незавершённым пунктом плана. Финальный DIS_DOWNLOAD_MODE=1 не записывался.
+
+## 09.10.2026 — аппаратные OTA проверки защищённого ESP32-S3
+
+- Отказ неподписанного OTA: PASS. Корректно транспортно зашифрованный контейнер с
+  недоверенной RSA-PSS подписью получил `ESP_ERR_OTA_VALIDATE_FAILED`; устройство
+  оставалось на рабочем 426, BLE-пара REDMI Note 15 сохранена.
+- OTA rollback: PASS с ограничением диагностики после перезагрузки. Подписанный OTA
+  10.0.428 с несуществующим на устройстве HMAC NVS key ID 3 был принят транспортом.
+  После перезапуска UART зафиксировал нормальную работу BLE central и восстановление
+  прежней пары; Web UI до потери связи отображал 10.0.426. Это согласуется с откатом
+  на 426. Прямой повторный запрос версии после последующих reset не получил ответа.
+- Кэш телефона восстановлен из исходного файла 426; SHA-256 совпадает с официальным
+  опубликованным контейнером: `a9396d7e541509e81b45bef91a7bba2d32be61781bbe90343e1ca10fbff7f660`.
+- Secure ROM: eFuse состояние сохраняет `ENABLE_SECURITY_DOWNLOAD=1` и
+  `DIS_DOWNLOAD_MODE=0`. Физический вход в ROM не подтверждён: esptool получил байт
+  приложения вместо ответа ROM. Flash read/write/erase не запускались.
+- eFuse не менялись; таблица разделов не менялась; публичный релиз не менялся;
+  временный отрицательный OTA и rollback-образ не публиковались.
+
+### Поправка 09.10.2026
+
+ROM `get_security_info` подтверждён: flags `0x6f5`; KEY3 — HMAC_UP, поэтому прежний
+тест 10.0.428 на KEY3 не является отрицательным NVS тестом и rollback не засчитывается.
+KEY4 — USER/EMPTY. Новый signed OTA 10.0.429 с HMAC KEY4 собран и прошёл проверку
+подписи и transport-roundtrip, но не передавался на устройство. ROM `read_flash`
+отвергает в Secure Download Mode. Запись/стирание не выполнялись.
+
+### Дополнение 09.10.2026 — Secure ROM, повтор
+- PASS: фактический вход в Secure Download Mode и чтение security info COM7 (flags 0x6f5; Secure Boot/Flash Encryption enabled; FE count 7; JTAG permanently disabled; KEY2/3 HMAC_UP; KEY4/5 USER/EMPTY).
+- ROM read_flash unsupported. Никаких операций записи/стирания или eFuse-команд не было.
+- После аппаратного reset экран Android остаётся в состоянии «Настройки · ожидание ESP32», поэтому версия приложения на замке пока не подтверждена. 10.0.429 не устанавливался; результат rollback и ROM recovery не проверены. Финальный DIS_DOWNLOAD_MODE не записан.
+
+### 09.10.2026 — восстановление BLE после ручного pairing
+Пользователь перевёл ESP в синий режим и повторно выполнил pairing. После этого Android открыл экран настроек и показал прошивку 10.0.426. Лог подтверждает `bondState=12`, успешные защищённые GATT-чтения owner-status и Web UI IP, а также подтверждение роли владельца приложением. До pairing были короткие соединения с обрывом до чтения Wi-Fi credentials. Вероятно, была рассинхронизация BLE bond/ключей; точная причина не доказана из-за отсутствия доступного ESP BLE event log. eFuse/NVS/OTA и APK не менялись. Проверка AUTO после холодного старта остаётся отдельно не выполненной.
+
+### Дополнение: проверка после обычного reset — 09.10.2026
+После перезагрузки без режима регистрации Android сохранил BOND_BONDED (12), pairing prompt отсутствует, ESP успешно читает защищённую характеристику owner-status и приложение принимает роль владельца. Это подтверждает сохранение bond и работающий AUTO-auth путь. При нажатии «Настройки» начинается hotspot provisioning, но ESP разрывает GATT до чтения Wi-Fi credentials; Android пишет `Ignoring disconnect before Wi-Fi credentials were read by this peer`, экран остаётся «Настройки · ожидание ESP32». Web UI после reset не открылся. Текущая неисправность в provisioning/Web UI пути, не в утрате пары Android. Agent event log недоступен из защищённого firmware; причина инициатора disconnect пока не локализована. eFuse/NVS/OTA/APK/code не менялись.
+
+### Восстановление автоматического режима после provisioning — 09.10.2026
+После истечения 60 секунд неудачного provisioning экран вернулся домой, но AUTO был выключен. AUTO включён обратно штатной кнопкой; лог подтверждает `auto=true`, `webUiRequest=false`, `provisioning=false`. Замок в последних секундах лога не установил нового GATT-сеанса, поэтому фактическое открытие после включения AUTO ещё требует физической проверки в зоне действия BLE. AUTO оставлен включённым.
+
+### Дополнение после сообщения «замок не открывает» — 09.10.2026
+Подтверждено: приложение advertising beacon, `auto=true`, provisioning=false; телефон рядом. После USB-UART reset телефон увидел одно соединение ESP с немедленным disconnect (bondState=12), без защищённого owner-status read и без bond-state change. Поэтому физический AUTO unlock не работает, хотя Android сохраняет BOND_BONDED. Возможное рассогласование LTK/SMP, точный ESP status не получен. Важно: открытие COM7 для чтения UART непреднамеренно вызвало reset ESP (`USB_UART_CHIP_RESET`); никаких команд flash/eFuse/NVS не было. Agent API запрещён текущей политикой Secure Boot. Следующий безопасный шаг — получить ESP-side журнал через штатный отладочный путь без повторного COM open/reset, либо выполнить согласованную процедуру восстановления pairing.
+
+### Статический анализ причины pairing — 09.10.2026
+Код показывает конкретный failure path: статус Android BOND_BONDED не доказывает наличие совпадающего LTK на ESP; при PINKEY_MISSING NimBLE pairing guard разрешает новое SMP только в физическом registration/blue window. Вне окна он подавляет peer, а ESP закрывает link до GATT proof. Это согласуется с Android логом: bondState=12, connect/disconnect примерно за 0.3 с, без GATT read. Commit 390d79d изменил именно этот путь: stale bond больше не удаляется автоматически, а peer подавляется до BOOT registration; ручное сопряжение в синем режиме является предусмотренным восстановлением. Это наиболее вероятное объяснение, но текущий ENC/PINKEY status ESP недоступен, поэтому LTK mismatch для последнего соединения не подтверждён напрямую. Незакоммиченная перестановка «MTU exchange перед security» — вторичный кандидат для проверки, но логов недостаточно обвинить её. Исходники не менялись, сборка не запускалась.
+### BLE disconnect после reboot — read-only проверка 09.10.2026
+- PASS: просмотрены `390d79d`, tracked diff до HEAD, рабочие изменения BLE и NimBLE patcher, NVS startup/configuration и локальные NimBLE 5.4.4 guard markers.
+- PASS: сопоставлены сохранённые ESP/Android traces. Старый trace с `LTK=1` и encryption timeout нельзя приписать инциденту 10.0.426; другой старый trace показывает успешное восстановление после reboot.
+- НЕ ВЫПОЛНЯЛОСЬ: сборка, применение патча, подключение к COM/устройству, pairing, изменение NVS/eFuse/flash.
+- Результат: runtime-первопричина не доказана. Для локализации нужен синхронный ESP/Android trace с raw статусов MTU, security, ENC_CHANGE, SMP guard, GATT и disconnect.
+
+### Диагностический BLE patch 10.0.426 — 09.10.2026
+- PASS: `ble_diag.patch` применим к текущему рабочему дереву (`git apply --ignore-whitespace --recount --check`).
+- PASS: проектная исходная ESP сборка завершилась успешно без прошивки устройства.
+- PASS: затронутый объект `main/ble_phone.c` собран отдельно с патчем. Python patcher прошёл syntax/compile check.
+- НЕ ВЫПОЛНЯЛОСЬ: компиляция NimBLE `ble_sm.c`, полный rebuild с диагностическими изменениями и применение патча к рабочим исходникам; устройство, bonding, NVS, eFuse и flash не затрагивались.
+- Риск timing: `event_log_add()` вызывается синхронно из BLE host callbacks. Полный набор дает несколько логов на одну connection attempt, но не логирует каждую GATT characteristic или payload. Для минимального timing-sensitive прогона оставить CONNECT, BOND, MTU, SEC, ENC, SMP guard, SUPPRESS transitions и все TERMINATE_REQUEST/DISCONNECT; GATT discovery/proof включать только если ENC успешен.
+
+### Пассивная диагностика BLE/security — 09.10.2026
+- PASS: read-only просмотр исходников, build 10.0.426 sdkconfig/build artifacts и существующих локальных логов; исполнение команд на ESP не выполнялось.
+- PASS: подготовлены три документа с безопасным сценарием A без reset и сценарием B, требующим отдельного разрешения на вход в ROM Download Mode.
+- Ограничение: нет свежего hardware read; точный source revision 10.0.426 не подтверждён; активный OTA state, rollback availability, anti-rollback secure version и Secure Boot key digest остаются неизвестны.
+- НЕ ВЫПОЛНЯЛОСЬ: ESP/USB/COM подключение, DTR/RTS, reset, ROM, esptool/espefuse на устройстве, OTA/flash/NVS/bond/eFuse операции, сборка прошивки.
+- PASS: локальный `espefuse v4.12.0 --help` подтвердил `--before no-reset`; help использован только для проверки синтаксиса, без подключения к устройству.
+
+### BLE 10.0.426: оценка сохранённых свидетельств — 09.10.2026
+- PASS: создан `BLE_426_EVIDENCE_ASSESSMENT.md` с инвентаризацией ESP event snapshots, Android app/system logs, OTA/build records и источников привязки к 10.0.426.
+- PASS: отдельного BTSnoop/HCI packet capture исследуемой попытки не обнаружено. Android text log содержит LE connection/disconnect callbacks для более ранней сессии, но не raw Encryption Change/SMP/ATT events.
+- PASS: read-only disassembly/relocation review object 426 подтверждает MTU-first; security запускается из MTU callback, с immediate-error fallback.
+- Ограничение: точная source revision 426 не записана; runtime `ENC/SMP` status и первичный disconnect отсутствуют. Старые `ENC st=518`/`st=7` не относятся к 426.
+- НЕ ВЫПОЛНЯЛОСЬ: HTTP запрос к устройству, подключение к ESP/COM/телефону, изменение лог-настроек, reset/pairing/OTA/запись и пересборка firmware.
+
+## Архив для независимого анализа 431 → 434 — 09.10.2026
+- PASS: создан архив `artifacts/BLE-calibration-review-431-434.zip`; проверен SHA-256 и состав. Включены calibration wizard, NVS/ULP startup/save/load и OTA handler источники для reference eb4c1ef и текущего дерева.
+- PASS: GPIO-история и `app_config.h` исключены по указанию пользователя; также исключены приватные ключи и firmware binaries.
+- Ограничение: exact source revision 10.0.431 и её отдельный sdkconfig не сохранены; архив явно отмечает эту неопределённость.
+## Контрольная точка исходников 10.0.434 — 09.10.2026
+
+- Пользователь подтвердил работу установленной 10.0.434 и потерю калибровки при переходе 431→434; повторное прохождение мастера восстановило работу замка.
+- Исходники/профиль сохраняются Git-коммитом. Устройство не подключалось, не перешивалось; сборка в рамках коммита не запускалась. Это фиксация исходников, не новый runtime-тест и не доказательство точной Git provenance ранее установленного бинарника.

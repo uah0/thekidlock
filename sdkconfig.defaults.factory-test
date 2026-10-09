@@ -1,0 +1,4 @@
+# Hardware validation stage: requires separate permission for irreversible SB/FE.
+# Keep standard Secure ROM Download for recovery with host-encrypted images.
+CONFIG_SECURE_DISABLE_ROM_DL_MODE=n
+CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y

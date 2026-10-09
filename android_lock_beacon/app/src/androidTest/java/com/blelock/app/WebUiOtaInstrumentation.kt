@@ -4,8 +4,10 @@ import android.app.Activity
 import android.app.Instrumentation
 import android.content.Intent
 import android.os.Bundle
+import android.os.Build
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
 import android.webkit.WebView
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -31,11 +33,24 @@ class WebUiOtaInstrumentation : Instrumentation() {
                 "document.getElementById('uploadFwButton').textContent==='Установить обновление' && " +
                 "document.getElementById('fwPicker').style.display==='none'")
             check(evaluate(webView, "document.getElementById('fw').files.length") == "0")
+            runOnMainSync {
+                val decor = dialog!!.window!!.decorView
+                val insets = checkNotNull(decor.rootWindowInsets)
+                val topInset = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()).top
+                } else {
+                    @Suppress("DEPRECATION")
+                    insets.systemWindowInsetTop
+                }
+                val firstRow = IntArray(2)
+                webView.getLocationOnScreen(firstRow)
+                check(firstRow[1] >= topInset) { "Web UI header overlaps system bar" }
+            }
             evaluate(webView, "document.getElementById('uploadFwButton').click(); true")
-            awaitCondition(webView, "document.getElementById('ota').textContent.includes('Обновление установлено')")
+            awaitCondition(webView, "document.getElementById('ota').textContent.includes('Замок обновлён')")
             check(evaluate(webView, "document.getElementById('uploadFwButton').disabled") == "false")
             val result = Bundle().apply {
-                putString("result", "PASS: private image, no file picker, one button, reboot status confirmed by fixture")
+                putString("result", "PASS: system top inset, private image, one button, confirmed OTA completion")
                 putString("ui", evaluate(webView, "document.getElementById('ota').textContent"))
             }
             finish(Activity.RESULT_OK, result)

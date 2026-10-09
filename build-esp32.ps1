@@ -2,13 +2,17 @@
 param(
     [ValidateSet("build","fullclean","flash","monitor","flash-monitor")]
     [string]$Action = "build",
-    [ValidateSet("default","signed-dev","release")]
+    [ValidateSet("default","signed-dev","factory-test","release")]
     [string]$Profile = "signed-dev",
     [string]$IdfVersion = "v5.4.4",
     [string]$Port = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Profile -in @("factory-test", "release") -and $Action -in @("flash", "flash-monitor")) {
+    throw "Фабричный профиль изменяет eFuse при первом запуске. Обычная прошивка запрещена; требуется отдельный согласованный фабричный этап."
+}
 
 $ProjectRoot = $PSScriptRoot
 $BuildDir = if ($Profile -eq "default") {
@@ -17,7 +21,7 @@ $BuildDir = if ($Profile -eq "default") {
     Join-Path $ProjectRoot "build-$Profile"
 }
 $SigningKey = Join-Path $ProjectRoot ".security\ota_signing_key.pem"
-$Sdkconfig = Join-Path $BuildDir "sdkconfig"
+$Sdkconfig = if ($Profile -eq "default") { Join-Path $ProjectRoot "sdkconfig" } else { Join-Path $BuildDir "sdkconfig" }
 $EimStateDir = Join-Path $ProjectRoot ".eim-codex"
 $EimLog = Join-Path $EimStateDir "eim.log"
 $SourceConfig = "C:\Espressif\tools\eim_idf.json"
@@ -83,6 +87,9 @@ function Invoke-ProjectIdf {
         throw "Для профиля '$Profile' нужен закрытый ключ $SigningKey. Создайте его командой: idf.py secure-generate-signing-key $SigningKey"
         }
         $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.$Profile"
+        if ($Profile -eq "factory-test") {
+            $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.release;$ProjectRoot/sdkconfig.defaults.factory-test"
+        }
         $command = "idf.py -B `"$BuildDir`" -D `"SDKCONFIG=$Sdkconfig`" -D `"SDKCONFIG_DEFAULTS=$defaults`" $IdfAction"
         Invoke-EimIdf $command
     }

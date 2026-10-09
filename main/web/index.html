@@ -411,19 +411,6 @@ table.bonds td:first-child{font-family:var(--mono)}
     </div>
   </section>
 
-  <div>
-    <section class="panel">
-      <div class="panel-head"><span class="tag">FW</span><h2>Обновление прошивки</h2></div>
-      <div class="switch-row" style="margin-bottom:14px">
-        <label class="switch">
-          <input id="wupdate" type="checkbox" onchange="saveAutoUpdate()">
-          <span class="track"><span class="thumb"></span></span>
-        </label>
-        <span>Автоматически обновлять прошивку при появлении новой версии</span>
-        <span class="saved-msg" id="updateSaved"></span>
-      </div>
-    </section>
-  </div>
 </div>
 
 
@@ -477,9 +464,8 @@ function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidd
 async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
 async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
 async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
-async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wupdate.checked=c.auto_update;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
+async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
-async function saveAutoUpdate(){try{let q=new URLSearchParams({enabled:wupdate.checked?'1':'0'});await j('/api/wifi/auto-update?'+q,{method:'POST'});updateSaved.textContent='Сохранено';setTimeout(()=>updateSaved.textContent='',2000)}catch(e){updateSaved.textContent='Ошибка сохранения';throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}
 async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:pr.value,timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
@@ -489,12 +475,35 @@ async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'
 async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
 async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
 async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все телефоны» ещё раз',async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice('Все телефоны удалены')}catch(e){showNotice(String(e),true)}})}
-function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';ota.textContent='Будет установлена прошивка, сохранённая в приложении'}
+function readOtaState(){try{let state=JSON.parse(sessionStorage.getItem('bleLockOta'));if(state&&Date.now()-state.started<600000)return state;sessionStorage.removeItem('bleLockOta')}catch(e){}return null}
+function saveOtaState(state){try{if(state)sessionStorage.setItem('bleLockOta',JSON.stringify(state));else sessionStorage.removeItem('bleLockOta')}catch(e){}}
+function otaSuccessText(version){return 'Замок обновлён · Версия '+version}
+function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';let state=readOtaState();if(state&&state.complete)ota.textContent=otaSuccessText(state.version);else if(!uploadFwButton.disabled)ota.textContent='Будет установлена прошивка, сохранённая в приложении'}
+async function waitFwUpdate(before){
+  ota.textContent='Завершение обновления…';
+  for(let attempt=0;attempt<60;attempt++){
+    await new Promise(resolve=>setTimeout(resolve,1000));
+    try{
+      let after=await j('/api/status');
+      if(after.version!==before.version||after.uptime_s<before.uptime_s){
+        saveOtaState({complete:true,version:after.version,started:Date.now()});
+        ota.textContent=otaSuccessText(after.version);
+        showNotice('Замок обновлён');
+        await loadStatus();
+        return;
+      }
+    }catch(e){}
+  }
+  saveOtaState(null);
+  ota.textContent='Не удалось подтвердить обновление замка. Проверьте соединение и версию прошивки';
+}
+async function resumeFwUpdate(){let state=readOtaState();if(!state)return;if(state.complete){ota.textContent=otaSuccessText(state.version);return}if(uploadFwButton.disabled)return;uploadFwButton.disabled=true;try{await waitFwUpdate(state.before)}finally{uploadFwButton.disabled=false}}
 async function uploadFw(){
   if(uploadFwButton.disabled)return;
   let f=fw.files[0];
   if(!window.bleLockInternalFirmware&&!f){showNotice('Выберите файл .bin',true);return}
   uploadFwButton.disabled=true;
+  saveOtaState(null);
   ota.textContent='Подготовка прошивки…';
   try{
     if(window.bleLockInternalFirmware){
@@ -503,30 +512,19 @@ async function uploadFw(){
       f=await cached.blob();
     }
     let before=await j('/api/status');
+    saveOtaState({before:before,started:Date.now()});
     ota.textContent='Передача прошивки… Не закрывайте окно';
     let r=await fetch('/api/ota',{method:'POST',body:f});
     let message=await r.text();
     if(!r.ok)throw new Error(message||'Не удалось установить прошивку');
-    ota.textContent=message+' · Ожидание перезапуска…';
-    for(let attempt=0;attempt<60;attempt++){
-      await new Promise(resolve=>setTimeout(resolve,1000));
-      try{
-        let after=await j('/api/status');
-        if(after.version!==before.version||after.uptime_s<before.uptime_s){
-          ota.textContent='Обновление установлено · Версия '+after.version;
-          await loadStatus();
-          return;
-        }
-      }catch(e){}
-    }
-    ota.textContent='Файл принят. Возврат замка после перезапуска пока не подтверждён';
-  }catch(e){ota.textContent=String(e)}
+    await waitFwUpdate(before);
+  }catch(e){saveOtaState(null);ota.textContent=String(e)}
   finally{uploadFwButton.disabled=false}
 }
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
-async function initPage(){await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000)}
+async function initPage(){await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();resumeFwUpdate();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000)}
 initPage()
 </script>
 </body>
