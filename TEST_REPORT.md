@@ -404,3 +404,17 @@ PASS: build-esp32.ps1 -Action build -Profile signed-dev, ESP-IDF 5.4.4; binary s
 Итог Web UI localization: PASS Android release build 1.0.320; PASS ESP-IDF 5.4.4 signed-dev build 483, firmware подписана и encrypted OTA подготовлена, размер 0x141000, app partition свободно 33%. PASS JSON validation: en/ru/uk по 125 одинаковым ключам, placeholders согласованы, ключи разметки обеих HTML-страниц присутствуют. PASS git diff --check. APK 1.0.320 установлен по ADB Wi-Fi 192.168.1.65:33719 без запуска приложения; перед установкой accelerometer_rotation/user_rotation=0/0, после установки повторно проверены 0/0. OTA проверка блокирована недоступностью сохранённого адреса замка 192.168.1.54 и отсутствием результата автообнаружения в ARP-кэше; firmware_version нового образа на замке не подтверждена. GitHub не изменялся.
 
 Дополнение 11.10.2026: после уточнения пользователя использован штатный путь через установленное приложение и встроенный Web UI по Wi-Fi. В Web UI замка отображается версия 10.0.483 и время сборки 2026-10-10 23:42:32 (снимок .device-agent/fw-root-top.png); обновление на ESP подтверждено. Релиз esp-v10.0.483 опубликован и доступен по latest URL, прежний ESP-релиз 480 удалён согласно политике одного актуального релиза. При переходе Web UI открылся мастер калибровки; он был отменён, значения калибровки не сохранялись.
+
+## Симулятор замка — Android 323
+
+PASS: Android debug/release unit tests, 71 + 71; debug APK build; release APK build
+1.0.323 (548305 байт, SHA-256
+FC660BAC7BBC3CF19CFDC2A7382288E34DA4E51F6D041A625161AB98F3921207).
+PASS: release APK установлен поверх 1.0.320 на 192.168.1.65:33719; package dump
+подтвердил versionCode/versionName 323/1.0.323. До установки и после неё
+accelerometer_rotation/user_rotation прочитаны как 0/0. APK установлен с прежней
+подписью приложения; попытка обновить release debug APK отклонена Android из-за
+различия подписей, приложение не удалялось.
+Физический экран заблокирован, поэтому ручная проверка пунктов меню и пяти статусов
+не выполнена. Firmware build 484 успешно передан через encrypted OTA;
+device-agent подтвердил смену 10.0.483 → 10.0.484.

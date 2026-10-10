@@ -112,6 +112,7 @@ class MainActivity : Activity() {
     private var webUiRequestPending = false
     private var optionsPageOpen = false
     private var simulatorPageOpen = false
+    private var simulatorSequenceRunnable: Runnable? = null
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLanguage.wrap(newBase))
@@ -608,6 +609,7 @@ class MainActivity : Activity() {
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
         if (simulatorPageOpen) {
+            cancelSimulatorSequence()
             simulatorPageOpen = false
             showOptionsPage()
         } else if (optionsPageOpen) {
@@ -729,6 +731,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelSimulatorSequence()
         lockWebUiDialog?.dismiss()
         lockWebUiDialog = null
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
@@ -1099,7 +1102,7 @@ class MainActivity : Activity() {
                 Uri.parse("package:$packageName")))
         }, spacedFullWidth())
         root.addView(filledButton(R.string.app_options_simulator) {
-            showSimulatorPlaceholder()
+            showLockSimulator()
         }, spacedFullWidth().apply { topMargin = dp(12) })
 
         root.addView(TextView(this).apply {
@@ -1137,7 +1140,7 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun showSimulatorPlaceholder() {
+    private fun showLockSimulator() {
         simulatorPageOpen = true
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1145,17 +1148,86 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.WHITE)
         }
         root.addView(filledButton(R.string.back) {
+            cancelSimulatorSequence()
             simulatorPageOpen = false
             showOptionsPage()
         }, spacedFullWidth())
+
         root.addView(TextView(this).apply {
-            text = getString(R.string.app_options_simulator_coming_soon)
-            textSize = 18f
+            text = getString(R.string.app_options_simulator)
+            textSize = 22f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.primary_text))
+            setPadding(dp(4), dp(16), dp(4), dp(8))
+        }, fullWidth())
+        root.addView(TextView(this).apply {
+            text = getString(R.string.simulator_notice)
+            textSize = 14f
+            setTextColor(getColor(R.color.secondary_text))
+            setPadding(dp(4), 0, dp(4), dp(16))
+        }, fullWidth())
+
+        val lockStatus = TextView(this).apply {
+            text = getString(R.string.lock_closed)
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
             setTextColor(getColor(R.color.primary_text))
             gravity = Gravity.CENTER
-            setPadding(dp(12), dp(36), dp(12), dp(36))
-        }, fullWidth())
+            setPadding(dp(16), dp(22), dp(16), dp(22))
+            background = getDrawable(R.drawable.bg_card)
+        }
+        root.addView(lockStatus, spacedFullWidth())
+
+        val demoModes = newCard()
+        val autoSwitch = Switch(this)
+        addRow(demoModes, switchRow(getString(R.string.mode_auto), autoSwitch))
+        val holdSwitch = Switch(this)
+        addRow(demoModes, switchRow(getString(R.string.mode_always_open), holdSwitch))
+        holdSwitch.setOnCheckedChangeListener { _, checked ->
+            lockStatus.setText(if (checked) R.string.internet_unlocked else R.string.lock_closed)
+        }
+        root.addView(demoModes, topSpacedFullWidth(16))
+
+        val stages = intArrayOf(
+            R.string.internet_command_sent,
+            R.string.internet_broker_accepted,
+            R.string.internet_unlocked,
+            R.string.internet_door_opened,
+            R.string.internet_closed_locked
+        )
+        val internetButton = filledButton(R.string.open_via_internet) { }
+        var stageIndex = -1
+        lateinit var advanceStage: Runnable
+        advanceStage = Runnable {
+            if (!simulatorPageOpen) return@Runnable
+            stageIndex++
+            if (stageIndex < stages.size) {
+                internetButton.setText(stages[stageIndex])
+                when (stageIndex) {
+                    2 -> lockStatus.setText(R.string.internet_unlocked)
+                    3 -> lockStatus.setText(R.string.internet_door_opened)
+                    4 -> lockStatus.setText(R.string.internet_closed_locked)
+                }
+                signalHandler.postDelayed(advanceStage, 900L)
+            } else {
+                simulatorSequenceRunnable = null
+                internetButton.isEnabled = true
+            }
+        }
+        internetButton.setOnClickListener {
+            if (simulatorSequenceRunnable != null) return@setOnClickListener
+            stageIndex = -1
+            internetButton.isEnabled = false
+            simulatorSequenceRunnable = advanceStage
+            signalHandler.post(advanceStage)
+        }
+        root.addView(internetButton, topSpacedFullWidth(16))
         setContentView(root)
+    }
+
+    private fun cancelSimulatorSequence() {
+        simulatorSequenceRunnable?.let(signalHandler::removeCallbacks)
+        simulatorSequenceRunnable = null
     }
 
     // ---------- Layout helpers (grouped-card / iOS-style settings look) ----------

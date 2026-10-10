@@ -178,3 +178,14 @@ Android принял en/uk/ru, английское уведомление по�
 ## Web UI localization baseline
 
 PASS до изменений: build-android.ps1 -Action release. Финальный результат ожидается; JSON-ресурсы будут проверены Android-сборкой.
+
+## Android 323 — симулятор замка
+
+PASS: `build-android.ps1 -Action test` — 71 debug + 71 release unit tests.
+PASS: debug build и release build; release APK 1.0.323, 548305 байт, SHA-256
+FC660BAC7BBC3CF19CFDC2A7382288E34DA4E51F6D041A625161AB98F3921207.
+PASS: установка release APK через Wi-Fi ADB поверх версии 320; подтверждены
+versionCode=323/versionName=1.0.323. Значения accelerometer_rotation/user_rotation
+сохранены 0/0, восстановлены и повторно проверены 0/0. Debug APK поверх release
+не установлен из-за несовпадения подписи; приложение не удалялось.
+Физический экран оставался заблокирован, визуальная проверка UI не выполнена.

@@ -2,8 +2,8 @@
 <resources>
     <string name="app_options_title">Приложение</string>
     <string name="app_options_settings">Настройки приложения</string>
-    <string name="app_options_simulator">Симулятор замка</string>
-    <string name="app_options_simulator_coming_soon">Симуляция замка появится в будущей версии.</string>
+    <string name="app_options_simulator">Подключить симулятор замка</string>
+    <string name="simulator_notice">Демонстрационный режим. Команды реальному замку не отправляются.</string>
     <string name="app_language_title">Язык</string>
     <string name="back">Назад</string>
     <string name="widget_auto_enable">Выключено · включить</string>
