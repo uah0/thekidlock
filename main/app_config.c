@@ -38,8 +38,7 @@ esp_err_t app_config_init(void)
     if (!s_config_mutex) s_config_mutex = xSemaphoreCreateMutex();
     if (!s_config_mutex) return ESP_ERR_NO_MEM;
     nvs_handle_t h;
-    esp_err_t err = nvs_open(NVS_NS, NVS_READONLY, &h);
-    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
     if (err != ESP_OK) return err;
 
     int8_t phone_rssi = s_cfg.phone_rssi_threshold;
@@ -49,8 +48,13 @@ esp_err_t app_config_init(void)
     nvs_get_i8(h, "phone_rssi", &phone_rssi);
     nvs_get_u32(h, "timer_a_ms", &timer_a_ms);
     nvs_get_u8(h, "serial_log", &serial_log);
-    nvs_get_u8(h, "departure_beep", &departure_buzzer);
+    err = nvs_get_u8(h, "departure_beep", &departure_buzzer);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        err = nvs_set_u8(h, "departure_beep", departure_buzzer);
+        if (err == ESP_OK) err = nvs_commit(h);
+    }
     nvs_close(h);
+    if (err != ESP_OK) return err;
 
     nvs_handle_t cleanup;
     if (nvs_open(NVS_NS, NVS_READWRITE, &cleanup) == ESP_OK) {

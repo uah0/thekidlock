@@ -43,7 +43,6 @@ button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
 
 [hidden]{display:none!important}
 .settings-title{font-size:17px;margin:0 0 14px}
-.advanced-toggle{width:100%;margin:6px 0 18px}
 /* top bar */
 .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px;flex-wrap:wrap}
 .brand{display:flex;align-items:baseline;gap:10px}
@@ -71,6 +70,7 @@ button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
 .panel-head{display:flex;align-items:center;gap:9px;margin-bottom:14px}
 .panel-head h2{font-size:14px;margin:0;font-weight:650;letter-spacing:.01em}
 .panel-sub{color:var(--text-dim);font-size:12.5px;margin:10px 0 0;line-height:1.5}
+.cfg-diagnostics{margin-top:24px;padding-top:18px;border-top:1px solid var(--border)}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 @media (max-width:760px){.grid-2{grid-template-columns:1fr}}
 
@@ -148,6 +148,8 @@ input:focus,select:focus{border-color:var(--accent)}
 .actions-row{display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap}
 .saved-msg{font-size:12.5px;color:var(--good);font-family:var(--mono)}
 
+.zone-slider{width:100%;margin:8px 0 2px;accent-color:var(--accent);cursor:pointer}
+.zone-scale{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;color:var(--text-dim)}
 /* toggle switch */
 .switch-row{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--text-dim);margin-top:6px}
 .switch{position:relative;display:inline-block;width:36px;height:20px;flex:none}
@@ -292,103 +294,25 @@ table.bonds td:first-child{font-family:var(--mono)}
   <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
  </section>
 
-<button id="advancedToggle" class="btn-primary advanced-toggle" aria-expanded="false" aria-controls="advancedSettings" onclick="toggleAdvanced()">Дополнительные настройки ▾</button>
-<div id="advancedSettings" hidden>
-<section class="hero">
-  <div class="hero-top">
-    <span class="tag">SYS</span>
-    <div class="led-rail" aria-label="Индикаторы состояния">
-      <div class="led-item"><span class="led" id="ledConn"></span>Телефон</div>
-      <div class="led-item"><span class="led" id="ledEnc"></span>Encrypted</div>
-      <div class="led-item"><span class="led" id="ledBond"></span>Bonded</div>
-    </div>
-  </div>
-  <div class="hero-main">
-    <div>
-      <div class="lock-state" id="lockState">
-        <span class="state-dot" id="stateDot"></span>
-        <span class="state-text" id="stateText">—</span>
-      </div>
-      <div class="state-err" id="statusErr" style="display:none"></div>
-      <p class="panel-sub" id="calibrationWarning" role="status" hidden>
-        Требуется калибровка. Замок не сможет закрыться, пока она не сохранена.
-        <a href="/calibration">Пройти калибровку</a>
-      </p>
-    </div>
-    <div class="hero-metrics">
-      <div class="metric">
-        <span class="metric-label">RSSI</span>
-        <div class="rssi">
-          <div class="rssi-bars" id="rssiBars">
-            <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
-          </div>
-          <span class="metric-value" id="curRssi">—</span>
-        </div>
-      </div>
-      <div class="metric">
-        <span class="metric-label">Аптайм</span>
-        <span class="metric-value" id="uptimeTxt">—</span>
-      </div>
-    </div>
-    <div class="hero-actions">
-      <button class="btn-primary" onclick="testOpen()">Тест открытия</button>
-    </div>
-  </div>
-</section>
-
 <section class="panel">
-  <div class="panel-head"><span class="tag">ULP</span><h2>Соленоид и положение пластины</h2></div>
-  <div class="chips-row">
-    <div class="chip"><div class="k">Состояние замка</div><div class="v" id="ulock">—</div></div>
-    <div class="chip"><div class="k">Этап автомата</div><div class="v" id="ufsm">—</div></div>
-    <div class="chip"><div class="k">Положение пластины</div><div class="v" id="uplate">—</div></div>
-  </div>
-  <table class="reg">
-    <tr><td>Исходный уровень АЦП</td><td id="ubase">—</td></tr>
-    <tr><td>Аккумулятор (GPIO5)</td><td id="ubattery">—</td></tr>
-    <tr><td>GPIO5, отсчёты АЦП</td><td id="uvbat">—</td></tr>
-    <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
-    <tr><td>Разность измерений</td><td id="udelta">—</td></tr>
-    <tr><td>Нормированный признак положения</td><td id="ufeature">—</td></tr>
-    <tr><td>Калибровка: полный контакт, Δ АЦП</td><td id="ucalcontact">—</td></tr>
-    <tr><td>Расчёт: один лист, Δ АЦП</td><td id="ucalpaper1">—</td></tr>
-    <tr><td>Расчёт: два листа, Δ АЦП</td><td id="ucalpaper2">—</td></tr>
-    <tr><td>Калибровка: дверь открыта, Δ АЦП</td><td id="ucalopen">—</td></tr>
-    <tr><td>Калибровка: контроль контакта, Δ АЦП</td><td id="ucalverify">—</td></tr>
-    <tr><td>Граница «зазора нет», Δ АЦП ≤</td><td id="ucontactraw">—</td></tr>
-    <tr><td>Порог «контакт», признак ≤</td><td id="uthcontact">—</td></tr>
-    <tr><td>Порог «зазор 1», признак ≤</td><td id="uthgap1">—</td></tr>
-    <tr><td>Порог «зазор 2», признак ≤</td><td id="uthgap2">—</td></tr>
-    <tr><td>Порог «зазор 3», признак ≤</td><td id="uthgap3">—</td></tr>
-    <tr><td>Порог «зазор 4», признак ≤</td><td id="uthgap4">—</td></tr>
-    <tr><td>Порог «зазор 5 / далеко», признак</td><td id="uthgap5">—</td></tr>
-    <tr><td>Ошибки</td><td><span class="badge-hex" id="ufaults">—</span></td></tr>
-    <tr><td>События</td><td><span class="badge-hex" id="uevents">—</span></td></tr>
-    <tr><td>Измерительных циклов</td><td id="umeasurements">—</td></tr>
-    <tr><td>Попытки закрытия / отклонения</td><td id="uclose">—</td></tr>
-  </table>
-  <div class="seq-line" id="ulpStatus">Загрузка…</div>
-  <p class="panel-sub">Данные обновляются раз в 500 мс. Ошибки и события приведены в виде битовой маски.</p>
-</section>
-
-<div class="grid-2">
-  <section class="panel">
     <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
 
     <div class="field">
-      <label for="pr">Единый RSSI-порог зоны открытия (телефон → замок)</label>
-      <div class="field-input"><input id="pr" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
-      <small>При контроле RSSI соединённого телефона замок разрывает соединение, когда медианный сигнал ниже порога. Команда OPEN обрабатывается отдельно.</small>
+      <label for="pr">Зона открытия</label>
+      <!-- Шкала зоны открытия без размерности: слева высокий уровень сигнала (-30 dBm), справа максимально низкий (-127 dBm). Для API сохраняется исходный отрицательный RSSI-порог. -->
+      <input id="pr" class="zone-slider" type="range" min="30" max="127" step="1" value="75" aria-label="Зона открытия: от сильного сигнала слева до слабого справа">
+      <div class="zone-scale" aria-hidden="true"><span>Сильный сигнал</span><span>Слабый сигнал</span></div>
+
     </div>
     <div class="switch-row">
       <label class="switch"><input id="departureBuzzer" type="checkbox" onchange="saveDepartureBuzzer()"><span class="track"><span class="thumb"></span></span></label>
-      <span>Сигнал при открытом замке вне зоны маяка</span>
+      <span>Включение звукового подтверждения открытой двери</span>
       <span class="saved-msg" id="departureBuzzerSaved"></span>
     </div>
-    <p class="panel-sub">Вход диагностики зазора: GPIO6.</p>
+
     <div class="field-row">
       <div class="field" style="flex:1">
-        <label for="ta">Таймер А</label>
+        <label for="ta">Задержка закрытия замка после выхода из зоны открытия</label>
         <div class="field-input"><input id="ta" type="number" min="0"><span class="unit">мс</span></div>
       </div>
     </div>
@@ -396,13 +320,23 @@ table.bonds td:first-child{font-family:var(--mono)}
       <button class="btn-primary" onclick="saveConfig()">Сохранить</button>
       <span class="saved-msg" id="saved"></span>
     </div>
+    <!-- Показатели и тест открытия перенесены из удалённой панели ULP в нижнюю часть CFG. -->
+    <div class="cfg-diagnostics">
+  <div class="actions-row" style="margin-bottom:14px">
+    <button class="btn-primary" onclick="testOpen()">Тест открытия</button>
+  </div>
+  <table class="reg">
+    <tr><td>Время работы (uptime)</td><td id="uptimeTxt">—</td></tr>
+    <tr><td>Аккумулятор</td><td id="ubattery">—</td></tr>
+    <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
+    <tr><td>Калибровка: дверь закрыта</td><td id="ucalcontact">—</td></tr>
+    <tr><td>Калибровка: дверь открыта</td><td id="ucalopen">—</td></tr>
+    <tr><td>Граница: дверь не закрыта</td><td id="ucontactraw">—</td></tr>
+  </table>
+  <div class="seq-line" id="ulpStatus">Загрузка…</div>
+    </div>
   </section>
 
-</div>
-
-
-
-</div>
 </div>
 
 <script>
@@ -412,41 +346,34 @@ function formatUptime(total){total=Math.max(0,Math.floor(total));let d=Math.floo
 let noticeTimer=0,pendingConfirm='',pendingConfirmUntil=0;function showNotice(message,error=false){clearTimeout(noticeTimer);notice.textContent=message;notice.className=error?'bad':'ok';noticeTimer=setTimeout(()=>{notice.className='';},5000)}
 async function inlineConfirm(key,message,action){let now=Date.now();if(pendingConfirm!==key||now>pendingConfirmUntil){pendingConfirm=key;pendingConfirmUntil=now+5000;showNotice(message);return}pendingConfirm='';pendingConfirmUntil=0;await action()}
 
-function setRssiBars(rssi){
-  let bars=rssiBars.querySelectorAll('.bar'),level=0;
-  if(rssi!==null && rssi!==undefined){
-    if(rssi>=-60)level=4;else if(rssi>=-75)level=3;else if(rssi>=-90)level=2;else level=1;
-  }
-  bars.forEach((b,i)=>b.classList.toggle('on',i<level));
-  rssiBars.classList.toggle('weak',level>0&&level<3);
-}
-
 async function loadStatus(){
   try{
     let s=await j('/api/status');
     verTxt.textContent='Версия '+s.version;
     buildTxt.textContent='Собрано: '+s.build;
-    stateText.textContent=s.state==='CALIBRATION_REQUIRED'?'Калибровка':s.state||(s.open?'OPEN':'LOCKED');
-    calibrationWarning.hidden=!s.calibration_required;
-    lockState.className='lock-state '+(s.locked?'good':'warn');
-    ledConn.classList.toggle('on',!!s.connected);
-    ledEnc.classList.toggle('on',!!s.encrypted);
-    ledBond.classList.toggle('on',!!s.bonded);
-    curRssi.textContent=s.rssi===null?'—':s.rssi+' dBm';
-    setRssiBars(s.rssi);
     uptimeTxt.textContent=formatUptime(s.uptime_s);
-    statusErr.style.display='none';
   }catch(e){
-    stateText.textContent='—';
-    lockState.className='lock-state';
-    statusErr.textContent=String(e);
-    statusErr.style.display='block';
+    verTxt.textContent='Версия —';
+    uptimeTxt.textContent='—';
+    buildTxt.textContent='Не удалось получить состояние: '+String(e);
   }
 }
-async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ucalcontact.textContent=u.calibration_contact_raw;ucalpaper1.textContent=u.calibration_paper1_raw;ucalpaper2.textContent=u.calibration_paper2_raw;ucalopen.textContent=u.calibration_open_raw;ucalverify.textContent=u.calibration_verify_contact_raw;ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';uthcontact.textContent=u.feature_contact_max;uthgap1.textContent=u.feature_gap1_max;uthgap2.textContent=u.feature_gap2_max;uthgap3.textContent=u.feature_gap3_max;uthgap4.textContent=u.feature_gap4_max;uthgap5.textContent=u.feature_gap5_max+' / далеко от '+u.feature_gap5_max;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
-async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;departureBuzzer.checked=c.departure_buzzer_enabled}
+async function loadUlp(){
+  try{
+    let u=await j('/api/ulp');
+    ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';
+    usense.textContent=u.sense_raw;
+    ucalcontact.textContent=u.calibration_contact_raw;
+    ucalopen.textContent=u.calibration_open_raw;
+    ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';
+    ulpStatus.textContent='Обновлено';
+  }catch(e){ulpStatus.textContent=String(e)}
+}
+// Ползунок: 30..127 слева направо (от сильного к слабому сигналу); API ожидает порог -30..-127 dBm.
+function zoneSliderToRssi(){return -Number(pr.value)}
+function rssiToZoneSlider(value){return Math.min(127,Math.max(30,-Number(value)))}
+async function loadConfig(){let c=await j('/api/config');pr.value=rssiToZoneSlider(c.phone_rssi_threshold);ta.value=c.timer_a_ms;departureBuzzer.checked=c.departure_buzzer_enabled}
 async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent='Сохранено';setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
-function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidden=!open;advancedToggle.setAttribute('aria-expanded',String(open));advancedToggle.textContent=open?'Дополнительные настройки ▴':'Дополнительные настройки ▾'}
 async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
 async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
 async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
@@ -454,7 +381,7 @@ async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpas
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения замка: '+e,true)}}
-async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:pr.value,timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
+async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?`Регистрация телефона · ${p.remaining_s} с`:'Разрешить регистрацию телефона';pairingButton.title=''}catch(e){pairingButton.textContent='Регистрация: нет связи';pairingButton.title=String(e)}}
 async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
