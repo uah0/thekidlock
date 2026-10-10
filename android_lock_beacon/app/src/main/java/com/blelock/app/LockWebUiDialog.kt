@@ -77,10 +77,10 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest): WebResourceResponse? {
                     val requestedUrl = request.url.toString()
-                    if (!policy.allows(requestedUrl)) return textResponse(403, "Forbidden", context.getString(R.string.web_address_forbidden))
+                    if (!policy.allows(requestedUrl)) return textResponse(403, "Forbidden", "WUI_E_FORBIDDEN")
                     if (request.url.path != WebUiRequestPolicy.FIRMWARE_PATH) return null
                     if (!policy.isFirmwareRequest(requestedUrl, request.method) || request.isForMainFrame) {
-                        return textResponse(403, "Forbidden", context.getString(R.string.web_address_forbidden))
+                        return textResponse(403, "Forbidden", "WUI_E_FORBIDDEN")
                     }
                     return try {
                         synchronized(FirmwareUpdateClient) {
@@ -92,22 +92,44 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
                                     "X-Firmware-Version" to version.orEmpty()), input)
                         }
                     } catch (_: IOException) {
-                        textResponse(404, "Not Found", context.getString(R.string.web_firmware_missing))
+                        textResponse(404, "Not Found", "WUI_E_FIRMWARE_MISSING")
                     }
                 }
 
                 override fun onPageFinished(view: WebView, finishedUrl: String) {
                     if (policy.allows(finishedUrl) && policy.allows(view.url.orEmpty())) {
                         trustedPage = true
-                        val script = context.assets.open("firmware_transfer.js").bufferedReader().use { it.readText() }
-                        view.evaluateJavascript("window.bleLockTransferError=" + org.json.JSONObject.quote(
-                            context.getString(R.string.firmware_transfer_version_missing)) + ";", null)
-                        view.evaluateJavascript(script, null)
-                        view.evaluateJavascript("window.bleLockInternalFirmware=true;" +
-                            "if(typeof useInternalFirmware==='function')useInternalFirmware();", null)
-                        if (policy.isCalibrationPage(finishedUrl) && policy.isCalibrationPage(view.url.orEmpty())) {
-                            val script = context.assets.open("lock_wizard_speech.js").bufferedReader().use { it.readText() }
-                            view.evaluateJavascript(script, null)
+                        val calibrationPage = policy.isCalibrationPage(finishedUrl) &&
+                            policy.isCalibrationPage(view.url.orEmpty())
+                        val language = AppLanguage.currentTag(context)
+                        val translationJson = context.assets.open("webui/i18n/$language.json")
+                            .bufferedReader().use { org.json.JSONObject(it.readText()).toString() }
+                        val installTranslations = "window.installAppWebUiTranslations(JSON.parse(" +
+                            org.json.JSONObject.quote(translationJson) + "));"
+                        view.evaluateJavascript(installTranslations) {
+                            if (!trustedPage || !policy.allows(view.url.orEmpty())) return@evaluateJavascript
+                            if (calibrationPage) {
+                                val speechScript = context.assets.open("lock_wizard_speech.js")
+                                    .bufferedReader().use { it.readText() }
+                                view.evaluateJavascript(speechScript) {
+                                    initializeLocalizedPage(view)
+                                }
+                            } else {
+                                view.evaluateJavascript(
+                                    "window.bleLockTransferError='WUI_E_TRANSFER_START';",
+                                    null
+                                )
+                                val transferScript = context.assets.open("firmware_transfer.js")
+                                    .bufferedReader().use { it.readText() }
+                                view.evaluateJavascript(transferScript) {
+                                    view.evaluateJavascript(
+                                        "window.bleLockInternalFirmware=true;" +
+                                            "if(typeof useInternalFirmware==='function')useInternalFirmware();",
+                                        null
+                                    )
+                                    initializeLocalizedPage(view)
+                                }
+                            }
                         }
                     }
                 }
@@ -131,6 +153,14 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
 
     private fun goBack() {
         if (webView.canGoBack()) webView.goBack() else dismiss()
+    }
+
+    private fun initializeLocalizedPage(view: WebView) {
+        if (!trustedPage || !policy.allows(view.url.orEmpty())) return
+        view.evaluateJavascript(
+            "if(typeof initializeLocalizedPage==='function')initializeLocalizedPage();",
+            null
+        )
     }
 
     override fun onStop() {

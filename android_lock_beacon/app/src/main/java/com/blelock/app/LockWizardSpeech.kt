@@ -23,6 +23,13 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
     private var closed = false
     private var serial = 0L
     private var request: Request? = null
+    private val speechLocale = Locale.forLanguageTag(
+        when (AppLanguage.currentTag(context)) {
+            "ru" -> "ru-RU"
+            "uk" -> "uk-UA"
+            else -> "en-US"
+        }
+    )
 
     init {
         engine = TextToSpeech(context.applicationContext) { result ->
@@ -31,7 +38,7 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
                     initialized = true
                     val tts = engine
                     available = result == TextToSpeech.SUCCESS && tts != null &&
-                        tts.setLanguage(Locale.forLanguageTag("ru-RU")) >= TextToSpeech.LANG_AVAILABLE
+                        tts.setLanguage(speechLocale) >= TextToSpeech.LANG_AVAILABLE
                     if (available) {
                         tts?.setAudioAttributes(AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -42,12 +49,12 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
                             }
                             override fun onDone(utteranceId: String?) = finish(utteranceId, null)
                             override fun onError(utteranceId: String?) =
-                                finish(utteranceId, context.getString(R.string.speech_failed))
+                                finish(utteranceId, "WUI_E_SPEECH_FAILED")
                             override fun onError(utteranceId: String?, errorCode: Int) =
-                                finish(utteranceId, context.getString(R.string.speech_failed_code, errorCode))
+                                finish(utteranceId, "WUI_E_SPEECH_FAILED")
                         })
                     }
-                    Log.i(TAG, "Russian TTS available=$available")
+                    Log.i(TAG, "Web UI TTS language=${speechLocale.toLanguageTag()} available=$available")
                     request?.let { play(it) }
                 }
             }
@@ -63,7 +70,7 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
             val next = Request(text, token, "${++serial}:$token")
             request = next
             if (text.isBlank() || text.length > 2000) {
-                finish(next.id, context.getString(R.string.speech_text_invalid))
+                finish(next.id, "WUI_E_SPEECH_TEXT_INVALID")
             } else if (initialized) play(next)
         }
     }
@@ -86,9 +93,9 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
 
     private fun play(next: Request) {
         if (!available) {
-            finish(next.id, context.getString(R.string.speech_russian_unavailable))
+            finish(next.id, "WUI_E_SPEECH_UNAVAILABLE")
         } else if (engine?.speak(next.text, TextToSpeech.QUEUE_FLUSH, null, next.id) != TextToSpeech.SUCCESS) {
-            finish(next.id, context.getString(R.string.speech_start_failed))
+            finish(next.id, "WUI_E_SPEECH_FAILED")
         }
     }
 

@@ -8,7 +8,8 @@
     completion=null;
     if(error){
       let speechStatus=document.getElementById('status');
-      speechStatus.textContent=error;
+      speechStatus.textContent=error==='WUI_E_SPEECH_UNAVAILABLE'||error==='WUI_E_SPEECH_FAILED'||error==='WUI_E_SPEECH_TEXT_INVALID'
+        ?wui('speech_unavailable'):(wui('api.'+error)||wui('speech_unavailable'));
       speechStatus.className='data bad';
       trace('speech_error');
       return;
@@ -40,9 +41,4 @@
     if(!window.closed)window.location.replace('/');
   };
   addEventListener('beforeunload',()=>{completion=null;BleLockWizardSpeech.cancel()});
-  // The page may have started its browser fallback before onPageFinished.
-  if(!finished&&instruction.textContent!=='Запуск…'){
-    samples=[];
-    say(displayTexts[stage],speechTexts[stage],stage<2?beginCollecting:closeCompletedWizard);
-  }
 })();
