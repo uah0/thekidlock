@@ -21,12 +21,18 @@ class WebUiOtaInstrumentation : Instrumentation() {
 
     override fun onStart() {
         var dialog: LockWebUiDialog? = null
+        val previousVersion = FirmwareTransferState.downloadedVersion(targetContext)
+        val fixtureVersion = "10.0.999999"
+        val fixtureLock = "instrumentation-ota-lock"
+        var outcomeCode = Activity.RESULT_CANCELED
+        var outcome = Bundle()
         try {
+            check(FirmwareTransferState.setDownloadedVersion(targetContext, fixtureVersion))
             val activity = startActivitySync(Intent(targetContext, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             lateinit var webView: WebView
             runOnMainSync {
-                dialog = LockWebUiDialog(activity, "http://127.0.0.1/").apply { show() }
+                dialog = LockWebUiDialog(activity, "http://127.0.0.1/", fixtureLock).apply { show() }
                 webView = findWebView(dialog!!.window!!.decorView) ?: error("WebView missing")
             }
             awaitCondition(webView, "window.bleLockInternalFirmware===true && " +
@@ -49,16 +55,22 @@ class WebUiOtaInstrumentation : Instrumentation() {
             evaluate(webView, "document.getElementById('uploadFwButton').click(); true")
             awaitCondition(webView, "document.getElementById('ota').textContent.includes('Замок обновлён')")
             check(evaluate(webView, "document.getElementById('uploadFwButton').disabled") == "false")
+            check(!FirmwareTransferState.updateAvailable(targetContext, fixtureLock))
             val result = Bundle().apply {
                 putString("result", "PASS: system top inset, private image, one button, confirmed OTA completion")
                 putString("ui", evaluate(webView, "document.getElementById('ota').textContent"))
             }
-            finish(Activity.RESULT_OK, result)
+            outcomeCode = Activity.RESULT_OK
+            outcome = result
         } catch (error: Throwable) {
-            finish(Activity.RESULT_CANCELED, Bundle().apply { putString("error", error.toString()) })
+            outcome = Bundle().apply { putString("error", error.toString()) }
         } finally {
             runOnMainSync { dialog?.dismiss() }
+            FirmwareTransferState.setDownloadedVersion(targetContext, previousVersion)
+            targetContext.getSharedPreferences("firmware_transfer", android.content.Context.MODE_PRIVATE).edit()
+                .remove(FirmwareTransferState.lockKey(fixtureLock)).commit()
         }
+        finish(outcomeCode, outcome)
     }
 
     private fun evaluate(view: WebView, script: String): String {

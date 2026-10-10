@@ -14,7 +14,33 @@ internal object FirmwareUpdateClient {
     const val DOWNLOAD_NAME = "ble_lock_stage1_s3.bin"
     private const val DOWNLOAD_TIMEOUT_MS = 25_000
 
-    data class Metadata(val marker: String)
+    data class Metadata(val marker: String, val version: String? = null)
+
+    internal fun releaseVersion(url: URL): String? {
+        if (url.protocol != "https" || url.host != "github.com" || url.userInfo != null || url.port != -1) return null
+        return Regex("/uah0/thekidlock/releases/download/esp-v(10\\.0\\.[0-9]+)/ble_lock_stage1_s3\\.bin")
+            .matchEntire(url.path)?.groupValues?.get(1)
+    }
+
+    private fun versionUrl(version: String): URL {
+        if (!FirmwareTransferState.validVersion(version)) throw IOException("Некорректный номер прошивки")
+        return URL("https://github.com/uah0/thekidlock/releases/download/esp-v$version/$DOWNLOAD_NAME")
+    }
+
+    private fun latestVersion(url: URL): String {
+        val connection = (url.openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = false
+            connectTimeout = DOWNLOAD_TIMEOUT_MS
+            readTimeout = DOWNLOAD_TIMEOUT_MS
+            requestMethod = "HEAD"
+            setRequestProperty("User-Agent", "TheKidLock-Android")
+        }
+        try {
+            if (connection.responseCode !in setOf(301, 302, 303, 307, 308)) throw IOException("Не удалось определить версию прошивки")
+            val location = connection.getHeaderField("Location") ?: throw IOException("Нет адреса релиза")
+            return releaseVersion(URL(url, location)) ?: throw IOException("Непредусмотренный адрес релиза")
+        } finally { connection.disconnect() }
+    }
 
     fun latestFirmwareUrl(): String = BuildConfig.OTA_FIRMWARE_URL
 
@@ -38,7 +64,8 @@ internal object FirmwareUpdateClient {
         if (!isAllowedFirmwareSource(requestedUrl)) {
             throw IOException("Источник прошивки не входит в список разрешённых")
         }
-        val connection = (requestedUrl.openConnection() as HttpURLConnection).apply {
+        val version = if (localTestHttp) null else latestVersion(requestedUrl)
+        val connection = ((if (version == null) requestedUrl else versionUrl(version)).openConnection() as HttpURLConnection).apply {
             instanceFollowRedirects = !localTestHttp
             connectTimeout = DOWNLOAD_TIMEOUT_MS
             readTimeout = DOWNLOAD_TIMEOUT_MS
@@ -70,7 +97,7 @@ internal object FirmwareUpdateClient {
             }
             return Metadata(createVersionMarker(
                 etag, lastModified, length, "${finalUrl.protocol}://${finalUrl.host}${finalUrl.path}"
-            ))
+            ), version)
         } finally {
             connection.disconnect()
         }
@@ -144,11 +171,12 @@ internal object FirmwareUpdateClient {
     }
 
     @Synchronized
-    fun publishForWebUi(context: Context, source: File) {
+    fun publishForWebUi(context: Context, source: File, version: String? = null) {
         source.inputStream().use { input ->
             validateEncryptedHeader(readHeader(input), source.length())
         }
         val destination = storedFirmware(context)
+        if (!FirmwareTransferState.setDownloadedVersion(context, null)) throw IOException("Не удалось сохранить номер прошивки")
         val output = destination.startWrite()
         try {
             source.inputStream().use { it.copyTo(output) }
@@ -157,13 +185,14 @@ internal object FirmwareUpdateClient {
             destination.failWrite(output)
             throw error
         }
+        if (!FirmwareTransferState.setDownloadedVersion(context, version)) throw IOException("Не удалось сохранить номер прошивки")
     }
 
-    fun downloadLatest(target: File): File {
-        val requestedUrl = URL(latestFirmwareUrl())
+    fun downloadLatest(target: File, version: String? = null): File {
+        val requestedUrl = if (version == null) URL(latestFirmwareUrl()) else versionUrl(version)
         val localTestHttp = requestedUrl.protocol == "http" &&
             requestedUrl.host.lowercase() in setOf("127.0.0.1", "localhost")
-        if (!isAllowedFirmwareSource(requestedUrl)) {
+        if (!isAllowedFirmwareSource(requestedUrl) && releaseVersion(requestedUrl) == null) {
             throw IOException("Источник прошивки не входит в список разрешённых")
         }
         val connection = (requestedUrl.openConnection() as HttpURLConnection).apply {

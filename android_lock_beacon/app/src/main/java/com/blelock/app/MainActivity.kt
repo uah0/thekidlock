@@ -142,14 +142,15 @@ class MainActivity : Activity() {
                     val metadata = FirmwareUpdateClient.checkLatestFirmware()
                     val preferences = getSharedPreferences(FIRMWARE_PREFETCH_PREFS, MODE_PRIVATE)
                     val previousMarker = preferences.getString(FIRMWARE_PREFETCH_MARKER, null)
-                    val fileAvailable = FirmwareUpdateClient.hasPublishedFirmware(applicationContext)
+                    val fileAvailable = FirmwareUpdateClient.hasPublishedFirmware(applicationContext) &&
+                        FirmwareTransferState.downloadedVersion(applicationContext) == metadata.version
                     if (FirmwareUpdateClient.shouldDownloadFirmware(
                             previousMarker, metadata.marker, fileAvailable
                         )) {
                         val temporaryImage = File(cacheDir, "$FIRMWARE_DOWNLOAD_NAME.tmp")
                         try {
-                            FirmwareUpdateClient.downloadLatest(temporaryImage)
-                            FirmwareUpdateClient.publishForWebUi(applicationContext, temporaryImage)
+                            FirmwareUpdateClient.downloadLatest(temporaryImage, metadata.version)
+                            FirmwareUpdateClient.publishForWebUi(applicationContext, temporaryImage, metadata.version)
                             preferences.edit()
                                 .putString(FIRMWARE_PREFETCH_MARKER, metadata.marker)
                                 .putBoolean(FIRMWARE_PREFETCH_NOTICE_PENDING, true)
@@ -169,6 +170,7 @@ class MainActivity : Activity() {
                 } finally {
                     runOnUiThread {
                         firmwarePrefetchRunning = false
+                        refreshSettingsUpdateLabel()
                         if (!isFinishing) signalHandler.postDelayed(firmwareCheckRunnable, nextDelayMs)
                     }
                 }
@@ -622,6 +624,7 @@ class MainActivity : Activity() {
                 .onFailure { appendLog("Не удалось запросить домашний Wi-Fi: ${it.message}") }
         }
         showPendingFirmwareNotice()
+        refreshSettingsUpdateLabel()
         signalHandler.removeCallbacks(firmwareCheckRunnable)
         signalHandler.postDelayed(firmwareCheckRunnable, FIRMWARE_CHECK_INITIAL_DELAY_MS)
     }
@@ -1276,6 +1279,7 @@ class MainActivity : Activity() {
             hotspotOpenButton.visibility = if (settingsEnabled) View.VISIBLE else View.GONE
             hotspotOpenButton.isEnabled = settingsEnabled
             hotspotOpenButton.alpha = if (settingsEnabled) 1f else 0.38f
+            refreshSettingsUpdateLabel()
         }
     }
 
@@ -1901,7 +1905,9 @@ class MainActivity : Activity() {
         runCatching {
             lockWebUiDialog?.setOnDismissListener(null)
             lockWebUiDialog?.dismiss()
-            lockWebUiDialog = LockWebUiDialog(this, url).apply {
+            lockWebUiDialog = LockWebUiDialog(this, url, FirmwareTransferState.currentLock(this)) {
+                refreshSettingsUpdateLabel()
+            }.apply {
                 setOnDismissListener {
                     webUiBrowserOpen = false
                     if (localHotspotReservation != null) closeLocalHotspot("Закрыт Web UI")
@@ -2239,6 +2245,21 @@ class MainActivity : Activity() {
             WebUiConnectionState.WAITING_WEBUI_ADDRESS,
             WebUiConnectionState.OPENING_BROWSER -> hotspotOpenButton.text = "Ожидание ESP32…"
         }
+        refreshSettingsUpdateLabel()
+    }
+
+    private fun refreshSettingsUpdateLabel() {
+        if (!::hotspotOpenButton.isInitialized || webUiConnectionState !in setOf(
+                WebUiConnectionState.IDLE, WebUiConnectionState.COMPLETE, WebUiConnectionState.ERROR)) return
+        val title = getString(R.string.control_settings)
+        hotspotOpenButton.text = if (FirmwareTransferState.updateAvailable(this, FirmwareTransferState.currentLock(this))) {
+            android.text.SpannableString("$title\n${getString(R.string.firmware_update_available)}").apply {
+                setSpan(android.text.style.RelativeSizeSpan(0.6f), title.length + 1, length,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.BLACK), title.length + 1, length,
+                    android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+        } else title
     }
 
 

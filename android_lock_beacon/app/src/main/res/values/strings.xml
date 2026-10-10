@@ -7,10 +7,11 @@
     <string name="legacy_location_required_message">На Android 6–11 система разрешает поиск BLE-устройств только при включённой геолокации. TheKidLock не использует и не сохраняет местоположение телефона. Начиная с Android 12 это системное требование отсутствует.</string>
     <string name="legacy_location_open_settings">Открыть настройки</string>
     <string name="local_hotspot_status">Локальная точка доступа не запущена</string>
-    <string name="control_settings">Настройки</string>
+    <string name="control_settings">Настройки замка</string>
+    <string name="firmware_update_available">(доступно обновление)</string>
     <string name="firmware_download_ready">Новая прошивка готова. Нажмите «Установить обновление» в Web UI замка.</string>
-    <string name="mode_auto">Автоматический режим</string>
-    <string name="mode_always_open">Замок постоянно открыт</string>
+    <string name="mode_auto">Автооткрытие замка</string>
+    <string name="mode_always_open">Оставить замок открытым</string>
     <string name="open_via_internet">Открыть через интернет</string>
     <string name="settings_waiting_esp">Настройки · ожидание ESP32</string>
     <string name="auto_open">Автоматический режим</string>
