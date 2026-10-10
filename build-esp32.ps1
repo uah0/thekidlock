@@ -2,7 +2,7 @@
 param(
     [ValidateSet("build","fullclean","flash","monitor","flash-monitor")]
     [string]$Action = "build",
-    [ValidateSet("default","signed-dev","factory-test","release")]
+    [ValidateSet("default","signed-dev","factory-test","release","finalize-existing")]
     [string]$Profile = "signed-dev",
     [string]$IdfVersion = "v5.4.4",
     [string]$Port = ""
@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($Profile -in @("factory-test", "release") -and $Action -in @("flash", "flash-monitor")) {
+if ($Profile -in @("factory-test", "release", "finalize-existing") -and $Action -in @("flash", "flash-monitor")) {
     throw "Фабричный профиль изменяет eFuse при первом запуске. Обычная прошивка запрещена; требуется отдельный согласованный фабричный этап."
 }
 

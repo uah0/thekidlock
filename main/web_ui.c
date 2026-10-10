@@ -433,11 +433,12 @@ static esp_err_t wifi_auto_update_post(httpd_req_t *req)
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing auto-update parameter");
     }
     bool value = strcmp(enabled, "1") == 0 || strcmp(enabled, "true") == 0;
-    esp_err_t err = wifi_ota_set_auto_update(value);
-    if (err == ESP_OK && value) {
-        esp_err_t check_err = wifi_ota_check_for_update();
-        if (check_err != ESP_OK && check_err != ESP_ERR_INVALID_STATE) err = check_err;
+    if (value) {
+        httpd_resp_set_type(req, "text/plain; charset=utf-8");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                   "Обновление доступно только с телефона");
     }
+    esp_err_t err = wifi_ota_set_auto_update(value);
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
     return send_json(req, "{\"ok\":true}");
 }
@@ -543,17 +544,12 @@ static esp_err_t lock_test_post(httpd_req_t *req)
     return send_json(req, "{\"ok\":true}");
 }
 
-static esp_err_t phone_only_route(httpd_req_t *req)
-{
-    if (wifi_ota_is_runtime_phone_session()) return ESP_OK;
-    return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found");
-}
-
 #define PHONE_ONLY_HANDLER(name) \
     static esp_err_t name##_phone_only(httpd_req_t *req) \
     { \
-        esp_err_t access = phone_only_route(req); \
-        return access == ESP_OK ? name(req) : access; \
+        if (!wifi_ota_is_runtime_phone_session()) \
+            return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "Not found"); \
+        return name(req); \
     }
 
 PHONE_ONLY_HANDLER(index_get)

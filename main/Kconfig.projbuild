@@ -1,0 +1,12 @@
+menu "BLE Lock security finalization"
+
+config APP_FINALIZE_ROM_DOWNLOAD_AFTER_OTA
+    bool "Disable ROM Download after a healthy OTA boot"
+    default n
+    depends on SECURE_BOOT && SECURE_FLASH_ENC_ENABLED && NVS_ENCRYPTION && NVS_SEC_KEY_PROTECT_USING_HMAC && BOOTLOADER_APP_ROLLBACK_ENABLE
+    help
+        After a pending OTA image passes NVS, ULP calibration/fault, and BLE
+        initialization checks and is marked valid, permanently disable ROM
+        Download Mode. This is irreversible; keep disabled for normal profiles.
+
+endmenu

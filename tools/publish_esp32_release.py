@@ -12,6 +12,57 @@ import urllib.parse
 import urllib.request
 
 
+def list_releases(request, api):
+    releases = []
+    page = 1
+    while True:
+        batch = request(f"{api}/releases?per_page=100&page={page}")
+        releases.extend(batch)
+        if len(batch) < 100:
+            return releases
+        page += 1
+
+
+def prune_old_releases(request, api, keep_id, keep_tag):
+    if api != "https://api.github.com/repos/uah0/thekidlock":
+        raise ValueError("Unexpected release repository")
+
+    def check_latest():
+        latest = request(f"{api}/releases/latest")
+        if latest["id"] != keep_id or latest["tag_name"] != keep_tag:
+            raise ValueError("Latest release changed; cleanup stopped")
+
+    check_latest()
+    releases = list_releases(request, api)
+    tags = request(f"{api}/git/matching-refs/tags/esp-v")
+    keep_version = tuple(map(int, keep_tag.removeprefix("esp-v").split(".")))
+    for tag in {r["tag_name"] for r in releases} | {t["ref"].removeprefix("refs/tags/") for t in tags}:
+        if not re.fullmatch(r"esp-v\d+\.\d+\.\d+", tag):
+            raise ValueError("Unexpected release tag; cleanup stopped")
+        if tuple(map(int, tag.removeprefix("esp-v").split("."))) > keep_version:
+            raise ValueError("A newer version exists; cleanup stopped")
+    removed_releases = []
+    removed_tags = []
+    for old in releases:
+        if old["id"] == keep_id:
+            continue
+        check_latest()
+        request(f"{api}/releases/{old['id']}", "DELETE")
+        removed_releases.append({"id": old["id"], "tag": old["tag_name"]})
+    for old in tags:
+        tag = old["ref"].removeprefix("refs/tags/")
+        if tag == keep_tag:
+            continue
+        check_latest()
+        request(f"{api}/git/refs/tags/{urllib.parse.quote(tag, safe='')}", "DELETE")
+        removed_tags.append(tag)
+    check_latest()
+    remaining = list_releases(request, api)
+    if len(remaining) != 1 or remaining[0]["id"] != keep_id:
+        raise ValueError("Release cleanup incomplete")
+    return {"removed_releases": removed_releases, "removed_tags": removed_tags}
+
+
 def main():
     tag, filename = sys.argv[1:]
     repo = os.environ["GITHUB_REPOSITORY"]
@@ -28,11 +79,11 @@ def main():
     root = Path(__file__).resolve().parent.parent
     # Production publication requires an explicit, confirmed fleet transition.
     profile = os.environ.get("OTA_PROFILE", "signed-dev")
-    if profile not in ("signed-dev", "factory-test", "release"):
+    if profile not in ("signed-dev", "factory-test", "release", "finalize-existing"):
         raise ValueError("Unsupported public OTA profile")
     if profile != "signed-dev" and os.environ.get("OTA_HARDWARE_PROTECTED") != "true":
         raise ValueError("Production OTA requires a confirmed hardware transition")
-    if profile == "release" and os.environ.get("OTA_FINAL_ROM_DISABLE_AUTHORIZED") != "true":
+    if profile in ("release", "finalize-existing") and os.environ.get("OTA_FINAL_ROM_DISABLE_AUTHORIZED") != "true":
         raise ValueError("Final ROM Download disable requires separate authorization")
     build = root / f"build-{profile}"
     expected = build / "encrypted/ble_lock_stage1_s3.bin"
@@ -52,6 +103,15 @@ def main():
             or "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y" not in config
             or "CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=2" not in config):
         raise ValueError("Protected test OTA must preserve Secure ROM Download and HMAC NVS")
+    if profile == "finalize-existing" and (
+            not all(setting in config for setting in unsafe if "DISABLE_ROM" not in setting)
+            or "CONFIG_SECURE_DISABLE_ROM_DL_MODE=y" in config
+            or "CONFIG_SECURE_ENABLE_SECURE_ROM_DL_MODE=y" not in config
+            or "CONFIG_SECURE_FLASH_ENCRYPTION_MODE_RELEASE=y" not in config
+            or "CONFIG_NVS_SEC_HMAC_EFUSE_KEY_ID=4" not in config
+            or "CONFIG_APP_FINALIZE_ROM_DOWNLOAD_AFTER_OTA=y" not in config
+            or "CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y" not in config):
+        raise ValueError("Finalization OTA requires HMAC KEY4 and deferred ROM disable after OTA self-check")
     with tempfile.TemporaryDirectory(dir=root / ".security") as temporary:
         plaintext = Path(temporary) / "verified.bin"
         public_key = Path(temporary) / "signing-public.pem"
@@ -88,11 +148,16 @@ def main():
     except urllib.error.HTTPError as error:
         if error.code != 404:
             raise
-        release = request(f"{api}/releases", "POST", {
+        draft = next((r for r in list_releases(request, api)
+                      if r["draft"] and r["tag_name"] == tag), None)
+        release = draft or request(f"{api}/releases", "POST", {
             "tag_name": tag, "name": tag, "draft": True, "prerelease": False,
             "body": ("Подписанный и зашифрованный OTA-образ для существующей разметки ESP32-S3. "
                      + ("Профиль signed-dev; аппаратная защита не включается." if profile == "signed-dev" else
                         "Профиль factory-test; аппаратная защита/HMAC NVS, Secure ROM Download сохранён." if profile == "factory-test" else
+                        "Профиль finalize-existing; только для уже защищённых замков с NVS HMAC KEY4. "
+                        "После успешной OTA самопроверки необратимо отключает ROM Download записью eFuse. "
+                        "Установка на текущем замке проверена: калибровка сохранена, rom_download_disabled=true." if profile == "finalize-existing" else
                         "Профиль Release; только для устройств после подтверждённого перехода на аппаратную защиту/HMAC NVS."))})
     for asset in release["assets"]:
         if asset["name"] == Path(filename).name:
@@ -113,6 +178,8 @@ def main():
     expected = hashlib.sha256(payload).hexdigest()
     if digest != expected:
         raise ValueError("Public latest asset hash mismatch")
+    cleanup = prune_old_releases(request, api, release["id"], tag)
+    print(f"Removed {len(cleanup['removed_releases'])} previous releases and {len(cleanup['removed_tags'])} old tags")
     print(f"Published {url}; SHA256={expected}")
 
 

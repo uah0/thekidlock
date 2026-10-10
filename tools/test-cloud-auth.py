@@ -14,7 +14,8 @@ def main():
     mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
     source=(ROOT/"main/cloud_commands.c").read_text(encoding="utf-8")
     types=re.search(r"typedef struct \{.*?\} record_t;",source,re.S)[0]
-    functions="\n".join(mod.function(source,n) for n in ("cloud_commands_home_ip_ready","reconnect_after_home_ip","accept","puback","mqtt_event"))
+    functions="\n".join(mod.function(source,n) for n in ("cloud_commands_home_ip_ready","reconnect_after_home_ip","accept","puback","mqtt_event","publish_result"))
+    functions=mod.function((ROOT/"main/ble_phone.c").read_text(encoding="utf-8"),"ble_phone_is_owner")+"\n"+functions
     work=ROOT/".device-agent/cloud-auth-tests";work.mkdir(parents=True,exist_ok=True)
     (work/"minimal.h").write_text("#define MBEDTLS_MD_C\n#define MBEDTLS_SHA256_C\n")
     code=r"""
@@ -23,9 +24,19 @@ def main():
 #include <stdatomic.h>
 #include <stdio.h>
 #include <string.h>
+#include <reent.h>
 #include "cloud_auth.h"
 #include "cJSON.h"
 #include "mbedtls/platform_util.h"
+/* Hex formatting pulls in newlib's reentrant formatter in this bare-metal harness. */
+static struct _reent test_reent = _REENT_INIT(test_reent);
+struct _reent *__getreent(void){return &test_reent;}
+static char test_heap[65536];
+static size_t test_heap_used;
+void *_sbrk(ptrdiff_t increment){
+    if(increment<0||(size_t)increment>sizeof(test_heap)-test_heap_used)return (void*)-1;
+    void *result=test_heap+test_heap_used;test_heap_used+=(size_t)increment;return result;
+}
 #define ESP_OK 0
 #define ESP_ERR_NVS_NOT_FOUND 2
 #define NVS_READWRITE 1
@@ -60,6 +71,14 @@ static int queues,subscriptions,last_qos;
 static int xQueueSend(int q,const message_t *m,int wait){queued=*m;queues++;return 1;}
 static int esp_mqtt_client_subscribe(void *client,const char *topic,int qos){subscriptions++;last_qos=qos;return 1;}
 static record_t s_record;
+static const char *s_door="unknown",*s_result_topic="result";
+static int64_t s_published_us;
+static char published[384];
+static int publish_count;
+static int esp_mqtt_client_enqueue(void *client,const char *topic,const char *payload,int len,int qos,int retain,bool store){
+    if(qos!=1||retain)return -1;
+    strcpy(published,payload);publish_count++;return 7;
+}
 static atomic_bool s_busy;
 static bool s_dirty,s_ack_open;
 static int s_ack_id=-1;
@@ -70,6 +89,10 @@ static uint64_t last_id;
 static bool synced=true,has_bond=true,verify_fail;
 static int nvs_fail,requests,saves;
 static uint8_t key[16];
+typedef struct { uint8_t type,val[6]; } ble_addr_t;
+static ble_addr_t owner={0,{0x65,0x70,0x3a,0x19,0x8e,0x4c}};
+static int owner_error;
+static esp_err_t owner_load(ble_addr_t *out){*out=owner;return owner_error;}
 static bool lock_control_internet_active(void){return false;}
 static bool cloud_link_time_ready(void){return synced;}
 static int64_t now_s(void){return 1000;}
@@ -94,7 +117,7 @@ static void request(char out[385],uint64_t id,int64_t time,const char *target){
     snprintf(out,385,"{\"phone\":\"04c8e193a7065\",\"time\":\"%" PRId64 "\",\"id\":\"%" PRIu64 "\",\"mac\":\"%s\"}",time,id,tag);
 }
 int run_tests(int test){
-    if(test>=30){
+    if(test>=30&&test<=36){
         int64_t retry=30000000;
         s_client=(void*)1;reconnect_calls=0;reconnect_result=0;
         atomic_store(&s_connected,false);atomic_store(&s_home_ip_reconnect,false);
@@ -117,6 +140,34 @@ int run_tests(int test){
     memset(key,11,16);s_record=(record_t){.version=1};s_dirty=false;last_id=0;requests=0;nvs_fail=0;has_bond=true;synced=true;
     if(test==0){CHECK(cloud_auth_selftest());return 0;}
     char payload[385];request(payload,123,1000,s_mac);
+    if(test>=43){
+        s_client=(void*)1;atomic_store(&s_connected,true);atomic_store(&s_probe,false);
+        s_record=(record_t){.version=1,.id=123,.phase=4,.opened=true,.opened_ack=true};
+        strcpy(s_record.phone,"04c8e193a7065");
+        s_door=test==43?"open":test==44?"closed":"unknown";
+        s_ack_id=-1;publish_count=0;
+        if(test==46)has_bond=false;
+        publish_result();
+        if(test==46){CHECK(publish_count==0&&s_record.final_ack&&s_record.opened_ack);return 0;}
+        CHECK(publish_count==1);
+        cJSON *reply=cJSON_Parse(published);CHECK(reply!=NULL&&cJSON_GetArraySize(reply)==7);
+        CHECK(!strcmp(cJSON_GetObjectItem(reply,"door")->valuestring,s_door));
+        char canonical[224];
+        snprintf(canonical,sizeof(canonical),"BLELOCK1|result|%s|04c8e193a7065|1000|123|closed|0|%s",s_mac,s_door);
+        const char *tag=cJSON_GetObjectItem(reply,"mac")->valuestring;
+        CHECK(cloud_auth_verify(key,canonical,tag));
+        canonical[strlen(canonical)-1]^=1;CHECK(!cloud_auth_verify(key,canonical,tag));
+        cJSON_Delete(reply);return 0;
+    }
+    if(test>=37){
+        if(test==37)owner.val[0]^=1; /* Valid signature from a bonded non-owner. */
+        if(test==38)owner_error=2; /* Missing owner. */
+        if(test==39)owner_error=1; /* NVS read failure. */
+        if(test==40)owner.type=2; /* Invalid stored identity type. */
+        if(test==41){CHECK(!ble_phone_is_owner(NULL)&&!ble_phone_is_owner("bad"));return 0;}
+        if(test==42){owner.type=1;CHECK(ble_phone_is_owner("14c8e193a7065"));CHECK(!ble_phone_is_owner("04c8e193a7065"));return 0;}
+        accept(payload);CHECK(requests==0&&last_id==0&&!s_record.active);return 0;
+    }
     if(test==2){accept(payload);s_record.active=false;s_record.opened=false;s_record.final_ack=true;requests=0;}
     if(test==3)key[0]^=1;
     if(test==4)request(payload,123,1000,"00:00:00:00:00:00");
@@ -181,13 +232,17 @@ int run_tests(int test){
     segments=[s for s in elf.iter_segments() if s["p_type"]=="PT_LOAD"]
     base=min(s["p_vaddr"] for s in segments)&~4095
     end=(max(s["p_vaddr"]+s["p_memsz"] for s in segments)+4095)&~4095
-    for test in range(37):
+    for test in range(47):
         uc=Uc(UC_ARCH_RISCV,UC_MODE_RISCV32);uc.mem_map(base,end-base)
         uc.mem_map(0x800000,0x20000);uc.mem_map(0x900000,0x1000)
         for seg in segments:uc.mem_write(seg["p_vaddr"],seg.data())
         uc.reg_write(UC_RISCV_REG_SP,0x81fff0);uc.reg_write(UC_RISCV_REG_GP,addr("__global_pointer$"))
         uc.reg_write(UC_RISCV_REG_RA,0x900000);uc.reg_write(UC_RISCV_REG_A0,test)
-        uc.emu_start(addr("run_tests"),0x900000,timeout=10_000_000,count=10_000_000)
+        try:
+            uc.emu_start(addr("run_tests"),0x900000,timeout=10_000_000,count=10_000_000)
+        except Exception:
+            print(f"Scenario {test}, PC={uc.reg_read(UC_RISCV_REG_PC):#x}",flush=True)
+            raise
         assert uc.reg_read(UC_RISCV_REG_PC)==0x900000,"Timeout"
         result=uc.reg_read(UC_RISCV_REG_A0)
         assert result==0,f"Scenario {test}: assertion C line {result}"

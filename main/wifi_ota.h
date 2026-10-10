@@ -27,6 +27,7 @@ void wifi_ota_set_mqtt_required(bool enabled);
 esp_err_t wifi_ota_request_home_wifi(void);
 esp_err_t wifi_ota_set_auto_connect(bool enabled);
 bool wifi_ota_get_auto_update(void);
+/* Legacy API: enabling direct downloads is unsupported; OTA comes from the phone. */
 esp_err_t wifi_ota_set_auto_update(bool enabled);
 esp_err_t wifi_ota_start(void);
 esp_err_t wifi_ota_check_for_update(void);

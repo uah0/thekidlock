@@ -36,6 +36,7 @@ idf_component_register(
         mqtt
     PRIV_REQUIRES
         esp_driver_gpio
+        efuse
         led_strip
         driver
         mbedtls

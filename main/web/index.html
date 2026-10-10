@@ -179,12 +179,6 @@ input:focus,select:focus{border-color:var(--accent)}
 .seq-line{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);margin-top:12px}
 
 /* ble / bonds */
-.pairing-state{display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:13.5px;margin-bottom:12px}
-.pairing-state .dot{width:8px;height:8px;border-radius:50%}
-.pairing-state.on .dot{background:var(--good);box-shadow:0 0 8px 1px rgba(45,212,168,.55)}
-.pairing-state.off .dot{background:var(--text-faint)}
-.pairing-state.on{color:var(--good)}
-.pairing-state.off{color:var(--text-dim)}
 table.bonds{width:100%;border-collapse:collapse;margin-top:8px}
 table.bonds th{text-align:left;font-size:11px;color:var(--text-faint);text-transform:uppercase;letter-spacing:.06em;padding:6px 4px;border-bottom:1px solid var(--border)}
 table.bonds td{padding:9px 4px;border-bottom:1px solid var(--border-soft);font-size:13px}
@@ -232,7 +226,7 @@ table.bonds td:first-child{font-family:var(--mono)}
 <h2 class="settings-title">Настройки</h2>
 <div class="versions" aria-label="Версия устройства">
   <div class="version-item">
-    <span class="version-label">Устройство · ESP32</span>
+    <span class="version-label">Устройство · Замок</span>
     <span class="version-value" id="verTxt">Версия —</span>
     <span class="version-date" id="buildTxt">Собрано: —</span>
   </div>
@@ -248,11 +242,9 @@ table.bonds td:first-child{font-family:var(--mono)}
 </div>
 
 <section class="panel">
-  <div class="pairing-state off" id="pairing">Загрузка…</div>
   <div class="actions-row">
-    <button class="btn-primary" onclick="allowPairing()">Разрешить регистрацию телефона</button>
+    <button class="btn-primary" id="pairingButton" onclick="allowPairing()">Разрешить регистрацию телефона</button>
   </div>
-  <p class="panel-sub">Pairing нового телефона разрешается на 60 секунд. Все зарегистрированные телефоны на это время временно не смогут переподключиться — слот освобождается для нового устройства, затем всё работает как обычно.</p>
 
   <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
   <div class="actions-row" style="margin-bottom:2px">
@@ -286,7 +278,7 @@ table.bonds td:first-child{font-family:var(--mono)}
       <div class="actions-row">
         <button onclick="loadWifi()">Прочитать</button>
         <button class="btn-primary" onclick="saveWifi()">Сохранить</button>
-        <button id="restartButton" class="btn-danger" onclick="restartEsp()">Перезагрузить ESP32</button>
+        <button id="restartButton" class="btn-danger" onclick="restartEsp()">Перезагрузить замок</button>
         <span class="saved-msg" id="wifiSaved"></span>
       </div>
       <p class="footnote">RSSI-порог применяется к контролю уже подключённого телефона. Команда OPEN обрабатывается отдельно.</p>
@@ -384,19 +376,14 @@ table.bonds td:first-child{font-family:var(--mono)}
     <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
 
     <div class="field">
-      <label for="pr">Единый RSSI-порог зоны открытия (телефон → ESP32)</label>
+      <label for="pr">Единый RSSI-порог зоны открытия (телефон → замок)</label>
       <div class="field-input"><input id="pr" type="number" min="-127" max="0"><span class="unit">dBm</span></div>
-      <small>При контроле RSSI соединённого телефона ESP32 разрывает соединение, когда медианный сигнал ниже порога. Команда OPEN обрабатывается отдельно.</small>
+      <small>При контроле RSSI соединённого телефона замок разрывает соединение, когда медианный сигнал ниже порога. Команда OPEN обрабатывается отдельно.</small>
     </div>
     <div class="switch-row">
       <label class="switch"><input id="departureBuzzer" type="checkbox" onchange="saveDepartureBuzzer()"><span class="track"><span class="thumb"></span></span></label>
       <span>Сигнал при открытом замке вне зоны маяка</span>
       <span class="saved-msg" id="departureBuzzerSaved"></span>
-    </div>
-    <div class="switch-row">
-      <label class="switch"><input id="serialLog" type="checkbox" onchange="saveSerialLog()"><span class="track"><span class="thumb"></span></span></label>
-      <span>Выводить логи в монитор последовательного порта</span>
-      <span class="saved-msg" id="serialLogSaved"></span>
     </div>
     <p class="panel-sub">Вход диагностики зазора: GPIO6.</p>
     <div class="field-row">
@@ -457,9 +444,8 @@ async function loadStatus(){
   }
 }
 async function loadUlp(){try{let u=await j('/api/ulp');ulock.textContent=u.lock_state_name;ufsm.textContent=u.fsm_state_name;uplate.textContent=u.plate_state_name;ubase.textContent=u.baseline_raw;ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';uvbat.textContent=u.vbat_raw;usense.textContent=u.sense_raw;udelta.textContent=u.delta_raw;ufeature.textContent=u.normalized_feature;ucalcontact.textContent=u.calibration_contact_raw;ucalpaper1.textContent=u.calibration_paper1_raw;ucalpaper2.textContent=u.calibration_paper2_raw;ucalopen.textContent=u.calibration_open_raw;ucalverify.textContent=u.calibration_verify_contact_raw;ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';uthcontact.textContent=u.feature_contact_max;uthgap1.textContent=u.feature_gap1_max;uthgap2.textContent=u.feature_gap2_max;uthgap3.textContent=u.feature_gap3_max;uthgap4.textContent=u.feature_gap4_max;uthgap5.textContent=u.feature_gap5_max+' / далеко от '+u.feature_gap5_max;ufaults.textContent='0x'+u.fault_flags.toString(16);ufaults.classList.toggle('flag',u.fault_flags!==0);uevents.textContent='0x'+u.event_flags.toString(16);umeasurements.textContent=u.measurement_counter;uclose.textContent=u.close_attempt_counter;ulpStatus.textContent='Подтверждение команды: '+u.command_ack_sequence+', номер события: '+u.event_sequence}catch(e){ulpStatus.textContent=e}}
-async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;serialLog.checked=c.serial_log_enabled;departureBuzzer.checked=c.departure_buzzer_enabled}
+async function loadConfig(){let c=await j('/api/config');pr.value=c.phone_rssi_threshold;ta.value=c.timer_a_ms;departureBuzzer.checked=c.departure_buzzer_enabled}
 async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent='Сохранено';setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
-async function saveSerialLog(){try{await j('/api/config/serial-log?enabled='+(serialLog.checked?'1':'0'),{method:'POST'});serialLogSaved.textContent='Сохранено';setTimeout(()=>serialLogSaved.textContent='',2000)}catch(e){serialLog.checked=!serialLog.checked;serialLogSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
 function toggleAdvanced(){let open=advancedSettings.hidden;advancedSettings.hidden=!open;advancedToggle.setAttribute('aria-expanded',String(open));advancedToggle.textContent=open?'Дополнительные настройки ▴':'Дополнительные настройки ▾'}
 async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
 async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
@@ -467,10 +453,10 @@ async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.tri
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
-async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения ESP32: '+e,true)}}
+async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения замка: '+e,true)}}
 async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:pr.value,timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
-async function loadPairing(){try{let p=await j('/api/ble/registration');pairing.className='pairing-state '+(p.allowed?'on':'off');pairing.textContent=p.allowed?`Регистрация разрешена: ${p.remaining_s} с`:'Регистрация запрещена'}catch(e){pairing.className='pairing-state off';pairing.textContent=e}}
+async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?`Регистрация телефона · ${p.remaining_s} с`:'Разрешить регистрацию телефона';pairingButton.title=''}catch(e){pairingButton.textContent='Регистрация: нет связи';pairingButton.title=String(e)}}
 async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
 async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
 async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
@@ -478,7 +464,7 @@ async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите 
 function readOtaState(){try{let state=JSON.parse(sessionStorage.getItem('bleLockOta'));if(state&&Date.now()-state.started<600000)return state;sessionStorage.removeItem('bleLockOta')}catch(e){}return null}
 function saveOtaState(state){try{if(state)sessionStorage.setItem('bleLockOta',JSON.stringify(state));else sessionStorage.removeItem('bleLockOta')}catch(e){}}
 function otaSuccessText(version){return 'Замок обновлён · Версия '+version}
-function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';let state=readOtaState();if(state&&state.complete)ota.textContent=otaSuccessText(state.version);else if(!uploadFwButton.disabled)ota.textContent='Будет установлена прошивка, сохранённая в приложении'}
+function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';let state=readOtaState();if(state&&state.complete)ota.textContent=otaSuccessText(state.version);else if(!uploadFwButton.disabled)ota.textContent=''}
 async function waitFwUpdate(before){
   ota.textContent='Завершение обновления…';
   for(let attempt=0;attempt<60;attempt++){

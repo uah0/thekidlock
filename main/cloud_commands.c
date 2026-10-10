@@ -30,6 +30,7 @@ typedef struct {
 } record_t;
 typedef struct { int ack_id; char text[385]; } message_t;
 static record_t s_record;
+static const char *s_door="unknown";
 static QueueHandle_t s_messages;
 static esp_mqtt_client_handle_t s_client;
 static atomic_bool s_connected,s_busy,s_probe,s_test_requested,s_clock_needed;
@@ -120,6 +121,7 @@ static void accept(const char *text)
     if(s_record.active||s_dirty||lock_control_internet_active()||
        (s_record.id&&(!s_record.final_ack||(s_record.opened&&!s_record.opened_ack))))return;
     if(!cloud_auth_parse(text,&cmd)||!cloud_auth_time(cmd.time,now_s(),cloud_link_time_ready()))return;
+    if(!ble_phone_is_owner(cmd.phone))return;
     if(ble_phone_mqtt_key(cmd.phone,key)!=ESP_OK)return;
     snprintf(canonical,sizeof(canonical),"BLELOCK1|command|%s|%s|%" PRId64 "|%" PRIu64 "|open",s_mac,cmd.phone,cmd.time,cmd.id);
     bool valid=cloud_auth_verify(key,canonical,cmd.mac);mbedtls_platform_zeroize(key,sizeof(key));
@@ -135,6 +137,7 @@ static void accept(const char *text)
     if(err==ESP_OK)err=nvs_commit(h);
     nvs_close(h);
     if(err!=ESP_OK){s_record=previous;s_status="command_nvs";return;}
+    s_door="unknown";
     atomic_store(&s_busy,true);s_ack_id=-1;s_dispatch_us=esp_timer_get_time();
     int64_t deadline=s_dispatch_us+(cmd.time+30-now_s())*1000000;
     err=lock_request_cloud("internet_open",cmd.phone,cmd.id,deadline);
@@ -149,6 +152,9 @@ static void feedback(void)
             s_record.phase=5;s_record.active=false;atomic_store(&s_busy,false);persist();
         }return;
     }
+    s_door = !f.valid || f.fault_flags ? "unknown" :
+        f.plate_state == PLATE_FAR ? "open" :
+        f.state == LOCK_STATE_LOCKED || f.plate_state == PLATE_CONTACT ? "closed" : "unknown";
     bool changed=false;
     if(f.internet_phase>=2&&f.internet_phase<=4&&!s_record.opened){s_record.opened=true;changed=true;}
     if(f.internet_phase>=3&&f.internet_phase!=s_record.phase){
@@ -179,11 +185,11 @@ static void publish_result(void)
     }
     const char *result=opened?"opened":s_record.phase==3?"closing":s_record.phase==4?"closed":s_record.phase==6?"interrupted":"error";
     int64_t utc=now_s();
-    snprintf(canonical,sizeof(canonical),"BLELOCK1|result|%s|%s|%" PRId64 "|%" PRIu64 "|%s|%" PRIu32,
-             s_mac,s_record.phone,utc,s_record.id,result,s_record.faults);
+    snprintf(canonical,sizeof(canonical),"BLELOCK1|result|%s|%s|%" PRId64 "|%" PRIu64 "|%s|%" PRIu32 "|%s",
+             s_mac,s_record.phone,utc,s_record.id,result,s_record.faults,s_door);
     bool ok=cloud_auth_sign(key,canonical,tag);mbedtls_platform_zeroize(key,sizeof(key));if(!ok)return;
-    snprintf(payload,sizeof(payload),"{\"phone\":\"%s\",\"time\":\"%" PRId64 "\",\"id\":\"%" PRIu64 "\",\"result\":\"%s\",\"faults\":%" PRIu32 ",\"mac\":\"%s\"}",
-             s_record.phone,utc,s_record.id,result,s_record.faults,tag);
+    snprintf(payload,sizeof(payload),"{\"phone\":\"%s\",\"time\":\"%" PRId64 "\",\"id\":\"%" PRIu64 "\",\"result\":\"%s\",\"faults\":%" PRIu32 ",\"door\":\"%s\",\"mac\":\"%s\"}",
+             s_record.phone,utc,s_record.id,result,s_record.faults,s_door,tag);
     int id=esp_mqtt_client_enqueue(s_client,s_result_topic,payload,0,1,0,true);
     if(id>=0){s_ack_id=id;s_ack_open=opened;s_published_us=now;}
 }

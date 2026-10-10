@@ -14,6 +14,7 @@ typedef struct {
     int64_t sampled_at_us;
     uint64_t cloud_command_id;
     uint8_t internet_phase;
+    plate_state_t plate_state;
     int64_t internet_started_us;
 } lock_feedback_t;
 void lock_control_get_feedback(lock_feedback_t *out);

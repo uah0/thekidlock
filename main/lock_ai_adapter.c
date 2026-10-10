@@ -11,6 +11,8 @@
 #include "wifi_ota.h"
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
 #include "esp_mac.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -70,7 +72,7 @@ esp_err_t lock_ai_status_json(char *json, size_t capacity)
              "{\"version\":\"%s\",\"build\":\"%s\",\"open\":%s,\"hold_open\":%s,"
              "\"state\":\"%s\",\"locked\":%s,\"fault_flags\":%lu,"
              "\"requested_open\":%s,\"close_rejected\":%s,\"connected\":%s,"
-             "\"encrypted\":%s,\"bonded\":%s,\"rssi\":%s,\"uptime_s\":%lld,\"stack_lock_bytes\":%u,\"stack_ble_bytes\":%u,\"stack_http_bytes\":%u,\"nvs_free_entries\":%d,\"calibration_required\":%s}",
+             "\"encrypted\":%s,\"bonded\":%s,\"rssi\":%s,\"uptime_s\":%lld,\"stack_lock_bytes\":%u,\"stack_ble_bytes\":%u,\"stack_http_bytes\":%u,\"nvs_free_entries\":%d,\"calibration_required\":%s,\"rom_download_disabled\":%s}",
              APP_VERSION, APP_BUILD_TIMESTAMP,
              !known ? "null" : lock.state == LOCK_STATE_UNLOCKED ? "true" : "false",
              lock.hold_open ? "true" : "false", lock_control_feedback_name(&lock),
@@ -81,7 +83,8 @@ esp_err_t lock_ai_status_json(char *json, size_t capacity)
              rssi, (long long)(esp_timer_get_time() / 1000000),
              lock_control_stack_free(), ble_phone_stack_free(),
              (unsigned)uxTaskGetStackHighWaterMark(NULL), free_entries,
-             lock.valid && lock.calibration_required ? "true" : "false");
+             lock.valid && lock.calibration_required ? "true" : "false",
+             esp_efuse_read_field_bit(ESP_EFUSE_DIS_DOWNLOAD_MODE) ? "true" : "false");
     return n >= 0 && (size_t)n < capacity ? ESP_OK : ESP_ERR_INVALID_SIZE;
 }
 

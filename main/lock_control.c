@@ -447,6 +447,7 @@ static void refresh_feedback(int64_t now_ms)
     lock_feedback_t previous = s_feedback;
     if (valid) {
         s_feedback.state = d.lock_state;
+        s_feedback.plate_state = d.plate_state;
         s_feedback.fault_flags = d.fault_flags;
         s_feedback.close_rejected = d.close_reject_latched != 0;
         s_feedback.calibrating = d.calibration_mode != 0;

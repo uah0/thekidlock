@@ -12,6 +12,8 @@
 #include "remote_log.h"
 #include "wifi_ota.h"
 #include "esp_err.h"
+#include "esp_efuse.h"
+#include "esp_efuse_table.h"
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_rom_sys.h"
@@ -45,6 +47,12 @@ static void ota_boot_confirmation_task(void *arg)
 #if CONFIG_SECURE_BOOT
     healthy = s_startup_critical_ok;
 #endif
+#if CONFIG_APP_FINALIZE_ROM_DOWNLOAD_AFTER_OTA
+    ulp_diagnostics_t diagnostics;
+    healthy = healthy && ulp_controller_read_diagnostics(&diagnostics) &&
+        diagnostics.calibration_valid && !diagnostics.calibration_mode &&
+        diagnostics.fault_flags == 0;
+#endif
     if (!healthy) {
         ESP_LOGE(TAG, "OTA boot self-check failed; rolling back to previous app");
         event_log_add("OTA: NVS/ULP/BLE не прошли стартовую проверку; откат");
@@ -57,6 +65,20 @@ static void ota_boot_confirmation_task(void *arg)
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "OTA boot self-check passed; image marked valid");
         event_log_add("OTA: ULP и BLE запущены, образ подтверждён");
+#if CONFIG_APP_FINALIZE_ROM_DOWNLOAD_AFTER_OTA
+        if (!esp_efuse_read_field_bit(ESP_EFUSE_DIS_DOWNLOAD_MODE)) {
+            esp_err_t efuse_err = esp_efuse_disable_rom_download_mode();
+            bool disabled = esp_efuse_read_field_bit(ESP_EFUSE_DIS_DOWNLOAD_MODE);
+            if (efuse_err == ESP_OK && disabled) {
+                ESP_LOGI(TAG, "ROM Download permanently disabled after OTA self-check");
+                event_log_add("Security: ROM Download отключён после проверки OTA");
+            } else {
+                ESP_LOGE(TAG, "ROM Download disable failed: err=%s state=%d",
+                         esp_err_to_name(efuse_err), disabled);
+                event_log_add("Security: не удалось отключить ROM Download");
+            }
+        }
+#endif
     } else {
         ESP_LOGE(TAG, "OTA image confirmation failed: %s", esp_err_to_name(err));
     }
@@ -434,7 +456,7 @@ void app_main(void)
     bool ble_initialized = false;
     remote_log_init();
     event_log_init();
-    event_log_add("ESP32-S3 start, firmware %s", APP_VERSION);
+    event_log_add("Замок: запуск, прошивка %s", APP_VERSION);
     ESP_ERROR_CHECK_WITHOUT_ABORT(init_buzzer_off());
     esp_err_t nvs_err = init_nvs();
     ESP_ERROR_CHECK_WITHOUT_ABORT(nvs_err);

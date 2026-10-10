@@ -19,6 +19,7 @@ build-*/
 out/
 **/out/
 .security/
+production/
 
 # Android Studio
 .idea/

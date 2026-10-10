@@ -628,6 +628,17 @@ static bool central_try_send_web_ui_ip(uint16_t handle)
     return false;
 }
 
+bool ble_phone_is_owner(const char *phone)
+{
+    if (!phone || strlen(phone) != 13) return false;
+    ble_addr_t owner;
+    if (owner_load(&owner) != ESP_OK || owner.type > 1) return false;
+    char id[14];
+    snprintf(id, sizeof(id), "%x%02x%02x%02x%02x%02x%02x", (unsigned)owner.type,
+             owner.val[5], owner.val[4], owner.val[3], owner.val[2], owner.val[1], owner.val[0]);
+    return strcmp(id, phone) == 0;
+}
+
 esp_err_t ble_phone_mqtt_key(const char *phone, uint8_t out[16])
 {
     if (!phone || strlen(phone)!=13 || !out) return ESP_ERR_INVALID_ARG;
@@ -700,7 +711,7 @@ static void central_export_mqtt(uint16_t handle,void (*next)(uint16_t))
     snprintf(phone,sizeof(phone),"%x%02x%02x%02x%02x%02x%02x",(unsigned)(desc.peer_id_addr.type & 1),
              desc.peer_id_addr.val[5],desc.peer_id_addr.val[4],desc.peer_id_addr.val[3],
              desc.peer_id_addr.val[2],desc.peer_id_addr.val[1],desc.peer_id_addr.val[0]);
-    if(ble_phone_mqtt_key(phone,ltk)!=ESP_OK || mqtt_config_get(&cfg)!=ESP_OK ||
+    if(!ble_phone_is_owner(phone) || ble_phone_mqtt_key(phone,ltk)!=ESP_OK || mqtt_config_get(&cfg)!=ESP_OK ||
        esp_read_mac(mac,ESP_MAC_WIFI_STA)!=ESP_OK) {
         mbedtls_platform_zeroize(ltk,sizeof(ltk)); next(handle); return;
     }

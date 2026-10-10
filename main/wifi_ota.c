@@ -8,15 +8,9 @@
 #include <stdatomic.h>
 #include "esp_timer.h"
 #include "event_log.h"
-#include "esp_crt_bundle.h"
 #include "esp_event.h"
-#include "esp_http_client.h"
-#include "esp_https_ota.h"
-#include "ota_decrypt.h"
-#include "esp_app_format.h"
 #include "esp_log.h"
 #include "esp_netif.h"
-#include "esp_ota_ops.h"
 #include "esp_wifi.h"
 #include "lwip/inet.h"
 #include "freertos/FreeRTOS.h"
@@ -30,7 +24,6 @@
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAILED_BIT BIT1
 #define WIFI_OTA_STATUS_MAX 32
-#define WIFI_OTA_FIRMWARE_URL "https://github.com/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin"
 
 static const char *TAG = "wifi_ota";
 static EventGroupHandle_t s_wifi_events;
@@ -46,7 +39,6 @@ static bool s_reconnect_enabled;
 static bool s_auto_connect = true;
 static atomic_bool s_mqtt_required;
 static int64_t s_mqtt_wifi_retry_us;
-static bool s_auto_update;
 static esp_netif_t *s_sta_netif;
 static char s_ssid[WIFI_OTA_SSID_MAX + 1];
 static char s_password[WIFI_OTA_PASSWORD_MAX + 1];
@@ -196,45 +188,6 @@ static void set_web_ready_status(const esp_netif_ip_info_t *ip_info)
     }
 }
 
-static esp_err_t http_event_handler_locked(esp_http_client_event_t *event);
-static esp_err_t http_event_handler(esp_http_client_event_t *event)
-{
-    if (!s_state_mutex) { return ESP_ERR_INVALID_STATE; }
-    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
-    esp_err_t result = http_event_handler_locked(event);
-    xSemaphoreGiveRecursive(s_state_mutex);
-    return result;
-}
-static esp_err_t http_event_handler_locked(esp_http_client_event_t *event)
-{
-    if (!event) return ESP_OK;
-    switch (event->event_id) {
-        case HTTP_EVENT_ON_CONNECTED:
-            ESP_LOGI(TAG, "HTTPS connected");
-            break;
-        case HTTP_EVENT_ON_HEADER:
-            ESP_LOGI(TAG, "HTTPS header: %s: %s",
-                     event->header_key ? event->header_key : "?",
-                     event->header_value ? event->header_value : "?");
-            break;
-        case HTTP_EVENT_ON_DATA:
-            ESP_LOGD(TAG, "HTTPS data chunk: %d bytes", event->data_len);
-            if (event->data_len > 0 && strcmp(s_status, "DOWNLOADING") != 0) {
-                set_status("DOWNLOADING");
-            }
-            break;
-        case HTTP_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "HTTPS disconnected");
-            break;
-        case HTTP_EVENT_ERROR:
-            ESP_LOGE(TAG, "HTTPS transport error");
-            break;
-        default:
-            break;
-    }
-    return ESP_OK;
-}
-
 static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
                                int32_t event_id, void *event_data);
 static void wifi_event_handler(void *arg, esp_event_base_t base,
@@ -369,10 +322,7 @@ esp_err_t wifi_ota_init(void)
         if (nvs_get_u8(handle, "auto_connect", &auto_connect) == ESP_OK) {
             s_auto_connect = auto_connect != 0;
         }
-        uint8_t auto_update = 0;
-        if (nvs_get_u8(handle, "auto_update", &auto_update) == ESP_OK) {
-            s_auto_update = auto_update != 0;
-        }
+        /* Legacy auto_update is ignored: OTA images arrive only from the phone. */
         nvs_close(handle);
     } else if (err != ESP_ERR_NVS_NOT_FOUND) {
         return err;
@@ -396,7 +346,7 @@ esp_err_t wifi_ota_init(void)
              s_ssid[0] && s_password[0] ? "present" : "incomplete",
              s_url[0] ? "present" : "missing");
     ESP_LOGI(TAG, "WiFiDiag boot saved_ssid='%s' credentials_complete=%d auto_connect=%d auto_update=%d",
-             s_saved_ssid, s_saved_ssid[0] && s_saved_password[0], s_auto_connect, s_auto_update);
+             s_saved_ssid, s_saved_ssid[0] && s_saved_password[0], s_auto_connect, false);
     return ESP_OK;
 }
 
@@ -747,12 +697,13 @@ bool wifi_ota_get_auto_update(void)
 }
 static bool wifi_ota_get_auto_update_locked(void)
 {
-    return s_auto_update;
+    return false;
 }
 
 static esp_err_t wifi_ota_set_auto_update_locked(bool enabled);
 esp_err_t wifi_ota_set_auto_update(bool enabled)
 {
+    if (enabled) return ESP_ERR_NOT_SUPPORTED;
     if (!s_state_mutex) { return ESP_ERR_INVALID_STATE; }
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
     esp_err_t result = wifi_ota_set_auto_update_locked(enabled);
@@ -767,7 +718,6 @@ static esp_err_t wifi_ota_set_auto_update_locked(bool enabled)
     err = nvs_set_u8(handle, "auto_update", enabled ? 1 : 0);
     if (err == ESP_OK) err = nvs_commit(handle);
     nvs_close(handle);
-    if (err == ESP_OK) s_auto_update = enabled;
     return err;
 }
 
@@ -815,13 +765,6 @@ static void web_task(void *arg)
             } else {
                 if (atomic_load(&s_runtime_source)) set_web_ready_status(NULL);
                 else set_status("WIFI_CONNECTED");
-            }
-            if (s_auto_update && !atomic_load(&s_runtime_source)) {
-                esp_err_t ota_err = wifi_ota_check_for_update();
-                if (ota_err != ESP_OK) {
-                    ESP_LOGW(TAG, "automatic OTA check not started: %s",
-                             esp_err_to_name(ota_err));
-                }
             }
         } else {
             set_status("ERROR_WEB");
@@ -920,168 +863,13 @@ static esp_err_t wifi_ota_start_runtime_web_locked(void)
     return start_web_task(false);
 }
 
-static int64_t build_timestamp_value(const esp_app_desc_t *description)
-{
-    static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-    char month[4] = {0};
-    int day = 0, year = 0, hour = 0, minute = 0, second = 0, month_number = 0;
-    if (!description || sscanf(description->date, "%3s %d %d", month, &day, &year) != 3 ||
-        sscanf(description->time, "%d:%d:%d", &hour, &minute, &second) != 3) return 0;
-    for (int i = 0; i < 12; i++) if (strcmp(month, months[i]) == 0) month_number = i + 1;
-    if (month_number == 0) return 0;
-    return ((((((int64_t)year * 13 + month_number) * 32 + day) * 24 + hour) * 60 + minute) * 60 + second);
-}
-
-static void ota_task(void *arg)
-{
-    esp_decrypt_handle_t decrypt = NULL;
-    bool check_only_if_newer = arg != NULL;
-    set_status("CONNECTING_WIFI");
-    ESP_LOGI(TAG, "OTA task started; automatic=%d target URL='%s'",
-             check_only_if_newer, WIFI_OTA_FIRMWARE_URL);
-    esp_err_t err = ESP_OK;
-    err = connect_wifi();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Wi-Fi connection failed: %s", esp_err_to_name(err));
-        set_status("ERROR_WIFI");
-        goto done;
-    }
-    ESP_LOGI(TAG, "Wi-Fi connected, starting HTTPS OTA");
-    esp_http_client_config_t http = {
-        .url = WIFI_OTA_FIRMWARE_URL,
-        .crt_bundle_attach = esp_crt_bundle_attach,
-        .timeout_ms = 30000,
-        .event_handler = http_event_handler,
-        /* GitHub Release assets use a long signed Location redirect. */
-        .buffer_size = 8192,
-        .buffer_size_tx = 4096,
-    };
-    decrypt = ota_decrypt_start();
-    if (!decrypt) { err = ESP_ERR_NO_MEM; set_status("ERROR_OTA"); goto done; }
-    esp_https_ota_config_t ota = {
-        .http_config = &http,
-        .decrypt_cb = ota_decrypt_https,
-        .decrypt_user_ctx = decrypt,
-        .enc_img_header_size = esp_encrypted_img_get_header_size(),
-    };
-    esp_https_ota_handle_t handle = NULL;
-    err = esp_https_ota_begin(&ota, &handle);
-    if (err == ESP_OK && check_only_if_newer) {
-        esp_app_desc_t remote = {0};
-        err = esp_https_ota_get_img_desc(handle, &remote);
-        const esp_app_desc_t *current = esp_app_get_description();
-        int64_t remote_timestamp = build_timestamp_value(&remote);
-        int64_t current_timestamp = build_timestamp_value(current);
-        if (err == ESP_OK && remote_timestamp > 0 && current_timestamp > 0 &&
-            remote_timestamp <= current_timestamp) {
-            ESP_LOGI(TAG, "automatic OTA: current build %s %s is up to date (remote %s %s)",
-                     current->date, current->time, remote.date, remote.time);
-            esp_https_ota_abort(handle);
-            set_status("UP_TO_DATE");
-            err = ESP_OK;
-            goto done;
-        }
-        if (err == ESP_OK && (remote_timestamp == 0 || current_timestamp == 0)) {
-            ESP_LOGE(TAG, "automatic OTA: image build timestamp is invalid");
-            err = ESP_ERR_INVALID_VERSION;
-        }
-    }
-    while (err == ESP_OK) {
-        err = esp_https_ota_perform(handle);
-        if (err != ESP_ERR_HTTPS_OTA_IN_PROGRESS) break;
-        err = ESP_OK;
-    }
-    if (err == ESP_OK && !esp_https_ota_is_complete_data_received(handle)) {
-        err = ESP_ERR_INVALID_SIZE;
-    }
-    if (err == ESP_OK) {
-        if (!esp_encrypted_img_is_complete_data_received(decrypt)) {
-            err = ESP_ERR_INVALID_SIZE;
-        } else {
-            err = esp_encrypted_img_decrypt_end(decrypt);
-            decrypt = NULL;
-        }
-    }
-    if (handle) {
-        esp_err_t finish_err = err == ESP_OK ? esp_https_ota_finish(handle)
-                                             : esp_https_ota_abort(handle);
-        handle = NULL;
-        if (err == ESP_OK) err = finish_err;
-    }
-    if (err == ESP_OK) {
-        set_status("SUCCESS");
-        ESP_LOGI(TAG, "OTA image downloaded and verified, restarting");
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
-    } else {
-        set_status("ERROR_OTA");
-        ESP_LOGE(TAG, "OTA failed: %s", esp_err_to_name(err));
-    }
-done:
-    if (decrypt) esp_encrypted_img_decrypt_abort(decrypt);
-    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
-    if (s_wifi_stack_ready && !s_web_active) {
-        esp_err_t stop_err = esp_wifi_stop();
-        ESP_LOGI(TAG, "Wi-Fi stop: %s", esp_err_to_name(stop_err));
-    }
-    s_task_running = false;
-    xSemaphoreGiveRecursive(s_state_mutex);
-    vTaskDelete(NULL);
-}
-
-static esp_err_t wifi_ota_start_locked(void);
+/* Firmware is downloaded and cached by Android, then uploaded to /api/ota. */
 esp_err_t wifi_ota_start(void)
 {
-    if (!s_state_mutex) { return ESP_ERR_INVALID_STATE; }
-    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
-    esp_err_t result = wifi_ota_start_locked();
-    xSemaphoreGiveRecursive(s_state_mutex);
-    return result;
-}
-static esp_err_t wifi_ota_start_locked(void)
-{
-    if (!s_initialized || s_saved_ssid[0] == '\0' || s_saved_password[0] == '\0') {
-        ESP_LOGE(TAG, "OTA start rejected: configuration incomplete");
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (s_task_running || s_web_task_running) {
-        ESP_LOGW(TAG, "OTA start ignored: task already running");
-        return ESP_ERR_INVALID_STATE;
-    }
-    stop_current_web_connection();
-    activate_saved_config();
-    set_status("STARTING");
-    s_task_running = true;
-    BaseType_t task_result = xTaskCreate(ota_task, "wifi_ota", 8192, NULL, 5, NULL);
-    if (task_result != pdPASS) {
-        s_task_running = false;
-        ESP_LOGE(TAG, "OTA task creation failed");
-        return ESP_ERR_NO_MEM;
-    }
-    ESP_LOGI(TAG, "OTA task scheduled");
-    return ESP_OK;
+    return ESP_ERR_NOT_SUPPORTED;
 }
 
-static esp_err_t wifi_ota_check_for_update_locked(void);
 esp_err_t wifi_ota_check_for_update(void)
 {
-    if (!s_state_mutex) { return ESP_ERR_INVALID_STATE; }
-    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
-    esp_err_t result = wifi_ota_check_for_update_locked();
-    xSemaphoreGiveRecursive(s_state_mutex);
-    return result;
-}
-static esp_err_t wifi_ota_check_for_update_locked(void)
-{
-    if (!s_initialized || !s_auto_update || !s_wifi_connected || s_task_running) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    set_status("CHECKING_UPDATE");
-    s_task_running = true;
-    if (xTaskCreate(ota_task, "wifi_ota_auto", 8192, (void *)1, 5, NULL) != pdPASS) {
-        s_task_running = false;
-        return ESP_ERR_NO_MEM;
-    }
-    return ESP_OK;
+    return ESP_ERR_NOT_SUPPORTED;
 }
