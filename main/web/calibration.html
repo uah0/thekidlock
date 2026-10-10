@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="ru">
+<html lang="">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Мастер калибровки замка</title>
+<title></title>
 <style>
-body{font-family:Arial,sans-serif;background:#f3f5f7;color:#20242a;margin:0;padding:20px}
+body{visibility:hidden;font-family:Arial,sans-serif;background:#f3f5f7;color:#20242a;margin:0;padding:20px}
+body.localized{visibility:visible}
 main{max-width:680px;margin:auto;background:#fff;padding:24px;border-radius:16px;box-shadow:0 8px 30px #0002}
 h1{font-size:25px}.steps{display:flex;gap:7px;flex-wrap:wrap}
 .step{padding:8px 12px;border-radius:20px;background:#e8ebef}
@@ -19,44 +20,39 @@ button{padding:11px 16px;border:0;border-radius:9px;font-size:16px;cursor:pointe
 </style>
 </head>
 <body><main>
-<h1>Мастер калибровки замка</h1>
-<p>Сначала закройте дверь для калибровки закрытого положения, затем откройте для калибровки открытого положения. Измерения выполняются автоматически. Сессия автоматически завершится через 2 минуты.</p>
-<div class="steps"><span id="s0" class="step on">1. Дверь закрыта</span><span id="s1" class="step">2. Дверь открыта</span></div>
-<div id="instruction" class="card">Запуск…</div>
+<h1 data-wui="calibration_title"></h1>
+<p data-wui="calibration_intro"></p>
+<div class="steps"><span id="s0" class="step on" data-wui="step_closed"></span><span id="s1" class="step" data-wui="step_open"></span></div>
+<div id="instruction" class="card"></div>
 <div class="progress"><div id="bar" class="bar"></div></div>
-<div id="status" class="data">Ожидание замка…</div>
-<p><button id="repeat" onclick="repeatInstruction()">Повторить инструкцию</button> <button id="cancelBtn" onclick="cancelWizard()">Отмена</button></p>
+<div id="status" class="data"></div>
+<p><button id="repeat" data-wui="repeat_instruction" onclick="repeatInstruction()"></button> <button id="cancelBtn" data-wui="cancel" onclick="cancelWizard()"></button></p>
 </main>
 <script>
-const displayTexts=[
-  'Закройте дверь и удерживайте её закрытой.',
-  'Теперь откройте дверь и удерживайте её полностью открытой.',
-  'Настройка завершена.'
-];
-const speechTexts=[
-  'Закро́йте дверь и уде́рживайте её́ закры́той.',
-  'Тепе́рь откро́йте дверь и уде́рживайте её́ полность́ю откры́той.',
-  'Настро́йка завершена́.'
-];
+window.wui=(key,values={})=>{const template=window.__wui?.[key];if(typeof template!=='string')return '';return template.replace(/\{([a-z_]+)\}/g,(_,name)=>String(values[name]??''))};
+window.installAppWebUiTranslations=dictionary=>{window.__wui=dictionary;document.documentElement.lang=dictionary.locale;document.title=wui('calibration_title');document.querySelectorAll('[data-wui]').forEach(e=>e.textContent=wui(e.dataset.wui));document.body.classList.add('localized')};
+function uiError(error){const code=String(error||'').match(/WUI_E_[A-Z_]+/)?.[0]||'WUI_E_REQUEST';return wui('api.'+code)||wui('api.WUI_E_REQUEST')}
+let displayTexts=[],speechTexts=[];
 let stage=0,values={},samples=[],lastCounter=-1,finished=false,timer,collecting=false,speechToken=0,stageMeasurements=0,clientErrorLogged=false;
 function trace(event,data=''){let step=['closed','open','done'][stage]||'unknown';let q=new URLSearchParams({action:'trace',step,event,data});fetch('/api/ulp/calibration?'+q,{method:'POST',keepalive:true}).catch(()=>{})}
-function say(display=displayTexts[stage],speech=speechTexts[stage],done){instruction.textContent=display;collecting=false;let token=++speechToken;if('speechSynthesis'in window){speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(speech);u.lang='ru-RU';let finish=()=>{if(token===speechToken&&done)done()};u.onend=finish;u.onerror=finish;speechSynthesis.speak(u)}else setTimeout(()=>{if(token===speechToken&&done)done()},300)}
-function beginCollecting(){samples=[];stageMeasurements=0;collecting=true;bar.style.width='0';status.textContent='Удерживайте положение: 0/20';trace('collect_start')}
+function say(display=displayTexts[stage],speech=speechTexts[stage],done){instruction.textContent=display;collecting=false;let token=++speechToken;if('speechSynthesis'in window){speechSynthesis.cancel();let u=new SpeechSynthesisUtterance(speech);u.lang=window.__wui.speech_lang;let finish=()=>{if(token===speechToken&&done)done()};u.onend=finish;u.onerror=finish;speechSynthesis.speak(u)}else setTimeout(()=>{if(token===speechToken&&done)done()},300)}
+function beginCollecting(){samples=[];stageMeasurements=0;collecting=true;bar.style.width='0';status.textContent=wui('hold_position',{count:0,total:20});trace('collect_start')}
 function repeatInstruction(){trace('repeat');samples=[];say(displayTexts[stage],speechTexts[stage],beginCollecting)}
 function closeCompletedWizard(){window.close();if(!window.closed)window.location.replace('/')}
-function setStage(n){stage=n;samples=[];collecting=false;for(let i=0;i<2;i++){let e=document.getElementById('s'+i);e.className='step'+(i<n?' done':i===n?' on':'')}bar.style.width='0';trace('instruction');if(n<2){status.textContent='Сначала выслушайте инструкцию';say(displayTexts[n],speechTexts[n],beginCollecting)}else{repeat.disabled=true;say(displayTexts[n],speechTexts[n],closeCompletedWizard)}}
-async function api(url,opt){let r=await fetch(url,opt);if(!r.ok)throw Error(await r.text());return r.json()}
+function setStage(n){stage=n;samples=[];collecting=false;for(let i=0;i<2;i++){let e=document.getElementById('s'+i);e.className='step'+(i<n?' done':i===n?' on':'')}bar.style.width='0';trace('instruction');if(n<2){status.textContent=wui('listen_instruction');say(displayTexts[n],speechTexts[n],beginCollecting)}else{repeat.disabled=true;say(displayTexts[n],speechTexts[n],closeCompletedWizard)}}
+async function api(url,opt){let r=await fetch(url,opt);if(!r.ok){let body=await r.text();let code=body.match(/WUI_E_[A-Z_]+/)?.[0]||'WUI_E_REQUEST';throw Error(code)}return r.json()}
 function median(a){let b=[...a].sort((x,y)=>x-y);return b[Math.floor(b.length/2)]}
 function stable(){if(samples.length<20)return false;let m=median(samples),range=Math.max(...samples)-Math.min(...samples);return range<=Math.max(12,Math.abs(m)*.12)}
-function expired(){finished=true;collecting=false;clearInterval(timer);speechToken++;if('speechSynthesis'in window)speechSynthesis.cancel();status.className='data bad';status.textContent='Сессия калибровки завершена. Для новой настройки откройте мастер заново.';cancelBtn.textContent='Закрыть';repeat.disabled=true}
-async function tick(){if(finished)return;try{let u=await api('/api/ulp');clientErrorLogged=false;if(!u.calibration_mode){trace('session_inactive',`count${u.measurement_counter}`);expired();return}if(!collecting)return;if(u.measurement_counter===lastCounter)return;lastCounter=u.measurement_counter;if(u.delta_raw<0){trace('invalid_sample',`delta${u.delta_raw}-fault${u.fault_flags}`);return}stageMeasurements++;samples.push(u.delta_raw);if(samples.length>20)samples.shift();let ok=stable();bar.style.width=Math.min(100,samples.length*5)+'%';status.textContent=`delta=${u.delta_raw}; измерений: ${samples.length}/20; стабильно: ${ok?'да':'нет'}`;if(!ok&&samples.length===20&&stageMeasurements%20===0){let m=median(samples),range=Math.max(...samples)-Math.min(...samples),limit=Math.max(12,Math.abs(m)*.12);trace('unstable',`n${stageMeasurements}-med${m}-range${range}-lim${limit}`)}if(ok){collecting=false;await completeStage()}}catch(e){status.textContent='Ошибка связи: '+e;if(!clientErrorLogged){clientErrorLogged=true;trace('client_error','source-tick')}}}
+function expired(){finished=true;collecting=false;clearInterval(timer);speechToken++;if('speechSynthesis'in window)speechSynthesis.cancel();status.className='data bad';status.textContent=wui('calibration_expired');cancelBtn.textContent=wui('close');repeat.disabled=true}
+async function tick(){if(finished)return;try{let u=await api('/api/ulp');clientErrorLogged=false;if(!u.calibration_mode){trace('session_inactive',`count${u.measurement_counter}`);expired();return}if(!collecting)return;if(u.measurement_counter===lastCounter)return;lastCounter=u.measurement_counter;if(u.delta_raw<0){trace('invalid_sample',`delta${u.delta_raw}-fault${u.fault_flags}`);return}stageMeasurements++;samples.push(u.delta_raw);if(samples.length>20)samples.shift();let ok=stable();bar.style.width=Math.min(100,samples.length*5)+'%';status.textContent=wui('calibration_samples',{delta:u.delta_raw,count:samples.length,total:20,stable:wui(ok?'yes':'no')});if(!ok&&samples.length===20&&stageMeasurements%20===0){let m=median(samples),range=Math.max(...samples)-Math.min(...samples),limit=Math.max(12,Math.abs(m)*.12);trace('unstable',`n${stageMeasurements}-med${m}-range${range}-lim${limit}`)}if(ok){collecting=false;await completeStage()}}catch(e){status.textContent=wui('connection_error',{error:uiError(e)});if(!clientErrorLogged){clientErrorLogged=true;trace('client_error','source-tick')}}}
 function delay(ms){return new Promise(r=>setTimeout(r,ms))}
-async function hotVerifyClosed(){let before=(await api('/api/ulp')).calibration_verify_counter;await api('/api/ulp/calibration?action=verify',{method:'POST'});trace('verify_wait',`before${before}`);for(let n=0;n<30;n++){await delay(200);let u=await api('/api/ulp');if(!u.calibration_mode){trace('session_inactive',`verify${u.calibration_verify_counter}`);expired();throw Error('Сессия калибровки завершена')}if(u.calibration_verify_counter!==before){trace('verify_closed',`raw${u.calibration_verify_raw}-count${u.calibration_verify_counter}`);return u.calibration_verify_raw}}trace('verify_timeout',`before${before}`);throw Error('Нет ответа контрольного цикла')}
-async function saveCalibration(){let q=new URLSearchParams({action:'save',closed:values.closed,open:values.open,verify:values.verify});trace('save_begin',`closed${values.closed}-open${values.open}`);await api('/api/ulp/calibration?'+q,{method:'POST'});clearInterval(timer);finished=true;trace('save_done',`closed${values.closed}-open${values.open}`);setStage(2);status.className='data ok';status.textContent='Калибровка закрытой и открытой двери сохранена';cancelBtn.textContent='Закрыть'}
-async function completeStage(){let v=median(samples),min=Math.min(...samples),max=Math.max(...samples);trace('sample',`n${samples.length}-med${v}-min${min}-max${max}`);if(stage===0){values.closed=v;trace('accepted',`closed${v}`);status.textContent='Проверка закрытого положения после притяжения…';try{values.verify=await hotVerifyClosed()}catch(e){if(!finished){status.className='data bad';status.textContent='Ошибка проверки закрытой двери: '+e;trace('client_error','source-closed-verify')}return}setStage(1);return}if(stage===1){values.open=v;if(values.open<=values.closed){trace('reject_open',`open${values.open}-closed${values.closed}`);say('Измерение открытой двери должно быть выше закрытого. '+displayTexts[1],'Измере́ние откры́той две́ри должно́ быть вы́ше закры́того. '+speechTexts[1],beginCollecting);return}if(values.open-values.closed<7){trace('reject_span',`closed${values.closed}-open${values.open}`);say('Разница между положениями слишком мала. Повторите измерение открытой двери.','Разни́ца ме́жду положе́ниями сли́шком мала́. Повтори́те измере́ние откры́той две́ри.',()=>setStage(1));return}trace('accepted',`open${values.open}`);try{await saveCalibration()}catch(e){status.className='data bad';status.textContent='Ошибка сохранения: '+e;trace('client_error','source-save')}}}
+async function hotVerifyClosed(){let before=(await api('/api/ulp')).calibration_verify_counter;await api('/api/ulp/calibration?action=verify',{method:'POST'});trace('verify_wait',`before${before}`);for(let n=0;n<30;n++){await delay(200);let u=await api('/api/ulp');if(!u.calibration_mode){trace('session_inactive',`verify${u.calibration_verify_counter}`);expired();throw Error('WUI_E_CAL_SESSION_ENDED')}if(u.calibration_verify_counter!==before){trace('verify_closed',`raw${u.calibration_verify_raw}-count${u.calibration_verify_counter}`);return u.calibration_verify_raw}}trace('verify_timeout',`before${before}`);throw Error('WUI_E_CAL_VERIFY_TIMEOUT')}
+async function saveCalibration(){let q=new URLSearchParams({action:'save',closed:values.closed,open:values.open,verify:values.verify});trace('save_begin',`closed${values.closed}-open${values.open}`);await api('/api/ulp/calibration?'+q,{method:'POST'});clearInterval(timer);finished=true;trace('save_done',`closed${values.closed}-open${values.open}`);setStage(2);status.className='data ok';status.textContent=wui('calibration_saved');cancelBtn.textContent=wui('close')}
+async function completeStage(){let v=median(samples),min=Math.min(...samples),max=Math.max(...samples);trace('sample',`n${samples.length}-med${v}-min${min}-max${max}`);if(stage===0){values.closed=v;trace('accepted',`closed${v}`);status.textContent=wui('checking_closed_position');try{values.verify=await hotVerifyClosed()}catch(e){if(!finished){status.className='data bad';status.textContent=wui('closed_check_error',{error:uiError(e)});trace('client_error','source-closed-verify')}return}setStage(1);return}if(stage===1){values.open=v;if(values.open<=values.closed){trace('reject_open',`open${values.open}-closed${values.closed}`);say(wui('open_value_too_low',{instruction:displayTexts[1]}),wui('speech_open_value_too_low',{instruction:speechTexts[1]}),beginCollecting);return}if(values.open-values.closed<7){trace('reject_span',`closed${values.closed}-open${values.open}`);say(wui('value_gap_too_small'),wui('speech_value_gap_too_small'),()=>setStage(1));return}trace('accepted',`open${values.open}`);try{await saveCalibration()}catch(e){status.className='data bad';status.textContent=wui('calibration_save_error',{error:uiError(e)});trace('client_error','source-save')}}}
 async function cancelWizard(){if(!finished)await api('/api/ulp/calibration?action=cancel&source=button',{method:'POST'}).catch(()=>{});window.close()}
-async function start(){try{await api('/api/ulp/calibration?action=start',{method:'POST'});trace('client_started');setStage(0);timer=setInterval(tick,250)}catch(e){status.className='data bad';status.textContent=e;trace('client_error','source-start')}}
-addEventListener('beforeunload',()=>{if(!finished)navigator.sendBeacon('/api/ulp/calibration?action=cancel&source=pagehide','')});start();
+async function start(){try{await api('/api/ulp/calibration?action=start',{method:'POST'});trace('client_started');setStage(0);timer=setInterval(tick,250)}catch(e){status.className='data bad';status.textContent=uiError(e);trace('client_error','source-start')}}
+window.initializeLocalizedPage=()=>{displayTexts=[wui('instruction_close'),wui('instruction_open'),wui('instruction_done')];speechTexts=[wui('speech_close'),wui('speech_open'),wui('speech_done')];start()};
+addEventListener('beforeunload',()=>{if(!finished)navigator.sendBeacon('/api/ulp/calibration?action=cancel&source=pagehide','')});
 </script>
 </body>
 </html>

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>BLE Lock</title>
+<title></title>
 <style>
 :root{
   --bg:#0a0c0f;
@@ -29,6 +29,8 @@
 }
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
+body{visibility:hidden}
+body.localized{visibility:visible}
 body{
   margin:0;font-family:var(--sans);background-color:var(--bg);color:var(--text);
   background-image:radial-gradient(circle at 1px 1px, rgba(255,255,255,.035) 1px, transparent 0);
@@ -226,17 +228,17 @@ table.bonds td:first-child{font-family:var(--mono)}
   </div>
 </div>
 
-<h2 class="settings-title">Настройки</h2>
-<div class="versions" aria-label="Версия устройства">
+<h2 class="settings-title" data-wui="settings_title"></h2>
+<div class="versions" data-wui-aria="device_version">
   <div class="version-item">
-    <span class="version-label">Устройство · Замок</span>
-    <span class="version-date" id="uptimeTxt">Время работы: —</span>
-    <span class="version-value" id="verTxt">Версия —</span>
-    <span class="version-date" id="buildTxt">Собрано: —</span>
+    <span class="version-label" data-wui="device_lock"></span>
+    <span class="version-date" id="uptimeTxt"></span>
+    <span class="version-value" id="verTxt"></span>
+    <span class="version-date" id="buildTxt"></span>
   </div>
   <div class="version-update">
     <div class="actions-row">
-      <button class="btn-primary" id="uploadFwButton" onclick="uploadFw()">Установить обновление</button>
+      <button class="btn-primary" id="uploadFwButton" data-wui="install_update" onclick="uploadFw()"></button>
     </div>
     <div id="ota"></div>
   </div>
@@ -244,175 +246,178 @@ table.bonds td:first-child{font-family:var(--mono)}
 
 <section class="panel">
   <div class="actions-row">
-    <button class="btn-primary" id="pairingButton" onclick="allowPairing()">Разрешить регистрацию телефона</button>
+    <button class="btn-primary" id="pairingButton" data-wui="allow_phone_registration" onclick="allowPairing()"></button>
   </div>
 
-  <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)">Зарегистрированные телефоны</h2></div>
+  <div class="panel-head" style="margin-top:18px"><h2 style="font-size:13px;color:var(--text-dim)" data-wui="registered_phones"></h2></div>
   <div class="actions-row" style="margin-bottom:2px">
-    <button onclick="loadBonds()">Обновить</button>
-    <button class="btn-danger" onclick="deleteAllBonds()">Удалить все телефоны</button>
+    <button data-wui="refresh" onclick="loadBonds()"></button>
+    <button class="btn-danger" data-wui="delete_all_phones" onclick="deleteAllBonds()"></button>
   </div>
   <table class="bonds">
-    <thead><tr><th>Имя</th><th>Identity address</th><th></th></tr></thead>
+    <thead><tr><th data-wui="name"></th><th data-wui="identity_address"></th><th></th></tr></thead>
     <tbody id="bonds"></tbody>
   </table>
 </section>
     <section class="panel">
-      <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi</h2></div>
+      <div class="panel-head"><span class="tag">NET</span><h2 data-wui="wifi"></h2></div>
       <div class="field">
-        <label for="wssid">SSID Wi-Fi</label>
+        <label for="wssid" data-wui="wifi_ssid"></label>
         <input id="wssid" type="text" maxlength="32">
       </div>
       <div class="field">
-        <label for="wpass">Пароль Wi-Fi</label>
-        <input id="wpass" type="password" maxlength="64" placeholder="оставьте пустым, чтобы сохранить прежний">
+        <label for="wpass" data-wui="wifi_password"></label>
+        <input id="wpass" type="password" maxlength="64" data-wui-placeholder="wifi_password_keep">
       </div>
       <div class="switch-row">
         <label class="switch">
           <input id="wauto" type="checkbox" onchange="saveAutoConnect()">
           <span class="track"><span class="thumb"></span></span>
         </label>
-        <span>Автоматически подключаться к Wi-Fi после запуска</span>
+        <span data-wui="wifi_auto_connect"></span>
         <span class="saved-msg" id="autoSaved"></span>
       </div>
       <div class="actions-row">
-        <button onclick="loadWifi()">Прочитать</button>
-        <button class="btn-primary" onclick="saveWifi()">Сохранить</button>
-        <button id="restartButton" class="btn-danger" onclick="restartEsp()">Перезагрузить замок</button>
+        <button data-wui="read" onclick="loadWifi()"></button>
+        <button class="btn-primary" data-wui="save" onclick="saveWifi()"></button>
+        <button id="restartButton" class="btn-danger" data-wui="restart_lock" onclick="restartEsp()"></button>
         <span class="saved-msg" id="wifiSaved"></span>
       </div>
-      <p class="footnote">RSSI-порог применяется к контролю уже подключённого телефона. Команда OPEN обрабатывается отдельно.</p>
+      <p class="footnote" data-wui="rssi_note"></p>
     </section>
 
 
 <section class="panel">
-    <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
-  <div class="actions-row" style="margin-bottom:18px"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер калибровки замка</button></div>
+    <div class="panel-head"><span class="tag">CFG</span><h2 data-wui="lock_settings"></h2></div>
+  <div class="actions-row" style="margin-bottom:18px"><button data-wui="calibration_wizard" onclick="window.open('/calibration','lockCalibration','width=720,height=820')"></button></div>
 
     <div class="field">
-      <label for="pr">Зона открытия</label>
-      <!-- Шкала зоны открытия без размерности: слева высокий уровень сигнала (-30 dBm), справа максимально низкий (-127 dBm). Для API сохраняется исходный отрицательный RSSI-порог. -->
-      <input id="pr" class="zone-slider" type="range" min="30" max="127" step="1" value="75" aria-label="Зона открытия: от сильного сигнала слева до слабого справа">
-      <div class="zone-scale" aria-hidden="true"><span>Сильный сигнал</span><span>Слабый сигнал</span></div>
+      <label for="pr" data-wui="opening_zone"></label>
+      <!-- Slider runs from strong to weak signal; the API still receives the negative RSSI threshold. -->
+      <input id="pr" class="zone-slider" type="range" min="30" max="127" step="1" value="75" data-wui-aria="opening_zone_aria">
+      <div class="zone-scale" aria-hidden="true"><span data-wui="strong_signal"></span><span data-wui="weak_signal"></span></div>
 
     </div>
     <div class="switch-row">
       <label class="switch"><input id="departureBuzzer" type="checkbox" onchange="saveDepartureBuzzer()"><span class="track"><span class="thumb"></span></span></label>
-      <span>Включение звукового подтверждения открытой двери</span>
+      <span data-wui="open_door_sound"></span>
       <span class="saved-msg" id="departureBuzzerSaved"></span>
     </div>
     <div class="field">
-      <label for="departurePulse">Громкость сигнала открытого замка · <span id="departurePulseValue">20 мс</span></label>
+        <label for="departurePulse"><span data-wui="open_lock_sound_duration"></span> · <span id="departurePulseValue"></span></label>
       <input id="departurePulse" class="zone-slider" type="range" min="5" max="160" step="1" value="20" oninput="updateDeparturePulseValue(true)" onchange="saveDeparturePulse()">
       <span class="saved-msg" id="departurePulseSaved"></span>
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1">
-        <label for="ta">Задержка закрытия замка после выхода из зоны открытия · <span id="timerAValue">3,0 с</span></label>
+        <label for="ta"><span data-wui="lock_close_delay"></span> · <span id="timerAValue"></span></label>
         <input id="ta" class="zone-slider" type="range" min="3000" max="10000" step="100" value="3000" oninput="updateTimerAValue()">
       </div>
     </div>
     <div class="actions-row">
-      <button class="btn-primary" onclick="saveConfig()">Сохранить</button>
+      <button class="btn-primary" data-wui="save" onclick="saveConfig()"></button>
       <span class="saved-msg" id="saved"></span>
     </div>
-    <!-- Показатели и тест открытия перенесены из удалённой панели ULP в нижнюю часть CFG. -->
+    <!-- Diagnostics and the unlock test remain in the lower part of the configuration panel. -->
     <div class="cfg-diagnostics">
   <div class="actions-row" style="margin-bottom:14px">
-    <button class="btn-primary" onclick="testOpen()">Тест открытия</button>
+    <button class="btn-primary" data-wui="test_open" onclick="testOpen()"></button>
   </div>
   <table class="reg">
-    <tr><td>Аккумулятор</td><td id="ubattery">—</td></tr>
-    <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
-    <tr><td>Калибровка: дверь закрыта</td><td id="ucalcontact">—</td></tr>
-    <tr><td>Калибровка: дверь открыта</td><td id="ucalopen">—</td></tr>
-    <tr><td>Граница: дверь не закрыта</td><td id="ucontactraw">—</td></tr>
+    <tr><td data-wui="battery"></td><td id="ubattery">—</td></tr>
+    <tr><td data-wui="impulse_measurement"></td><td id="usense">—</td></tr>
+    <tr><td data-wui="calibration_closed"></td><td id="ucalcontact">—</td></tr>
+    <tr><td data-wui="calibration_open"></td><td id="ucalopen">—</td></tr>
+    <tr><td data-wui="door_not_closed_boundary"></td><td id="ucontactraw">—</td></tr>
   </table>
-  <div class="seq-line" id="ulpStatus">Загрузка…</div>
+  <div class="seq-line" id="ulpStatus"></div>
     </div>
     <div class="field" style="margin-top:20px">
-      <label for="mHost">Домен брокера</label>
+        <label for="mHost" data-wui="broker_domain"></label>
       <div id="mqttBrokerField" class="mqtt-broker-picker">
         <div class="mqtt-broker-input">
-          <input id="mHost" type="text" maxlength="192" aria-label="Адрес публичного брокера" placeholder="Домен брокера" autocomplete="off" oninput="closeMqttBrokerList();mSaved.textContent=''">
-          <button id="mqttBrokerButton" type="button" aria-label="Выбрать брокер" aria-expanded="false" aria-controls="mqttBrokerList" onclick="toggleMqttBrokerList()" disabled>▾</button>
+          <input id="mHost" type="text" maxlength="192" data-wui-aria="public_broker_address" data-wui-placeholder="broker_domain" autocomplete="off" oninput="closeMqttBrokerList();mSaved.textContent=''">
+          <button id="mqttBrokerButton" type="button" data-wui-aria="choose_broker" aria-expanded="false" aria-controls="mqttBrokerList" onclick="toggleMqttBrokerList()" disabled>▾</button>
         </div>
-        <div id="mqttBrokerList" class="mqtt-broker-list" aria-label="Адреса брокеров" hidden></div>
+        <div id="mqttBrokerList" class="mqtt-broker-list" data-wui-aria="broker_addresses" hidden></div>
       </div>
     </div>
-    <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
+    <div class="actions-row"><button id="mSave" class="btn-primary" data-wui="save" onclick="saveMqtt()"></button><span class="saved-msg" id="mSaved"></span></div>
   </section>
 
 </div>
 
 <script>
-async function j(u,o){let r=await fetch(u,o);if(!r.ok)throw Error(await r.text());return r.json()}
+window.wui=(key,values={})=>{const template=window.__wui?.[key];if(typeof template!=='string')return '';return template.replace(/\{([a-z_]+)\}/g,(_,name)=>String(values[name]??''))};
+window.installAppWebUiTranslations=dictionary=>{window.__wui=dictionary;document.documentElement.lang=dictionary.locale;document.title=wui('page_title');document.querySelectorAll('[data-wui]').forEach(e=>e.textContent=wui(e.dataset.wui));document.querySelectorAll('[data-wui-placeholder]').forEach(e=>e.placeholder=wui(e.dataset.wuiPlaceholder));document.querySelectorAll('[data-wui-aria]').forEach(e=>e.setAttribute('aria-label',wui(e.dataset.wuiAria)));document.body.classList.add('localized')};
+function uiError(error){const code=String(error||'').match(/WUI_E_[A-Z_]+/)?.[0]||'WUI_E_REQUEST';return wui('api.'+code)||wui('api.WUI_E_REQUEST')}
+async function j(u,o){let r=await fetch(u,o);if(!r.ok){let body=await r.text();let code=body.match(/WUI_E_[A-Z_]+/)?.[0]||'WUI_E_REQUEST';throw Error(code)}return r.json()}
 function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;')}
-function formatUptime(total){total=Math.max(0,Math.floor(total));let d=Math.floor(total/86400),h=Math.floor(total%86400/3600),m=Math.floor(total%3600/60),s=total%60;return `${d} д ${String(h).padStart(2,'0')} ч ${String(m).padStart(2,'0')} мин ${String(s).padStart(2,'0')} сек`}
+function formatUptime(total){total=Math.max(0,Math.floor(total));let d=Math.floor(total/86400),h=Math.floor(total%86400/3600),m=Math.floor(total%3600/60),s=total%60;return wui('uptime',{d,h:String(h).padStart(2,'0'),m:String(m).padStart(2,'0'),s:String(s).padStart(2,'0')})}
 let noticeTimer=0,pendingConfirm='',pendingConfirmUntil=0;function showNotice(message,error=false){clearTimeout(noticeTimer);notice.textContent=message;notice.className=error?'bad':'ok';noticeTimer=setTimeout(()=>{notice.className='';},5000)}
 async function inlineConfirm(key,message,action){let now=Date.now();if(pendingConfirm!==key||now>pendingConfirmUntil){pendingConfirm=key;pendingConfirmUntil=now+5000;showNotice(message);return}pendingConfirm='';pendingConfirmUntil=0;await action()}
 
 async function loadStatus(){
   try{
     let s=await j('/api/status');
-    verTxt.textContent='Версия '+s.version;
-    buildTxt.textContent='Собрано: '+s.build;
-    uptimeTxt.textContent='Время работы: '+formatUptime(s.uptime_s);
+    verTxt.textContent=wui('version',{value:s.version});
+    buildTxt.textContent=wui('build',{value:s.build});
+    uptimeTxt.textContent=formatUptime(s.uptime_s);
   }catch(e){
-    verTxt.textContent='Версия —';
-    uptimeTxt.textContent='Время работы: —';
-    buildTxt.textContent='Не удалось получить состояние: '+String(e);
+    verTxt.textContent=wui('version_unknown');
+    uptimeTxt.textContent=wui('uptime_unknown');
+    buildTxt.textContent=wui('state_unavailable',{error:uiError(e)});
   }
 }
 async function loadUlp(){
   try{
     let u=await j('/api/ulp');
-    ubattery.textContent=u.battery_mv>=0?(u.battery_mv/1000).toFixed(2)+' В':'—';
+    ubattery.textContent=u.battery_mv>=0?wui('voltage',{value:(u.battery_mv/1000).toFixed(2)}):'—';
     usense.textContent=u.sense_raw;
     ucalcontact.textContent=u.calibration_contact_raw;
     ucalopen.textContent=u.calibration_open_raw;
     ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';
-    ulpStatus.textContent='Обновлено';
-  }catch(e){ulpStatus.textContent=String(e)}
+    ulpStatus.textContent=wui('updated');
+  }catch(e){ulpStatus.textContent=uiError(e)}
 }
-// Ползунок: 30..127 слева направо (от сильного к слабому сигналу); API ожидает порог -30..-127 dBm.
+// Slider values map to the negative RSSI threshold expected by the API.
 function zoneSliderToRssi(){return -Number(pr.value)}
 function rssiToZoneSlider(value){return Math.min(127,Math.max(30,-Number(value)))}
 async function loadConfig(){let c=await j('/api/config');pr.value=rssiToZoneSlider(c.phone_rssi_threshold);ta.value=c.timer_a_ms;updateTimerAValue();departureBuzzer.checked=c.departure_buzzer_enabled;savedDeparturePulse=c.departure_buzzer_pulse_ms??20;departurePulse.value=savedDeparturePulse;updateDeparturePulseValue()}
-async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent='Сохранено';setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
+async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent=wui('saved');setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent=wui('save_error');showNotice(uiError(e),true)}}
 let savedDeparturePulse=20;
 let departurePreviewPending=null,departurePreviewRunning=false;
-function updateDeparturePulseValue(preview=false){departurePulseValue.textContent=departurePulse.value+' мс';departurePulseSaved.textContent='';if(preview){departurePreviewPending=Number(departurePulse.value);sendDeparturePreview()}}
-async function sendDeparturePreview(){if(departurePreviewRunning)return;departurePreviewRunning=true;try{while(departurePreviewPending!==null){const ms=departurePreviewPending;departurePreviewPending=null;await j('/api/config/departure-buzzer-preview?ms='+encodeURIComponent(ms),{method:'POST'})}}catch(e){departurePreviewPending=null;showNotice('Не удалось проверить звук: '+String(e),true)}finally{departurePreviewRunning=false}}
-async function saveDeparturePulse(){if(departurePulse.disabled)return;departurePulse.disabled=true;try{await j('/api/config/departure-buzzer-pulse?ms='+encodeURIComponent(departurePulse.value),{method:'POST'});savedDeparturePulse=Number(departurePulse.value);departurePulseSaved.textContent='Сохранено'}catch(e){departurePulse.value=savedDeparturePulse;updateDeparturePulseValue();departurePulseSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}finally{departurePulse.disabled=false}}
+function updateDeparturePulseValue(preview=false){departurePulseValue.textContent=wui('milliseconds',{value:departurePulse.value});departurePulseSaved.textContent='';if(preview){departurePreviewPending=Number(departurePulse.value);sendDeparturePreview()}}
+async function sendDeparturePreview(){if(departurePreviewRunning)return;departurePreviewRunning=true;try{while(departurePreviewPending!==null){const ms=departurePreviewPending;departurePreviewPending=null;await j('/api/config/departure-buzzer-preview?ms='+encodeURIComponent(ms),{method:'POST'})}}catch(e){departurePreviewPending=null;showNotice(wui('preview_sound_failed',{error:uiError(e)}),true)}finally{departurePreviewRunning=false}}
+async function saveDeparturePulse(){if(departurePulse.disabled)return;departurePulse.disabled=true;try{await j('/api/config/departure-buzzer-pulse?ms='+encodeURIComponent(departurePulse.value),{method:'POST'});savedDeparturePulse=Number(departurePulse.value);departurePulseSaved.textContent=wui('saved')}catch(e){departurePulse.value=savedDeparturePulse;updateDeparturePulseValue();departurePulseSaved.textContent=wui('save_error');showNotice(uiError(e),true)}finally{departurePulse.disabled=false}}
 
 function closeMqttBrokerList(){mqttBrokerList.hidden=true;mqttBrokerButton.setAttribute('aria-expanded','false')}
 function toggleMqttBrokerList(){if(mqttBrokerButton.disabled)return;const opening=mqttBrokerList.hidden;mqttBrokerList.hidden=!opening;mqttBrokerButton.setAttribute('aria-expanded',String(opening));if(opening)mqttBrokerList.scrollIntoView({block:'nearest'})}
 function renderMqttBrokerChoices(hosts){closeMqttBrokerList();mqttBrokerList.replaceChildren(...hosts.map(host=>{const item=document.createElement('button');item.type='button';item.textContent=host;item.onclick=()=>{mHost.value=host;mSaved.textContent='';closeMqttBrokerList();mqttBrokerButton.focus()};return item}));mqttBrokerButton.disabled=hosts.length===0}
 document.addEventListener('click',e=>{if(!mqttBrokerField.contains(e.target))closeMqttBrokerList()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!mqttBrokerList.hidden){closeMqttBrokerList();mqttBrokerButton.focus()}});
-async function loadMqtt(){try{let c=await j('/api/mqtt');mHost.value=c.host;renderMqttBrokerChoices(c.broker_choices??[]);mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
+async function loadMqtt(){try{let c=await j('/api/mqtt');mHost.value=c.host;renderMqttBrokerChoices(c.broker_choices??[]);mSave.disabled=!!c.busy}catch(e){mSaved.textContent=uiError(e)}}
 async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
-// Открытие через интернет всегда включено: enabled — постоянное значение true, а не переменная настройки.
-async function saveMqtt(){let cfg={enabled:true,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
-async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
-async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
-async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
-async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения замка: '+e,true)}}
-function updateTimerAValue(){timerAValue.textContent=(Number(ta.value)/1000).toFixed(1).replace('.',',')+' с';saved.textContent=''}
-async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
-async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
-async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?`Регистрация телефона · ${p.remaining_s} с`:'Разрешить регистрацию телефона';pairingButton.title=''}catch(e){pairingButton.textContent='Регистрация: нет связи';pairingButton.title=String(e)}}
-async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice('Регистрация разрешена на 60 секунд')}catch(e){showNotice(String(e),true)}}
-async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||'имя не сохранено')}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>Удалить</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>Нет зарегистрированных телефонов</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(e)}</td></tr>`}}
-async function deleteBond(a){await inlineConfirm('bond:'+a,`Нажмите «Удалить» ещё раз: ${a}`,async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice('Bond удалён')}catch(e){showNotice(String(e),true)}})}
-async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите «Удалить все телефоны» ещё раз',async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice('Все телефоны удалены')}catch(e){showNotice(String(e),true)}})}
+// Remote unlock stays enabled; this field is not a user-configurable setting.
+async function saveMqtt(){let cfg={enabled:true,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent=wui('saved');return true}catch(e){mSaved.textContent=uiError(e);return false}}
+async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?wui('wifi_password_saved'):wui('wifi_password_not_set')}catch(e){wifiSaved.textContent=uiError(e)}}
+async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent=wui('saved');setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent=wui('save_error');throw e}}
+async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent=wui('saved')}catch(e){wifiSaved.textContent=uiError(e)}}
+async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice(wui('restart_not_confirmed',{error:uiError(e)}),true)}}
+function updateTimerAValue(){timerAValue.textContent=wui('seconds',{value:(Number(ta.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});saved.textContent=''}
+async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent=wui('saved');setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=uiError(e)}}
+async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice(wui('open_command_sent'))}catch(e){showNotice(uiError(e),true)}}
+async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?wui('pairing_remaining',{seconds:p.remaining_s}):wui('allow_phone_registration');pairingButton.title=''}catch(e){pairingButton.textContent=wui('pairing_offline');pairingButton.title=uiError(e)}}
+async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice(wui('pairing_allowed'))}catch(e){showNotice(uiError(e),true)}}
+async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||wui('unnamed_phone'))}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>${wui('delete')}</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>${wui('no_registered_phones')}</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(uiError(e))}</td></tr>`}}
+async function deleteBond(a){await inlineConfirm('bond:'+a,wui('confirm_delete_phone',{address:a}),async()=>{try{await j('/api/ble/bonds?address='+encodeURIComponent(a),{method:'DELETE'});await loadBonds();showNotice(wui('phone_deleted'))}catch(e){showNotice(uiError(e),true)}})}
+async function deleteAllBonds(){await inlineConfirm('all-bonds',wui('confirm_delete_all'),async()=>{try{await j('/api/ble/bonds?all=1',{method:'DELETE'});await loadBonds();showNotice(wui('all_phones_deleted'))}catch(e){showNotice(uiError(e),true)}})}
 function readOtaState(){try{let state=JSON.parse(sessionStorage.getItem('bleLockOta'));if(state&&Date.now()-state.started<600000)return state;sessionStorage.removeItem('bleLockOta')}catch(e){}return null}
 function saveOtaState(state){try{if(state)sessionStorage.setItem('bleLockOta',JSON.stringify(state));else sessionStorage.removeItem('bleLockOta')}catch(e){}}
-function otaSuccessText(version){return 'Замок обновлён · Версия '+version}
+function otaSuccessText(version){return wui('lock_updated',{version})}
 async function waitFwUpdate(before){
-  ota.textContent='Завершение обновления…';
+  ota.textContent=wui('finishing_update');
   for(let attempt=0;attempt<60;attempt++){
     await new Promise(resolve=>setTimeout(resolve,1000));
     try{
@@ -420,41 +425,41 @@ async function waitFwUpdate(before){
       if(after.version!==before.version||after.uptime_s<before.uptime_s){
         saveOtaState({complete:true,version:after.version,started:Date.now()});
         ota.textContent=otaSuccessText(after.version);
-        showNotice('Замок обновлён');
+        showNotice(wui('lock_updated_notice'));
         await loadStatus();
         return;
       }
     }catch(e){}
   }
   saveOtaState(null);
-  ota.textContent='Не удалось подтвердить обновление замка. Проверьте соединение и версию прошивки';
+  ota.textContent=wui('update_not_confirmed');
 }
 async function resumeFwUpdate(){let state=readOtaState();if(!state)return;if(state.complete){ota.textContent=otaSuccessText(state.version);return}if(uploadFwButton.disabled)return;uploadFwButton.disabled=true;try{await waitFwUpdate(state.before)}finally{uploadFwButton.disabled=false}}
 async function uploadFw(){
   if(uploadFwButton.disabled)return;
-  if(!window.bleLockInternalFirmware){showNotice('Установите обновление через приложение TheKidLock',true);return}
+  if(!window.bleLockInternalFirmware){showNotice(wui('update_requires_app'),true);return}
   uploadFwButton.disabled=true;
   saveOtaState(null);
-  ota.textContent='Подготовка прошивки…';
+  ota.textContent=wui('preparing_firmware');
   try{
     let cached=await fetch('/__app/firmware',{cache:'no-store'});
-    if(!cached.ok)throw new Error(await cached.text());
+    if(!cached.ok)throw new Error('WUI_E_FIRMWARE_MISSING');
     let f=await cached.blob();
     let before=await j('/api/status');
     saveOtaState({before:before,started:Date.now()});
-    ota.textContent='Передача прошивки… Не закрывайте окно';
+    ota.textContent=wui('transferring_firmware');
     let r=await fetch('/api/ota',{method:'POST',body:f});
     let message=await r.text();
-    if(!r.ok)throw new Error(message||'Не удалось установить прошивку');
+    if(!r.ok)throw new Error('WUI_E_OTA_FAILED');
     await waitFwUpdate(before);
-  }catch(e){saveOtaState(null);ota.textContent=String(e)}
+  }catch(e){saveOtaState(null);ota.textContent=uiError(e)}
   finally{uploadFwButton.disabled=false}
 }
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
 async function initPage(){await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();resumeFwUpdate();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000)}
-initPage()
+window.initializeLocalizedPage=initPage;
 </script>
 </body>
 </html>

@@ -352,16 +352,16 @@ static esp_err_t departure_buzzer_preview_post(httpd_req_t *req)
 static esp_err_t mqtt_get(httpd_req_t *req)
 {
     mqtt_config_t *cfg = malloc(sizeof(*cfg));
-    if (!cfg) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+    if (!cfg) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WUI_E_OUT_OF_MEMORY");
     esp_err_t err = mqtt_config_get(cfg);
     cJSON *json = err == ESP_OK ? cJSON_CreateObject() : NULL;
-    if (!json) { free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Настройки MQTT недоступны"); }
+    if (!json) { free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WUI_E_MQTT_UNAVAILABLE"); }
     cJSON_AddBoolToObject(json, "enabled", cfg->enabled);
     cJSON_AddStringToObject(json,"host",cfg->host);
     cJSON *choices = cJSON_Parse(MQTT_BROKER_CHOICES_JSON);
     if (!choices || !cJSON_AddItemToObject(json, "broker_choices", choices)) {
         cJSON_Delete(choices); cJSON_Delete(json); free(cfg);
-        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WUI_E_OUT_OF_MEMORY");
     }
     cJSON_AddStringToObject(json,"prefix",cfg->prefix);
     cJSON_AddBoolToObject(json, "connected", cloud_commands_connected());
@@ -371,7 +371,7 @@ static esp_err_t mqtt_get(httpd_req_t *req)
     cJSON_AddStringToObject(json, "test_status", cloud_commands_test_status());
     char *text = cJSON_PrintUnformatted(json);
     cJSON_Delete(json); free(cfg);
-    if (!text) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+    if (!text) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WUI_E_OUT_OF_MEMORY");
     err = send_json(req, text); free(text);
     return err;
 }
@@ -395,12 +395,12 @@ static bool mqtt_json_flag(cJSON *json, const char *key, bool *out)
 static esp_err_t mqtt_post(httpd_req_t *req)
 {
     if (cloud_commands_busy())
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Дождитесь результата текущей команды MQTT");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "WUI_E_MQTT_BUSY");
     if (req->content_len <= 0 || req->content_len > 12000)
-        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Слишком большой запрос MQTT");
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "WUI_E_MQTT_TOO_LARGE");
     char *body = malloc(req->content_len + 1);
     mqtt_config_t *cfg = malloc(sizeof(*cfg));
-    if (!body || !cfg) { free(body); free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти"); }
+    if (!body || !cfg) { free(body); free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "WUI_E_OUT_OF_MEMORY"); }
     size_t received = 0;
     while (received < (size_t)req->content_len) {
         int count = httpd_req_recv(req, body + received, req->content_len - received);
@@ -429,14 +429,14 @@ static esp_err_t mqtt_post(httpd_req_t *req)
     free(cfg);
     if (err == ESP_OK) return send_json(req, "{\"ok\":true}");
     return httpd_resp_send_err(req, err == ESP_ERR_INVALID_ARG ? HTTPD_400_BAD_REQUEST : HTTPD_500_INTERNAL_SERVER_ERROR,
-                              err == ESP_ERR_INVALID_ARG ? "Проверьте адрес брокера и включение MQTT" : "Не удалось сохранить MQTT");
+                              err == ESP_ERR_INVALID_ARG ? "WUI_E_MQTT_INVALID_CONFIG" : "WUI_E_MQTT_SAVE_FAILED");
 }
 
 static esp_err_t mqtt_test_post(httpd_req_t *req)
 {
     esp_err_t err = cloud_commands_test_connection();
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-        "Сохраните корректные настройки MQTT и дождитесь завершения текущей команды");
+        "WUI_E_MQTT_CONFIG_REQUIRED");
     return send_json(req, "{\"accepted\":true}");
 }
 
@@ -481,7 +481,7 @@ static esp_err_t wifi_auto_update_post(httpd_req_t *req)
     if (value) {
         httpd_resp_set_type(req, "text/plain; charset=utf-8");
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                                   "Обновление доступно только с телефона");
+                                   "WUI_E_PHONE_ONLY_UPDATE");
     }
     esp_err_t err = wifi_ota_set_auto_update(value);
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));

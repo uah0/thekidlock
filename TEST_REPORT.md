@@ -311,3 +311,96 @@ APP 306 опубликован: SHA-256 eea3422a5f020c48c63d43bfecd1b5ba23a4f740
 PASS: Node/VM реального JavaScript — выбор APP 306 при наличии ESP 480/старого APP/нового draft, игнорирование draft, переход на ожидаемый APK, сообщение при HTTP ошибке, отклонение постороннего URL. Публичный коммит 7ad1e3b отправлен без локальной истории исходников. ESP/Android не менялись, повторные сборки не требуются для описания и отдельной страницы загрузки.
 
 PASS: публичный README совпадает с подготовленным текстом; https://uah0.github.io/thekidlock/download/ доступен и содержит актуальный обработчик. Live GitHub API разрешает CORS и выбирает APK app-v1.0.306. Подтверждение .device-agent/public-readme-verification.json.
+## Android 308 — проверка защиты приложения, 10.10.2026
+
+PASS: baseline 307 до изменений и итоговая 308 собраны проектным build-android.ps1 -Action release.
+PASS: build-android.ps1 -Action test — 68 debug + 68 release тестов, ошибок/пропусков нет.
+FirmwareUpdateClient: запрещённый redirect не вызывает подключения к чужому host (GET/HEAD),
+HTTP downgrade, userInfo, порт и чужой репозиторий отвергаются; разрешённый signed URL assets
+работает; цикл ограничен шестью запросами; ошибки/нет Location закрывают соединение;
+loopback разрешён только debug и не допускает redirect. Проверка очистки буферов — чтением
+finally путей, ошибки Android Keystore на физическом устройстве не моделировались.
+
+PASS: фактический release APK проверен apksigner, aapt/aapt2 и dexdump.
+applicationId com.blelock.app, version 1.0.308, debuggable=false, прежний сертификат подписи.
+Размер 472768 байт, SHA-256 2e3833f0527471d3c07c86f58c3629f4b05210472a9340f109cbf3c14a890d63.
+Новые backup правила действительно упакованы: 9 исключений Android 8–11 и по 9 для cloud/D2D.
+Обфускация/оптимизация классов доступа и OTA подтверждена mapping и DEX; Android Log вызовов 0.
+Файлов закрытых ключей/подписи и PEM private-key маркеров нет. Дополнительные exported
+компоненты AndroidX защищены системными BIND_JOB_SERVICE/DUMP. git diff --check успешен.
+Доказательства .device-agent/android-security-308.json; локальный APK production/android-release-308/thekidlock.apk.
+НЕ ПРОВЕРЯЛОСЬ: реальный D2D, root/hooking, враждебная локальная сеть, BLE на физическом замке.
+APK не установлен и не опубликован. ESP не изменялась; пользовательские удаления не затронуты.
+## Android 310 — многоязычность, этап 1, 10.10.2026
+
+PASS: baseline release 309 до правок; release 310 успешно собрана; 71 debug и 71 release
+unit-тестов без ошибок. Проверены все ключи en/ru/uk, длины arrays, positional placeholders,
+отсутствие кириллицы в English fallback, объявление трёх языков и accessibility resource IDs.
+ADB 192.168.1.65:33719 после reconnect доступен; телефон показывает keyguard, UI пока не проверен.
+## Android 311 — многоязычность, итог, 10.10.2026
+
+PASS: release 311 успешно собрана проектным скриптом, R8/lintVital успешны.
+PASS: повторные 71 debug + 71 release тестов без failures/errors, включая три новых
+LocalizationResourcesTest и обновлённый accessibility тест. Полные 176 resource элементов
+в четырёх source sets, одинаковые keys/array lengths/форматы, English без кириллицы.
+PASS: aapt/aapt2 фактического APK подтверждают manifest localeConfig en/ru/uk и полный
+набор default/en/ru/uk для 13 действующих текстов: главные кнопки, пять MQTT состояний,
+уведомления, ошибка обновления и widget accessibility. Неиспользуемые ресурсы сокращает R8.
+PASS: apksigner/DEX/backup проверки — прежняя подпись, debuggable=false, Android Log invoke=0,
+9 старых backup и 18 cloud/D2D исключений. Размер 534752 байт, SHA-256
+9f75a45457b49df421e3b9734040496b47aaa03e5e506ab6bc5f5f430e3eee5a.
+PASS: git diff --check; сравнения строк протокола сохранены, обработчик языка не включает
+BLE и не меняет autoOpenEnabled. Изменены только файлы локализации, список в CHANGELOG.md.
+
+НЕ ВЫПОЛНЕНО: установка и визуальная проверка на телефоне. Два reconnect 192.168.1.65:33719
+сообщили connected, но shell чтение accelerometer_rotation завершилось ошибкой.
+Отказ произошёл до install; ориентация/язык не менялись. Эмулятор не создавался.
+Доказательства .device-agent/localization-apk-311.json, android-security-311.json;
+локальная проверенная копия production/android-release-311/thekidlock.apk. GitHub/ESP не изменены.
+## Android 312 — окончательная проверка и установка, 10.10.2026
+
+PASS: build-android.ps1 -Action release и -Action test, 71 debug + 71 release тестов.
+177 resource элементов в default/en/ru/uk, keys/array sizes/format placeholders согласованы;
+кнопки, пять интернет-состояний и другие 13 активных строк сверены в фактическом APK.
+PASS: подпись прежняя, debuggable=false, R8/backup/Log checks сохранены. Размер 535264,
+SHA-256 3712c8a8d393ba264996b3c9050f2b1f2929972ad938e651b129af4837e66171.
+PASS: после восстановления ADB APK установлен через 192.168.1.65:33719, versionCode=312,
+versionName=1.0.312 подтверждены. На устройстве cmd locale переключён en/uk/ru и подтвердил
+каждый tag; английское notification показывает “TheKidLock is running in the background”
+и “Service BLE exchange with lock”. Для uk/ru активного foreground notification не было:
+его текст не подтверждён динамически, ресурсы проверены. App locale [] восстановлен,
+accelerometer_rotation/user_rotation сохранены до install и после восстановления перечитаны 0/0.
+НЕ ПРОВЕРЕНО: визуальный вид/размеры переводов, телефон locked=true. Команды открытия
+и смены режимов не отправлялись. GitHub/ESP не изменены; git diff --check успешен.
+Доказательства .device-agent/localization-install-312.json, localization-apk-312.json,
+android-security-312.json. Комплект production/android-release-312/.
+
+## Android — экран параметров приложения и выбор языка, 10.10.2026
+
+До изменений базовая release-сборка 314: PASS, проектный build-android.ps1 -Action release.
+
+После изменений: проверка сборкой release 315 ожидается. Дополнительные тесты не запускались.
+Ручная проверка экрана и переключения на физическом телефоне не выполнялась.
+Ориентация экрана телефона не менялась, APK через ADB не устанавливался. GitHub и ESP не изменялись.
+
+Итог проверки экрана меню: release 316 собран успешно через build-android.ps1 -Action release. APK 540188 байт, SHA-256 F1164E47187A474DB132CFACEF745B54B88306930D9B2EC2FFE892151547D54A. git diff --check прошёл. Unit tests и установка на телефон для этой задачи не выполнялись; ориентация не менялась. GitHub и ESP не затронуты.
+
+Дополнение после вопроса пользователя: release 316 установлен поверх приложения на телефон через ADB Wi-Fi 192.168.1.65:33719. Первая попытка оборвалась по device offline; после переподключения установка прошла. На устройстве подтверждены versionCode=316/versionName=1.0.316. Перед повторной установкой сохранены accelerometer_rotation/user_rotation=0/0; после установки оба значения восстановлены и повторно прочитаны как 0/0. Приложение вручную не запускалось, визуальную проверку нового экрана не выполнял.
+
+## Android — значки кнопки настроек замка, 10.10.2026
+
+Базовая release-сборка перед изменением: PASS, build-android.ps1 -Action release, версия 1.0.317. Итоговая сборка и установка будут отмечены после проверки.
+
+Итог иконок кнопки настроек: Android release 1.0.318 собран успешно. APK установлен на телефон через ADB Wi-Fi 192.168.1.65:33719; package dump подтвердил versionCode/versionName 318/1.0.318. accelerometer_rotation/user_rotation были сохранены как 0/0, восстановлены и повторно подтверждены как 0/0. Интерфейс не запускал вручную, чтобы не инициировать BLE-сеанс; компиляция и установка проверены, визуальная проверка на экране не выполнялась. git diff --check ожидается.
+
+## Web UI localization baseline — 10.10.2026
+
+PASS: build-android.ps1 -Action release до изменений. PASS: build-esp32.ps1 -Action build -Profile signed-dev, ESP-IDF 5.4.4 до изменений; firmare build 482, encrypted OTA подготовлена и проверена. На устройство baseline не загружался. Проверка финальных изменений ожидается.
+
+## ESP Web UI localization baseline
+
+PASS: build-esp32.ps1 -Action build -Profile signed-dev, ESP-IDF 5.4.4; binary signed, encrypted OTA prepared; 33% app partition free. Финальная проверка будет добавлена после реализации. Не прошивалось.
+
+Итог Web UI localization: PASS Android release build 1.0.320; PASS ESP-IDF 5.4.4 signed-dev build 483, firmware подписана и encrypted OTA подготовлена, размер 0x141000, app partition свободно 33%. PASS JSON validation: en/ru/uk по 125 одинаковым ключам, placeholders согласованы, ключи разметки обеих HTML-страниц присутствуют. PASS git diff --check. APK 1.0.320 установлен по ADB Wi-Fi 192.168.1.65:33719 без запуска приложения; перед установкой accelerometer_rotation/user_rotation=0/0, после установки повторно проверены 0/0. OTA проверка блокирована недоступностью сохранённого адреса замка 192.168.1.54 и отсутствием результата автообнаружения в ARP-кэше; firmware_version нового образа на замке не подтверждена. GitHub не изменялся.
+
+Дополнение 11.10.2026: после уточнения пользователя использован штатный путь через установленное приложение и встроенный Web UI по Wi-Fi. В Web UI замка отображается версия 10.0.483 и время сборки 2026-10-10 23:42:32 (снимок .device-agent/fw-root-top.png); обновление на ESP подтверждено. Релиз esp-v10.0.483 опубликован и доступен по latest URL, прежний ESP-релиз 480 удалён согласно политике одного актуального релиза. При переходе Web UI открылся мастер калибровки; он был отменён, значения калибровки не сохранялись.
