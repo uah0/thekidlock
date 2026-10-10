@@ -71,7 +71,7 @@ class DoorActionButton @JvmOverloads constructor(
         val previous = uiState
         uiState = state
         isEnabled = state is DoorActionUiState.Idle
-        val description = DoorActionReducer.accessibilityDescription(state)
+        val description = context.getString(DoorActionReducer.accessibilityDescriptionResource(state))
         contentDescription = description
         ViewCompat.setStateDescription(this, description)
         sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED)

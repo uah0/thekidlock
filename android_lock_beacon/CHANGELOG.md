@@ -113,3 +113,42 @@ MainActivity.onResume запускает проверку ESP-прошивки �
 Изменённые файлы этапа: android_lock_beacon/app/src/main/java/com/blelock/app/InternetAccess.kt, android_lock_beacon/app/src/main/java/com/blelock/app/InternetOpenProgressButton.kt, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md, android_lock_beacon/TEST_REPORT.md.
 
 APP 306 опубликован: SHA-256 eea3422a5f020c48c63d43bfecd1b5ba23a4f7402183530dd27b2ef67221a34c. Публичные APK/metadata проверены publisher, APP 304 удалён, ESP global latest сохранён. Комплект production/android-release-306/.
+## 1.0.308 — усиление защиты, 10.10.2026
+
+Проверка каждого OTA redirect до подключения, HTTPS allowlist и предел шесть запросов;
+loopback HTTP только debug. Явные запреты cloud/D2D backup для всех CE/DE доменов.
+Очистка plaintext и одиночного BLE MQTT буфера в finally. Добавлены шесть регрессионных
+сценариев; release сборка и 68 debug + 68 release unit-тестов успешны.
+Изменены BUILD_NUMBER, CHANGELOG.md, TEST_REPORT.md, app/src/main/AndroidManifest.xml,
+app/src/main/java/com/blelock/app/FirmwareUpdateClient.kt, InternetAccess.kt, PhoneBeacon.kt,
+app/src/main/res/xml/backup_rules.xml, data_extraction_rules.xml,
+app/src/test/java/com/blelock/app/FirmwareUpdateClientTest.kt и корневые отчёты аудита.
+Подпись и applicationId сохранены; APK подготовлен локально, установка/публикация не выполнялись.
+## 1.0.310 — языки en/ru/uk, этап 1
+English fallback, русский/украинский resources и системный localeConfig. Динамические
+UI строки, ошибки, уведомления и accessibility переведены через getString; команды неизменны.
+Сборка и 71+71 unit-тестов успешны; список файлов в корневом CHANGELOG.md.
+## 1.0.311 — языки en/ru/uk, итог
+Добавлен явный English source set; foreground notification и widget обновляют язык
+при configuration change, не переключая BLE-режим. English fallback, русский и украинский
+ресурсы полные, системный localeConfig en/ru/uk проверен в APK. Web UI ESP остаётся русским.
+Изменены values-en/strings.xml, BleLockService.kt, MainActivity.kt,
+LocalizationResourcesTest.kt, BUILD_NUMBER и отчёты. Release и 71+71 тестов успешны.
+Установка не состоялась из-за ошибки ADB shell 33719; APK подготовлен в production/android-release-311/.
+## 1.0.312 — многоязычность завершена
+English/українська добавлены, русский сохранён. Отдельное уведомление LOCKED сообщает
+о замке без утверждения о двери. Наборы ресурсов 177 элементов, 71+71 тестов успешны.
+Последний этап: BleLockService.kt, четыре strings.xml, BUILD_NUMBER и отчёты.
+APK установлен по Wi-Fi; app locale [] и ориентация 0/0 восстановлены.
+Web UI остаётся русским, публикация не выполнялась. APK production/android-release-312/thekidlock.apk.
+
+## Android 316 — экран параметров и язык
+
+Добавлен экран меню из шестерёнки: переход к прежней системной странице приложения, вход-заглушка будущего симулятора замка и список доступных языков. Выбор English / Русский / Українська сохраняется; Android 13+ использует application locale, старые поддерживаемые версии локализованный Context. Изменены MainActivity.kt, BleLockService.kt, добавлен AppLanguage.kt и строки ресурсов четырех наборов. Сборка и ограничения указаны в TEST_REPORT.md.
+Финальный release build 316 успешен. Unit tests не запускались; проверка на телефоне отложена.
+APK 1.0.316 установлен на телефон по ADB Wi-Fi после reconnect. Проверена версия и сохранены настройки ориентации 0/0; UI визуально не проверен.
+
+## Android 318 — значки кнопки настроек замка
+
+У кнопки Web UI замка шестерёнка слева и стрелка справа во всех состояниях текста.
+Сборка 1.0.318 успешно установлена на телефон; настройки ориентации 0/0 сохранены и восстановлены.

@@ -44,6 +44,8 @@ import android.widget.Toast
 import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.ArrayAdapter
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.Space
 import android.widget.Switch
 import android.widget.TextView
@@ -108,6 +110,12 @@ class MainActivity : Activity() {
     private var otaStartPending = false
     private var runtimeWebPending = false
     private var webUiRequestPending = false
+    private var optionsPageOpen = false
+    private var simulatorPageOpen = false
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
     private var hotspotProvisioningStarted = false
     private var webUiBrowserOpen = false
     private var lockWebUiDialog: LockWebUiDialog? = null
@@ -188,7 +196,7 @@ class MainActivity : Activity() {
                 ((SystemClock.elapsedRealtime() - webUiStartedAtMs) / 1000L).toInt()
             val remaining = (webUiCountdownStartSeconds - elapsedSeconds).coerceAtLeast(0)
             hotspotOpenButton.text = if (remaining > 0) {
-                "${getString(R.string.control_settings)} · $remaining сек"
+                getString(R.string.settings_countdown, getString(R.string.control_settings), remaining)
             } else {
                 getString(R.string.settings_waiting_esp)
             }
@@ -267,7 +275,7 @@ class MainActivity : Activity() {
                     hotspotCredentialWriteInFlight = false
                     runtimeWebPending = true
                     setWebUiConnectionState(WebUiConnectionState.ESP_CONNECTING)
-                    hotspotStatusView.text = "Замок получил параметры сети и подключается к Wi-Fi"
+                    hotspotStatusView.text = getString(R.string.hotspot_lock_connecting)
                     appendLog("Замок прочитал параметры hotspot; BLE-сеанс настройки завершён")
                     signalHandler.removeCallbacks(otaStatusPoll)
                 }
@@ -290,6 +298,7 @@ class MainActivity : Activity() {
         AppUpdateClient.cleanupInstalled(this)
         AppUpdateWorker.schedule(this)
         settings = LockSettings(this)
+        AutoOpenWidget.refresh(this, settings.autoOpenEnabled)
         bleListener = object : BleRepository.Listener {
             override fun onBleState(state: BleRepository.State, detail: String) {
                 lastBleState = state
@@ -337,7 +346,8 @@ class MainActivity : Activity() {
                 if (detail.contains("Wi-Fi/OTA настройки сохранены") ||
                     detail.contains("Wi-Fi/OTA настройки отклонены") ||
                     detail.contains("Не удалось сохранить Wi-Fi/OTA")) {
-                    Toast.makeText(this@MainActivity, detail, Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@MainActivity, getString(if (detail.contains("Wi-Fi/OTA настройки сохранены"))
+                        R.string.ota_settings_saved else R.string.ota_settings_failed), Toast.LENGTH_LONG).show()
                 }
                 if (detail.contains("Настройки точки доступа отклонены")) {
                     hotspotCredentialWriteInFlight = false
@@ -521,8 +531,7 @@ class MainActivity : Activity() {
                         val url = "http://$ip/"
                         hotspotWebUrlView.text = url
                         hotspotWebUrlView.visibility = View.VISIBLE
-                        hotspotOpenButton.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_settings, 0, R.drawable.ic_handoff_chevron, 0)
-        hotspotOpenButton.isEnabled = true
+                        hotspotOpenButton.isEnabled = true
                         hotspotOpenButton.visibility = View.VISIBLE
                         hotspotWebUrlView.tag = url
                         appendLog("Web UI замка доступен: $url")
@@ -569,7 +578,7 @@ class MainActivity : Activity() {
                     "DOWNLOADING" -> if (!otaStartToastShown) {
                         otaStartToastShown = true
                         Toast.makeText(this@MainActivity,
-                            "Прошивка начала обновляться", Toast.LENGTH_LONG).show()
+                            getString(R.string.firmware_update_started), Toast.LENGTH_LONG).show()
                         appendLog("Получены первые байты прошивки")
                     }
                     "SUCCESS" -> {
@@ -579,7 +588,7 @@ class MainActivity : Activity() {
                     }
                     "ERROR_WIFI", "ERROR_OTA" -> {
                         Toast.makeText(this@MainActivity,
-                            "Обновление прошивки не выполнено", Toast.LENGTH_LONG).show()
+                            getString(R.string.firmware_update_failed), Toast.LENGTH_LONG).show()
                         appendLog("OTA завершилась ошибкой: $value")
                         otaStartPending = false
                         signalHandler.removeCallbacks(otaStatusPoll)
@@ -598,7 +607,13 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
-        if (serviceMenuRequested) {
+        if (simulatorPageOpen) {
+            simulatorPageOpen = false
+            showOptionsPage()
+        } else if (optionsPageOpen) {
+            optionsPageOpen = false
+            setContentView(mainContentView)
+        } else if (serviceMenuRequested) {
             closeServiceMenu()
         } else {
             super.onBackPressed()
@@ -786,10 +801,7 @@ class MainActivity : Activity() {
             setImageResource(R.drawable.ic_handoff_settings)
             background = selectableBackground()
             contentDescription = getString(R.string.application_settings)
-            setOnClickListener {
-                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    android.net.Uri.parse("package:$packageName")))
-            }
+            setOnClickListener { showOptionsPage() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
 
@@ -821,7 +833,11 @@ class MainActivity : Activity() {
         }
         accessCard.addView(internetOpenButton, controlTileParams(topMarginDp = 16))
 
-        hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }
+        hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }.apply {
+            setCompoundDrawablesRelativeWithIntrinsicBounds(
+                R.drawable.ic_handoff_settings, 0, R.drawable.ic_handoff_chevron, 0
+            )
+        }
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
         accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 16))
@@ -1014,7 +1030,7 @@ class MainActivity : Activity() {
                     setTextColor(getColor(R.color.secondary_text))
                 }, fullWidth())
                 appUpdateButton = TextView(this@MainActivity).apply {
-                    text = "Есть обновление"
+                    text = getString(R.string.app_update_available)
                     visibility = View.GONE
                     isEnabled = false
                     minimumHeight = dp(48)
@@ -1044,6 +1060,102 @@ class MainActivity : Activity() {
             ))
             post { requestApplyInsets() }
         }
+    }
+
+    private fun showOptionsPage() {
+        optionsPageOpen = true
+        simulatorPageOpen = false
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(16))
+            setBackgroundColor(Color.WHITE)
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
+            text = "‹"
+            textSize = 42f
+            gravity = Gravity.CENTER
+            background = selectableBackground()
+            contentDescription = getString(R.string.back)
+            setOnClickListener {
+                optionsPageOpen = false
+                setContentView(mainContentView)
+            }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        header.addView(TextView(this).apply {
+            text = getString(R.string.app_options_title)
+            textSize = 22f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.primary_text))
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
+
+        root.addView(filledButton(R.string.app_options_settings) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")))
+        }, spacedFullWidth())
+        root.addView(filledButton(R.string.app_options_simulator) {
+            showSimulatorPlaceholder()
+        }, spacedFullWidth().apply { topMargin = dp(12) })
+
+        root.addView(TextView(this).apply {
+            text = getString(R.string.app_language_title)
+            textSize = 18f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.primary_text))
+        }, topSpacedFullWidth(24))
+        val languages = RadioGroup(this).apply {
+            orientation = RadioGroup.VERTICAL
+            setBackgroundColor(Color.WHITE)
+        }
+        val tags = AppLanguage.supportedTags
+        val labels = listOf("English", "Русский", "Українська")
+        val selectedTag = AppLanguage.currentTag(this)
+        tags.zip(labels).forEach { (tag, label) ->
+            languages.addView(RadioButton(this).apply {
+                id = View.generateViewId()
+                text = label
+                textSize = 17f
+                setTextColor(getColor(R.color.primary_text))
+                setPadding(dp(8), dp(10), dp(8), dp(10))
+                isChecked = tag == selectedTag
+            }, RadioGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        languages.setOnCheckedChangeListener { group, checkedId ->
+            val index = (0 until group.childCount).firstOrNull { group.getChildAt(it).id == checkedId }
+            val tag = index?.let { tags.getOrNull(it) } ?: return@setOnCheckedChangeListener
+            if (tag != AppLanguage.currentTag(this)) {
+                AppLanguage.select(this, tag)
+                if (Build.VERSION.SDK_INT < 33) recreate()
+            }
+        }
+        root.addView(languages, fullWidth())
+        setContentView(root)
+    }
+
+    private fun showSimulatorPlaceholder() {
+        simulatorPageOpen = true
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(12), dp(16), dp(20))
+            setBackgroundColor(Color.WHITE)
+        }
+        root.addView(filledButton(R.string.back) {
+            simulatorPageOpen = false
+            showOptionsPage()
+        }, spacedFullWidth())
+        root.addView(TextView(this).apply {
+            text = getString(R.string.app_options_simulator_coming_soon)
+            textSize = 18f
+            setTextColor(getColor(R.color.primary_text))
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(36), dp(12), dp(36))
+        }, fullWidth())
+        setContentView(root)
     }
 
     // ---------- Layout helpers (grouped-card / iOS-style settings look) ----------
@@ -1240,13 +1352,13 @@ class MainActivity : Activity() {
         val update = AppUpdateClient.pending(this)
         if (update == null) {
             refreshAppUpdateButton()
-            Toast.makeText(this, "Сохранённого обновления приложения нет", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, getString(R.string.app_update_missing), Toast.LENGTH_SHORT).show()
             return
         }
-        AlertDialog.Builder(this).setTitle("Обновление TheKidLock")
-            .setMessage("Версия ${update.versionName}\n\n${update.notes}")
-            .setNegativeButton("Позже", null)
-            .setPositiveButton("Установить") { _, _ -> installAppUpdate() }.show()
+        AlertDialog.Builder(this).setTitle(getString(R.string.app_update_title))
+            .setMessage(getString(R.string.app_update_description, update.versionName, update.notes))
+            .setNegativeButton(getString(R.string.later), null)
+            .setPositiveButton(getString(R.string.install)) { _, _ -> installAppUpdate() }.show()
     }
 
     private fun installAppUpdate() {
@@ -1256,13 +1368,13 @@ class MainActivity : Activity() {
                 startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
             } catch (error: Exception) {
                 appInstallPermissionPending = false
-                Toast.makeText(this, "Не удалось открыть разрешение установки приложений", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.install_permission_failed), Toast.LENGTH_LONG).show()
             }
             return
         }
         appUpdateExecutor.execute {
             try {
-                val update = AppUpdateClient.pending(this) ?: error("Нет сохранённого обновления")
+                val update = AppUpdateClient.pending(this) ?: error(getString(R.string.app_update_missing))
                 val file = AppUpdateClient.apkFile(this, update)
                 AppUpdateClient.validateApk(this, file, update)
                 val uri = androidx.core.content.FileProvider.getUriForFile(this, "$packageName.app-updates", file)
@@ -1276,17 +1388,17 @@ class MainActivity : Activity() {
                             val installer = packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
                                 .firstOrNull { it.activityInfo.applicationInfo.flags and
                                     android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0 }
-                                ?: error("Системный установщик Android не найден")
+                                ?: error(getString(R.string.installer_missing))
                             installIntent.component = ComponentName(installer.activityInfo.packageName, installer.activityInfo.name)
                             startActivity(installIntent)
                         } catch (error: Exception) {
-                            Toast.makeText(this, "Не удалось открыть установщик Android", Toast.LENGTH_LONG).show()
+                            Toast.makeText(this, getString(R.string.installer_open_failed), Toast.LENGTH_LONG).show()
                         }
                     }
                 }
             } catch (error: Exception) {
                 runOnUiThread { if (!isFinishing && !isDestroyed)
-                    Toast.makeText(this, "Обновление не установлено: ${error.message}", Toast.LENGTH_LONG).show() }
+                    Toast.makeText(this, getString(R.string.app_install_failed), Toast.LENGTH_LONG).show() }
             }
         }
     }
@@ -1644,7 +1756,7 @@ class MainActivity : Activity() {
             appendLog("Запрошено переключение постоянного открытия; ожидаю подтверждение замка по BLE")
         } catch (error: Exception) {
             BleLockService.lastHoldCommandPending = false
-            Toast.makeText(this, "Не удалось отправить команду замку", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.lock_command_failed), Toast.LENGTH_LONG).show()
             appendLog("Не удалось запустить BLE-команду: ${error.message}")
         }
         renderWorkingMode()
@@ -1657,8 +1769,8 @@ class MainActivity : Activity() {
         val bluetoothReady = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
         val ui = WorkingModeUi.compute(workingModeState,
             bluetoothReady && (settings.registeredAccessConfirmed || settings.ownerAccessConfirmed) && !BleLockService.lastHoldCommandPending)
-        manualKeepOpenButton.text = if (BleLockService.lastHoldCommandPending) "Ожидание замка…"
-            else if (workingModeState.holdCommandConfirmed) "Команда выполнена"
+        manualKeepOpenButton.text = if (BleLockService.lastHoldCommandPending) getString(R.string.waiting_for_lock)
+            else if (workingModeState.holdCommandConfirmed) getString(R.string.command_completed)
             else getString(R.string.mode_always_open)
         manualOpenButton.setTextColor(getColor(R.color.primary_text))
         beaconModeSwitch.isChecked = settings.autoOpenEnabled
@@ -1779,7 +1891,7 @@ class MainActivity : Activity() {
         legacyOtaContainer.visibility = View.GONE
 
         dynamicSettingsContainer.addView(TextView(this).apply {
-            text = "${schema.title} (декларативная панель)"
+            text = getString(R.string.declarative_panel_title, schema.title)
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(getColor(R.color.primary_text))
@@ -1876,7 +1988,7 @@ class MainActivity : Activity() {
             valid = false
         }
         if (!valid) {
-            Toast.makeText(this, "Проверьте диапазоны и OTA-поля", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.settings_invalid_ranges), Toast.LENGTH_LONG).show()
             return false
         }
         val mapping = listOf(
@@ -1890,7 +2002,7 @@ class MainActivity : Activity() {
         (dynamicInputs["ota_wifi_password"] as? EditText)?.let { otaPasswordField.setText(it.text.toString()) }
         (dynamicInputs["ota_firmware_url"] as? EditText)?.let { otaUrlField.setText(it.text.toString()) }
         if (values.size < mapping.size) {
-            Toast.makeText(this, "Проверьте числовые значения декларативной панели", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, getString(R.string.settings_invalid_numbers), Toast.LENGTH_LONG).show()
             return false
         }
         return true
@@ -1915,7 +2027,7 @@ class MainActivity : Activity() {
     private fun renderBondList(value: String) {
         val bonds = value.lineSequence().mapNotNull { line ->
             val fields = line.split(',', limit = 3)
-            if (fields.size < 2) null else fields[1] to fields.getOrElse(2) { "имя не сохранено" }
+            if (fields.size < 2) null else fields[1] to fields.getOrElse(2) { getString(R.string.phone_name_missing) }
         }.toList()
         if (selectedBondAddress !in bonds.map { it.first }) selectedBondAddress = null
         adminBondsContainer.removeAllViews()
@@ -2130,9 +2242,9 @@ class MainActivity : Activity() {
                 hotspotWebUrlView.visibility = View.GONE
                 hotspotOpenButton.isEnabled = true
                 hotspotOpenButton.visibility = View.VISIBLE
-                hotspotStatusView.text = "Локальная сеть создана"
+                hotspotStatusView.text = getString(R.string.hotspot_created)
                 appendLog("Локальная точка доступа создана")
-                hotspotStatusView.text = "Точка доступа готова, определяю IPv4 телефона…"
+                hotspotStatusView.text = getString(R.string.hotspot_resolving_ip)
                 resolveHotspotIpv4ThenSend(reservation, requestSessionId)
             }
 
@@ -2177,7 +2289,7 @@ class MainActivity : Activity() {
                 hotspotProvisioningStarted = false
                 setWebUiConnectionState(WebUiConnectionState.ERROR)
                 finishWebUiIpRequest()
-                hotspotStatusView.text = "Не удалось создать сеть, код Android: $reason"
+                hotspotStatusView.text = getString(R.string.hotspot_creation_failed, reason)
                 hotspotWebUrlView.text = ""
                 hotspotWebUrlView.tag = null
                 hotspotWebUrlView.visibility = View.GONE
@@ -2189,7 +2301,7 @@ class MainActivity : Activity() {
         } catch (error: SecurityException) {
             clearPhoneBeaconHotspotIp(requestSessionId)
             if (hotspotSessionId == requestSessionId) hotspotSessionId = null
-            hotspotStatusView.text = "Нет системного разрешения Wi-Fi: ${error.message}"
+            hotspotStatusView.text = getString(R.string.hotspot_permission_missing)
             hotspotOpenButton.isEnabled = true
             hotspotOpenButton.visibility = View.VISIBLE
             appendLog("Android запретил создание точки доступа: нет CHANGE_WIFI_STATE")
@@ -2266,14 +2378,14 @@ class MainActivity : Activity() {
                 hotspotCredentialWriteInFlight = true
                 pendingHotspotWifi = null
                 setWebUiConnectionState(WebUiConnectionState.SENDING_WIFI_CREDENTIALS)
-                hotspotStatusView.text = "Hotspot готов, ожидается подключение замка"
+                hotspotStatusView.text = getString(R.string.hotspot_waiting_lock)
                 appendLog("BLE-маяк переключён в режим передачи Wi-Fi credentials")
             }
             .onFailure {
                 hotspotCredentialWriteInFlight = false
                 setWebUiConnectionState(WebUiConnectionState.ERROR)
                 appendLog("Не удалось запустить BLE provisioning: ${it.message}")
-                Toast.makeText(this, "Не удалось запустить BLE provisioning", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, getString(R.string.ble_provisioning_failed), Toast.LENGTH_LONG).show()
             }
     }
 
@@ -2364,11 +2476,11 @@ class MainActivity : Activity() {
                 signalHandler.removeCallbacks(webUiCountdown)
                 hotspotOpenButton.setText(R.string.control_settings)
             }
-            WebUiConnectionState.STARTING_HOTSPOT -> hotspotOpenButton.text = "Создание Wi-Fi сети…"
+            WebUiConnectionState.STARTING_HOTSPOT -> hotspotOpenButton.text = getString(R.string.hotspot_starting)
             WebUiConnectionState.SENDING_WIFI_CREDENTIALS,
             WebUiConnectionState.ESP_CONNECTING,
             WebUiConnectionState.WAITING_WEBUI_ADDRESS,
-            WebUiConnectionState.OPENING_BROWSER -> hotspotOpenButton.text = "Ожидание замка…"
+            WebUiConnectionState.OPENING_BROWSER -> hotspotOpenButton.text = getString(R.string.waiting_for_lock)
         }
         refreshSettingsUpdateLabel()
     }

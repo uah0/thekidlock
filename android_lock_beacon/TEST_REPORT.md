@@ -120,3 +120,55 @@ APK проверен verify_apk, подписан постоянным release c
 APP 306 опубликован: SHA-256 eea3422a5f020c48c63d43bfecd1b5ba23a4f7402183530dd27b2ef67221a34c. Публичные APK/metadata проверены publisher, APP 304 удалён, ESP global latest сохранён. Комплект production/android-release-306/.
 
 Проверка пользователем: 10.10.2026 пользователь подтвердил, что отображение текущего брокера в кнопке интернет-открытия работает. Приложение 306 и прошивка 480 подготовлены к отдельным коммитам; код после успешных сборок не изменялся.
+## 1.0.308 — аудит APK, 10.10.2026
+
+PASS: baseline release 307, итоговая release 308 и build-android.ps1 -Action test.
+68 тестов debug и 68 release без ошибок; FirmwareUpdateClient 11 сценариев, 6 новых.
+Чужой redirect отклоняется до подключения; GET/HEAD, HTTPS downgrade, userInfo/порт,
+другой repo, петля, отсутствие Location и транспортные ошибки проверены.
+Release отвергает loopback; debug не следует loopback redirects.
+apksigner/aapt/aapt2/dexdump: com.blelock.app 1.0.308, debuggable=false, прежняя подпись;
+новые backup ресурсы вошли в APK (9 старых и 18 cloud/D2D исключений).
+Android Log invoke — 0; R8 переименовал/объединил проверенные классы.
+Закрытых ключей/файлов подписи и PEM private-key маркеров не обнаружено.
+Размер 472768, SHA-256 2e3833f0527471d3c07c86f58c3629f4b05210472a9340f109cbf3c14a890d63.
+Буферные finally проверены по коду; физические ошибки Keystore/D2D/root/hooking не тестировались.
+Локальный APK production/android-release-308/thekidlock.apk, отчёт .device-agent/android-security-308.json.
+Установка, публикация и изменения ESP не выполнялись. Ограничения изложены в корневом AUDIT.md.
+## 1.0.310 — проверка переводов, этап 1
+Baseline 309 и итоговая 310 успешно собраны. 71 debug + 71 release тестов успешны;
+проверены паритет ресурсов, аргументы формата, arrays, fallback и localeConfig.
+Физический телефон подключён, но заблокирован; визуальная проверка не выполнена.
+## 1.0.311 — итоговые проверки
+PASS: project release build, R8/lintVital, 71 debug + 71 release тестов.
+PASS: ключи/array lengths/formats четырёх source sets, English default без кириллицы;
+13 активных строк default/en/ru/uk и localeConfig подтверждены в фактическом APK.
+PASS: подпись постоянная, debuggable=false, Android Log invoke=0, backup/D2D исключения сохранены.
+Размер 534752 байт, SHA-256 9f75a45457b49df421e3b9734040496b47aaa03e5e506ab6bc5f5f430e3eee5a.
+На телефон не установлено: чтение исходной ориентации через ADB shell отказало до install.
+Ориентация/язык не изменены, visual/UI и configuration change на физическом устройстве
+не проверены. Отчёты .device-agent/localization-apk-311.json и android-security-311.json.
+APK production/android-release-311/thekidlock.apk, публикация не выполнялась.
+## 1.0.312 — установлена на телефон
+PASS: release сборка, 71+71 unit-тестов и фактический APK locale/R8/подпись/backup checks.
+Размер 535264 байт, SHA-256 3712c8a8d393ba264996b3c9050f2b1f2929972ad938e651b129af4837e66171.
+PASS: Wi-Fi ADB install, versionCode=312/versionName=1.0.312 подтверждены.
+Android принял en/uk/ru, английское уведомление подтверждено dumpsys; uk/ru live notification
+отсутствовало. Исходный app locale [] и accelerometer_rotation/user_rotation 0/0 восстановлены.
+Визуальная проверка ограничена keyguard. Список файлов в CHANGELOG.md, доказательства
+.device-agent/localization-install-312.json, localization-apk-312.json, android-security-312.json.
+На GitHub не опубликовано, ESP не изменена.
+
+## Android 316 — экран параметров и язык
+
+Базовая сборка 314 до изменений: PASS (build-android.ps1 -Action release). Сборка 316 после изменений: PASS (build-android.ps1 -Action release). Ручная проверка на телефоне не выполнялась; APK не устанавливался, ориентация не менялась.
+
+Итог 316: PASS — release package, R8 и lintVital завершились успешно. versionName=1.0.316, APK 540188 байт, SHA-256 F1164E47187A474DB132CFACEF745B54B88306930D9B2EC2FFE892151547D54A. git diff --check PASS. Unit tests и физическая установка не выполнялись, визуальная проверка меню ожидает запуска на устройстве. GitHub не опубликовано.
+
+Физическая установка 316: PASS через ADB Wi-Fi 192.168.1.65:33719 после переподключения устройства. package dump подтвердил versionCode=316/versionName=1.0.316. accelerometer_rotation/user_rotation сохранены 0/0 перед install, восстановлены и перепроверены после. UI вручную не запускался и визуально не проверен.
+
+## Android 318 — значки кнопки настроек замка
+
+Базовая release-сборка 317 перед изменением прошла. Финальная сборка ожидается; аппаратная проверка ожидает установки APK.
+
+Итог 318: release сборка PASS. Установка на 192.168.1.65:33719 PASS; подтверждена versionCode=318/versionName=1.0.318. До установки сохранены значения ориентации 0/0, после восстановлены и проверены 0/0. Ручной запуск и визуальная проверка не выполнялись.

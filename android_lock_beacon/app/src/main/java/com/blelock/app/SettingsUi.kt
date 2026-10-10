@@ -56,7 +56,7 @@ internal object SettingsUi {
             setTypeface(typeface, Typeface.BOLD)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(TextView(context).apply {
-            text = "Готово"
+            text = context.getString(R.string.done)
             textSize = 17f
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setTextColor(ACCENT)

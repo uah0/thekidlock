@@ -77,10 +77,10 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
 
                 override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest): WebResourceResponse? {
                     val requestedUrl = request.url.toString()
-                    if (!policy.allows(requestedUrl)) return textResponse(403, "Forbidden", "Адрес недоступен")
+                    if (!policy.allows(requestedUrl)) return textResponse(403, "Forbidden", context.getString(R.string.web_address_forbidden))
                     if (request.url.path != WebUiRequestPolicy.FIRMWARE_PATH) return null
                     if (!policy.isFirmwareRequest(requestedUrl, request.method) || request.isForMainFrame) {
-                        return textResponse(403, "Forbidden", "Адрес недоступен")
+                        return textResponse(403, "Forbidden", context.getString(R.string.web_address_forbidden))
                     }
                     return try {
                         synchronized(FirmwareUpdateClient) {
@@ -92,7 +92,7 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
                                     "X-Firmware-Version" to version.orEmpty()), input)
                         }
                     } catch (_: IOException) {
-                        textResponse(404, "Not Found", "Прошивка ещё не скачана. Подключите телефон к интернету и откройте приложение.")
+                        textResponse(404, "Not Found", context.getString(R.string.web_firmware_missing))
                     }
                 }
 
@@ -100,6 +100,8 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
                     if (policy.allows(finishedUrl) && policy.allows(view.url.orEmpty())) {
                         trustedPage = true
                         val script = context.assets.open("firmware_transfer.js").bufferedReader().use { it.readText() }
+                        view.evaluateJavascript("window.bleLockTransferError=" + org.json.JSONObject.quote(
+                            context.getString(R.string.firmware_transfer_version_missing)) + ";", null)
                         view.evaluateJavascript(script, null)
                         view.evaluateJavascript("window.bleLockInternalFirmware=true;" +
                             "if(typeof useInternalFirmware==='function')useInternalFirmware();", null)

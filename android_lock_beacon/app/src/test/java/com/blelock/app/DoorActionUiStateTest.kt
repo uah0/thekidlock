@@ -59,7 +59,7 @@ class DoorActionUiStateTest {
     }
 
     @Test fun accessibilityDescriptionFollowsState() {
-        assertEquals("Замок открыт", DoorActionReducer.accessibilityDescription(DoorActionUiState.Unlocked))
-        assertEquals("Дверь закрыта и заперта", DoorActionReducer.accessibilityDescription(DoorActionUiState.Completed))
+        assertEquals(R.string.lock_open, DoorActionReducer.accessibilityDescriptionResource(DoorActionUiState.Unlocked))
+        assertEquals(R.string.internet_closed_locked, DoorActionReducer.accessibilityDescriptionResource(DoorActionUiState.Completed))
     }
 }

@@ -22,9 +22,9 @@ object InternetOpen {
             var key: ByteArray? = null
             try {
                 val access = InternetAccess(app)
-                val cfg = access.load() ?: error("Сначала подключите телефон к замку по Bluetooth")
+                val cfg = access.load() ?: error(app.getString(R.string.internet_setup_required))
                 check(cfg.getBoolean("enabled") && cfg.getString("host").isNotEmpty()) {
-                    "Включите MQTT в настройках замка и обновите параметры через Bluetooth"
+                    app.getString(R.string.internet_mqtt_required)
                 }
                 val target = cfg.getString("target")
                 val phone = cfg.getString("phone")
@@ -84,10 +84,10 @@ object InternetOpen {
                     val stage = internetOpenStageForReply(result, faults, door, lockWasOpened, doorWasOpened)
                     progress(stage, if (hasDoorState) door else null)
                     if (result == "closed" && door == "open") {
-                        onError("Датчик всё ещё подтверждает открытую дверь")
+                        onError(app.getString(R.string.internet_door_still_open))
                         completed = true
                     } else if (stage == InternetOpenStage.ERROR) {
-                        onError(if (faults != 0L) "Ошибка замка" else "Замок сообщил об ошибке выполнения")
+                        onError(if (faults != 0L) app.getString(R.string.lock_error) else app.getString(R.string.internet_execution_failed))
                         completed = true
                     } else if (stage == InternetOpenStage.CLOSED ||
                         stage == InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN) {
@@ -95,10 +95,10 @@ object InternetOpen {
                     }
                     if (completed) break
                 }
-                if (!completed) { progress(InternetOpenStage.ERROR, null); onError("Нет подтверждения завершения. Проверьте состояние замка") }
+                if (!completed) { progress(InternetOpenStage.ERROR, null); onError(app.getString(R.string.internet_completion_missing)) }
             } catch (e: Exception) {
                 progress(InternetOpenStage.ERROR, null)
-                onError(if (e is IllegalStateException) e.message ?: "Ошибка интернет-открытия" else "Не удалось выполнить интернет-открытие. Проверьте связь и настройки")
+                onError(if (e is IllegalStateException) e.message ?: app.getString(R.string.internet_error) else app.getString(R.string.internet_connection_failed))
             } finally {
                 key?.fill(0)
                 runCatching { client?.disconnect(1000) }

@@ -88,7 +88,7 @@ class PhoneBeacon(private val context: Context) {
     private var holdRequest: ServiceBeaconProtocol.HoldRequest? = null
     private var homeRequestId = 0
     private val homeTimeout = Runnable { synchronized(this) { finishHomeWifiRequest() } }
-    private val holdTimeout = Runnable { synchronized(this) { finishHoldRequest(false, "Таймаут ответа замка") } }
+    private val holdTimeout = Runnable { synchronized(this) { finishHoldRequest(false, context.getString(R.string.lock_reply_timeout)) } }
     val isHoldRequestActive: Boolean get() = synchronized(this) { holdRequest != null }
     val isHomeWifiRequestActive: Boolean get() = synchronized(this) { homeRequestId != 0 }
     val isServiceRequestActive: Boolean get() = isWifiProvisioningActive || isWebUiIpRequestActive || isHoldRequestActive || isHomeWifiRequestActive
@@ -237,8 +237,10 @@ class PhoneBeacon(private val context: Context) {
                             value.copyInto(pending.data, pending.size); pending.size += value.size; status = BluetoothGatt.GATT_SUCCESS
                         }
                     } else if (wanted && bonded && !preparedWrite && offset == 0) {
-                        if (runCatching { InternetAccess(context).save(value, device.address) }.isSuccess)
-                            status = BluetoothGatt.GATT_SUCCESS
+                        try {
+                            if (runCatching { InternetAccess(context).save(value, device.address) }.isSuccess)
+                                status = BluetoothGatt.GATT_SUCCESS
+                        } finally { value.fill(0) }
                     }
                     if (responseNeeded) current.sendResponse(device, requestId, status, offset, if (preparedWrite) value else null)
                     return
@@ -289,9 +291,9 @@ class PhoneBeacon(private val context: Context) {
                                 restartAdvertising()
                             } else finishHoldRequest(true)
                         } else finishHoldRequest(false, when (serviceResult.code) {
-                            1 -> "Телефон не зарегистрирован или нет доступа к запрошенным настройкам"
-                            2 -> "Замок не принял команду"
-                            else -> "Замок не подтвердил режим: ошибка или таймаут"
+                            1 -> context.getString(R.string.lock_access_denied)
+                            2 -> context.getString(R.string.lock_command_rejected)
+                            else -> context.getString(R.string.lock_mode_unconfirmed)
                         })
                     } }
                 }
@@ -703,7 +705,7 @@ class PhoneBeacon(private val context: Context) {
     fun stop() {
         wanted = false
         finishHomeWifiRequest()
-        if (holdRequest != null) finishHoldRequest(false, "BLE-сеанс прерван")
+        if (holdRequest != null) finishHoldRequest(false, context.getString(R.string.ble_session_interrupted))
         serviceReady = false
         serverGeneration++
         autoOpenWanted = false

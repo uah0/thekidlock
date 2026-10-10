@@ -13,7 +13,7 @@ import org.json.JSONObject
 import java.util.Locale
 
 /** Only speech operations are exposed; callbacks are scoped to the current wizard. */
-internal class LockWizardSpeech(context: Context, private val view: WebView,
+internal class LockWizardSpeech(private val context: Context, private val view: WebView,
     private val policy: WebUiRequestPolicy) {
     private data class Request(val text: String, val token: Int, val id: String)
     private val handler = Handler(Looper.getMainLooper())
@@ -42,9 +42,9 @@ internal class LockWizardSpeech(context: Context, private val view: WebView,
                             }
                             override fun onDone(utteranceId: String?) = finish(utteranceId, null)
                             override fun onError(utteranceId: String?) =
-                                finish(utteranceId, "Не удалось озвучить инструкцию")
+                                finish(utteranceId, context.getString(R.string.speech_failed))
                             override fun onError(utteranceId: String?, errorCode: Int) =
-                                finish(utteranceId, "Не удалось озвучить инструкцию ($errorCode)")
+                                finish(utteranceId, context.getString(R.string.speech_failed_code, errorCode))
                         })
                     }
                     Log.i(TAG, "Russian TTS available=$available")
@@ -63,7 +63,7 @@ internal class LockWizardSpeech(context: Context, private val view: WebView,
             val next = Request(text, token, "${++serial}:$token")
             request = next
             if (text.isBlank() || text.length > 2000) {
-                finish(next.id, "Недопустимый текст инструкции")
+                finish(next.id, context.getString(R.string.speech_text_invalid))
             } else if (initialized) play(next)
         }
     }
@@ -86,9 +86,9 @@ internal class LockWizardSpeech(context: Context, private val view: WebView,
 
     private fun play(next: Request) {
         if (!available) {
-            finish(next.id, "Русская озвучка недоступна. Проверьте синтезатор речи в настройках Android")
+            finish(next.id, context.getString(R.string.speech_russian_unavailable))
         } else if (engine?.speak(next.text, TextToSpeech.QUEUE_FLUSH, null, next.id) != TextToSpeech.SUCCESS) {
-            finish(next.id, "Не удалось запустить озвучивание")
+            finish(next.id, context.getString(R.string.speech_start_failed))
         }
     }
 

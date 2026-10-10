@@ -66,15 +66,15 @@ class AppUpdateWorker(context: Context, parameters: WorkerParameters) : Worker(c
             if (preferences.getInt("notified_version", 0) == metadata.versionCode ||
                 !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
             val manager = context.getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(NotificationChannel("app-updates", "Обновления приложения",
+            manager.createNotificationChannel(NotificationChannel("app-updates", context.getString(R.string.update_channel),
                 NotificationManager.IMPORTANCE_DEFAULT))
             val click = PendingIntent.getActivity(context, 2002,
                 Intent(context, MainActivity::class.java).setAction(ACTION_SHOW),
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             try {
                 manager.notify(NOTIFICATION_ID, NotificationCompat.Builder(context, "app-updates")
-                    .setSmallIcon(R.drawable.ic_handoff_cloud).setContentTitle("Доступно обновление TheKidLock")
-                    .setContentText("Версия ${metadata.versionName} скачана. Нажмите, чтобы установить.")
+                    .setSmallIcon(R.drawable.ic_handoff_cloud).setContentTitle(context.getString(R.string.update_notification_title))
+                    .setContentText(context.getString(R.string.update_notification_ready, metadata.versionName))
                     .setContentIntent(click).setAutoCancel(true).build())
                 preferences.edit().putInt("notified_version", metadata.versionCode).apply()
             } catch (_: SecurityException) { /* The user may revoke notification permission. */ }

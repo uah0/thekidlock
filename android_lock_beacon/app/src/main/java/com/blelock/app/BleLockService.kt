@@ -24,6 +24,10 @@ import android.os.SystemClock
 import android.util.Log
 
 class BleLockService : Service(), BleRepository.Listener {
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLanguage.wrap(newBase))
+    }
+
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var repository: BleRepository
     private lateinit var settings: LockSettings
@@ -167,8 +171,8 @@ class BleLockService : Service(), BleRepository.Listener {
                     if (mode == Mode.WIFI_PROVISIONING) {
                         if (settings.autoOpenEnabled) {
                             mode = Mode.AUTO_OPEN
-                            startAsForeground("Автоматический режим · BLE-маяк активен")
-                            updateNotification("Автоматический режим · BLE-маяк активен")
+                            startAsForeground(R.string.service_beacon_active)
+                            updateNotification(R.string.service_beacon_active)
                         } else {
                             mode = Mode.IDLE
                             stopSelfSafely()
@@ -191,12 +195,12 @@ class BleLockService : Service(), BleRepository.Listener {
             if (settings.autoOpenEnabled) {
                 mode = Mode.AUTO_OPEN
                 broadcastAutomaticMode(true)
-                startAsForeground("Автоматический режим · BLE-маяк активен")
-                updateNotification("Автоматический режим · BLE-маяк активен")
+                startAsForeground(R.string.service_beacon_active)
+                updateNotification(R.string.service_beacon_active)
             } else if (phoneBeacon.isWebUiIpRequestActive) {
                 mode = Mode.WEB_UI_DISCOVERY
-                startAsForeground("Замок получил Wi-Fi · ожидаю Web UI IP")
-                updateNotification("Замок получил Wi-Fi · ожидаю Web UI IP")
+                startAsForeground(R.string.service_wifi_received)
+                updateNotification(R.string.service_wifi_received)
             } else {
                 mode = Mode.IDLE
                 stopSelfSafely()
@@ -225,8 +229,8 @@ class BleLockService : Service(), BleRepository.Listener {
         // must not start a background advertising/client session.
         if (settings.autoOpenEnabled) {
             startAsForeground(
-                if (hasPermissions()) getString(R.string.service_starting)
-                else getString(R.string.service_permissions_missing)
+                if (hasPermissions()) R.string.service_starting
+                else R.string.service_permissions_missing
             )
         }
         repository = BleRepository(this, this, controlOnly = mode != Mode.ADMIN)
@@ -264,7 +268,7 @@ class BleLockService : Service(), BleRepository.Listener {
         stopping = false
         if (intent?.action == ACTION_AUTO_OPEN_TOGGLE) {
             // Widget taps start this service directly, including when AUTO is OFF.
-            startAsForeground(getString(R.string.service_starting))
+            startAsForeground(R.string.service_starting)
             val enabled = !settings.autoOpenEnabled
             if (enabled && !hasPermissions()) {
                 android.widget.Toast.makeText(this, R.string.widget_permissions_missing,
@@ -284,7 +288,7 @@ class BleLockService : Service(), BleRepository.Listener {
             if (!hasPermissions() || !bluetoothAvailable || phoneBeacon.isServiceRequestActive)
                 return START_NOT_STICKY
             if (repositoryActive) { repository.close(); repositoryActive = false }
-            startAsForeground("Запрос домашнего Wi-Fi замка")
+            startAsForeground(R.string.service_home_wifi_request)
             phoneBeacon.requestHomeWifi()
             restoreBeaconMode()
             return START_NOT_STICKY
@@ -293,7 +297,7 @@ class BleLockService : Service(), BleRepository.Listener {
             bluetoothAvailable = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
             if (!hasPermissions() || !bluetoothAvailable) {
                 lastHoldCommandPending = false
-                lastHoldCommandError = "Bluetooth или разрешения недоступны"
+                lastHoldCommandError = getString(R.string.bluetooth_access_unavailable)
                 sendBroadcast(Intent(PhoneBeacon.ACTION_HOLD_OPEN_RESULT).setPackage(packageName)
                     .putExtra(PhoneBeacon.EXTRA_SUCCESS, false).putExtra(PhoneBeacon.EXTRA_ERROR, lastHoldCommandError))
                 return START_NOT_STICKY
@@ -305,7 +309,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 }
                 lastHoldCommandPending = true
                 lastHoldCommandError = ""
-                startAsForeground("Ожидание подтверждения режима замка")
+                startAsForeground(R.string.service_mode_waiting)
                 phoneBeacon.requestToggleHoldOpen()
             }
             restoreBeaconMode()
@@ -330,13 +334,13 @@ class BleLockService : Service(), BleRepository.Listener {
                 phoneBeacon.start()
                 phoneBeacon.startWebUiIpRequest()
                 broadcastAutomaticMode(true)
-                startAsForeground("Автоматический режим · запрос Web UI IP")
-                updateNotification("Автоматический режим · запрос Web UI IP")
+                startAsForeground(R.string.service_web_ip_request)
+                updateNotification(R.string.service_web_ip_request)
             } else {
                 mode = Mode.WEB_UI_DISCOVERY
                 phoneBeacon.startWebUiIpRequest()
-                startAsForeground("Ожидание Web UI IP от замка")
-                updateNotification("Ожидание Web UI IP от замка")
+                startAsForeground(R.string.service_web_ip_waiting)
+                updateNotification(R.string.service_web_ip_waiting)
             }
             return START_STICKY
         }
@@ -365,8 +369,8 @@ class BleLockService : Service(), BleRepository.Listener {
                 repositoryActive = false
             }
             phoneBeacon.prepareWifiProvisioning(settings.autoOpenEnabled)
-            startAsForeground("Подготовка Wi-Fi · маяк AUTO приостановлен")
-            updateNotification("Подготовка Wi-Fi · маяк AUTO приостановлен")
+            startAsForeground(R.string.service_wifi_preparing)
+            updateNotification(R.string.service_wifi_preparing)
             Log.i(TAG, "AUTO beacon paused for hotspot preparation session=$sessionId")
             return START_STICKY
         }
@@ -386,7 +390,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 repository.close()
                 repositoryActive = false
             }
-            startAsForeground("Настройка Wi-Fi · ждём замок")
+            startAsForeground(R.string.service_wifi_setup)
             runCatching { phoneBeacon.startWifiProvisioning(ssid, password, hotspotIp) }
                 .onFailure {
                     Log.e(TAG, "Wi-Fi provisioning beacon failed", it)
@@ -405,7 +409,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 return START_STICKY
             }
             mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
-            if (settings.autoOpenEnabled) startAsForeground(getString(R.string.service_starting))
+            if (settings.autoOpenEnabled) startAsForeground(R.string.service_starting)
             broadcastAutomaticMode(mode == Mode.AUTO_OPEN)
         }
         if (intent?.action == ACTION_STOP || !settings.autoOpenEnabled) {
@@ -413,11 +417,11 @@ class BleLockService : Service(), BleRepository.Listener {
             return START_NOT_STICKY
         }
         if (!hasPermissions()) {
-            updateNotification(getString(R.string.service_permissions_missing))
+            updateNotification(R.string.service_permissions_missing)
             return START_NOT_STICKY
         }
         if (!bluetoothAvailable) {
-            updateNotification(getString(R.string.bluetooth_disabled))
+            updateNotification(R.string.bluetooth_disabled)
             return START_STICKY
         }
         if (mode == Mode.AUTO_OPEN) {
@@ -426,8 +430,8 @@ class BleLockService : Service(), BleRepository.Listener {
                 repository.close()
                 repositoryActive = false
             }
-            startAsForeground("Автоматический режим · BLE-маяк активен")
-            updateNotification("Автоматический режим · BLE-маяк активен")
+            startAsForeground(R.string.service_beacon_active)
+            updateNotification(R.string.service_beacon_active)
             return START_STICKY
         }
         scheduleSearch(0)
@@ -447,8 +451,8 @@ class BleLockService : Service(), BleRepository.Listener {
                 repository.close()
                 repositoryActive = false
             }
-            startAsForeground("Автоматический режим · BLE-маяк активен")
-            updateNotification("Автоматический режим · BLE-маяк активен")
+            startAsForeground(R.string.service_beacon_active)
+            updateNotification(R.string.service_beacon_active)
         } else if (mode == Mode.ADMIN) {
             if (!repositoryActive) {
                 repository = BleRepository(this, this, controlOnly = false)
@@ -493,7 +497,18 @@ class BleLockService : Service(), BleRepository.Listener {
             Log.d(TAG, "Ignoring legacy Android Central callback in mode=$mode")
             return
         }
-        updateNotification(detail)
+        updateNotification(when (state) {
+            BleRepository.State.IDLE -> R.string.ble_idle
+            BleRepository.State.SCANNING -> R.string.ble_scanning
+            BleRepository.State.CONNECTING -> R.string.ble_connecting
+            BleRepository.State.BONDING -> R.string.ble_bonding
+            BleRepository.State.DISCOVERING -> R.string.ble_discovering
+            BleRepository.State.READY -> R.string.ble_ready
+            BleRepository.State.OPEN_SENT -> R.string.ble_open_sent
+            BleRepository.State.WAITING_DEPARTURE -> R.string.ble_waiting_departure
+            BleRepository.State.DEPARTED -> R.string.ble_departed
+            BleRepository.State.ERROR -> R.string.ble_connection_error
+        })
         // Зелёным считаем весь период реальной GATT-сессии: с момента успешной
         // проверки забонденного ключа (READY) и до фактического разрыва связи.
         // OPEN_SENT — та же самая сессия, просто уже отправлена команда открытия;
@@ -599,7 +614,11 @@ class BleLockService : Service(), BleRepository.Listener {
             handler.postDelayed({ trySendAutoOffClose() }, AUTO_OFF_CLOSE_RETRY_MS)
         }
         if (info != null && status != null) {
-            updateNotification("$info · $status")
+            updateNotification(when (status.trim().uppercase(java.util.Locale.ROOT)) {
+                "LOCKED" -> R.string.lock_closed
+                "OPEN", "UNLOCKED" -> R.string.lock_open
+                else -> R.string.ble_ready
+            })
         }
         clients.toList().forEach { it.onLockData(info, status) }
     }
@@ -770,8 +789,8 @@ class BleLockService : Service(), BleRepository.Listener {
             return
         }
         if (mode == Mode.AUTO_OPEN) phoneBeacon.start()
-        val message = if (phoneBeacon.isServiceRequestActive) "Служебный BLE-обмен с замком"
-            else "Автоматический режим · BLE-маяк активен"
+        val message = if (phoneBeacon.isServiceRequestActive) R.string.service_ble_exchange
+            else R.string.service_beacon_active
         startAsForeground(message)
         updateNotification(message)
         broadcastAutomaticMode(settings.autoOpenEnabled)
@@ -794,8 +813,8 @@ class BleLockService : Service(), BleRepository.Listener {
                 repository.close()
                 repositoryActive = false
             }
-            startAsForeground("Автоматический режим · BLE-маяк активен")
-            updateNotification("Автоматический режим · BLE-маяк активен")
+            startAsForeground(R.string.service_beacon_active)
+            updateNotification(R.string.service_beacon_active)
             return
         }
         phoneBeacon.stop()
@@ -846,12 +865,12 @@ class BleLockService : Service(), BleRepository.Listener {
         if (!hasPermissions()) {
             mode = Mode.IDLE
             broadcastAutomaticMode(false)
-            updateNotification(getString(R.string.service_permissions_missing))
+            updateNotification(R.string.service_permissions_missing)
             return
         }
         if (!bluetoothAvailable) {
             broadcastAutomaticMode(true)
-            updateNotification(getString(R.string.bluetooth_disabled))
+            updateNotification(R.string.bluetooth_disabled)
             return
         }
         phoneBeacon.start()
@@ -859,7 +878,7 @@ class BleLockService : Service(), BleRepository.Listener {
             repository.close()
             repositoryActive = false
         }
-            startAsForeground("Автоматический режим · BLE-маяк активен")
+            startAsForeground(R.string.service_beacon_active)
         broadcastAutomaticMode(true)
     }
 
@@ -904,7 +923,7 @@ class BleLockService : Service(), BleRepository.Listener {
         }
         clearCachedConnectionState()
         broadcastAutomaticMode(false)
-        updateNotification(getString(R.string.bluetooth_disabled))
+        updateNotification(R.string.bluetooth_disabled)
     }
 
     private fun handleBluetoothOn() {
@@ -920,8 +939,8 @@ class BleLockService : Service(), BleRepository.Listener {
             openSentForPresence = false
             autoOpenWritePending = false
             broadcastAutomaticMode(true)
-            startAsForeground("Автоматический режим · BLE-маяк активен")
-            updateNotification("Автоматический режим · BLE-маяк активен")
+            startAsForeground(R.string.service_beacon_active)
+            updateNotification(R.string.service_beacon_active)
             return
         }
         mode = Mode.IDLE
@@ -976,8 +995,22 @@ class BleLockService : Service(), BleRepository.Listener {
         )
     }
 
-    private fun startAsForeground(text: String) {
-        val notification = buildNotification(text)
+    private var notificationTextResource = R.string.service_starting
+
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        createNotificationChannel()
+        val manager = getSystemService(NotificationManager::class.java)
+        if (manager.activeNotifications.any { it.id == NOTIFICATION_ID }) {
+            updateNotification(notificationTextResource)
+        }
+        AutoOpenWidget.refresh(this, settings.autoOpenEnabled)
+    }
+
+    private fun startAsForeground(textResource: Int) {
+        notificationTextResource = textResource
+        val localeContext = AppLanguage.wrap(this)
+        val notification = buildNotification(localeContext.getString(textResource))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -989,12 +1022,14 @@ class BleLockService : Service(), BleRepository.Listener {
         }
     }
 
-    private fun updateNotification(text: String) {
+    private fun updateNotification(textResource: Int) {
+        notificationTextResource = textResource
         getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(text))
+            .notify(NOTIFICATION_ID, buildNotification(AppLanguage.wrap(this).getString(textResource)))
     }
 
     private fun buildNotification(text: String): Notification {
+        val localeContext = AppLanguage.wrap(this)
         val openApp = PendingIntent.getActivity(
             this,
             0,
@@ -1007,21 +1042,22 @@ class BleLockService : Service(), BleRepository.Listener {
             Intent(this, BleLockService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        return Notification.Builder(localeContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
-            .setContentTitle(getString(R.string.service_title))
+            .setContentTitle(localeContext.getString(R.string.service_title))
             .setContentText(text)
             .setContentIntent(openApp)
             .setOngoing(true)
-            .addAction(0, getString(R.string.stop_service), stopService)
+            .addAction(0, localeContext.getString(R.string.stop_service), stopService)
             .build()
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val localeContext = AppLanguage.wrap(this)
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                getString(R.string.service_channel),
+                localeContext.getString(R.string.service_channel),
                 NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)

@@ -17,7 +17,8 @@ internal object FirmwareUpdateClient {
     data class Metadata(val marker: String, val version: String? = null)
 
     internal fun releaseVersion(url: URL): String? {
-        if (url.protocol != "https" || url.host != "github.com" || url.userInfo != null || url.port != -1) return null
+        if (url.protocol != "https" || url.host != "github.com" || url.userInfo != null ||
+            url.port != -1 || url.query != null || url.ref != null) return null
         return Regex("/uah0/thekidlock/releases/download/esp-v(10\\.0\\.[0-9]+)/ble_lock_stage1_s3\\.bin")
             .matchEntire(url.path)?.groupValues?.get(1)
     }
@@ -46,9 +47,49 @@ internal object FirmwareUpdateClient {
 
     internal fun isAllowedFirmwareSource(url: URL): Boolean {
         val host = url.host.lowercase()
-        if (url.protocol == "http") return host in setOf("127.0.0.1", "localhost")
+        if (url.userInfo != null || url.ref != null) return false
+        if (url.protocol == "http") return BuildConfig.DEBUG && host in setOf("127.0.0.1", "localhost")
         return url.protocol == "https" && host == "github.com" &&
+            url.port == -1 && url.query == null &&
             url.path == "/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin"
+    }
+
+    /** Validate every redirect before opening it, including HEAD requests. */
+    internal fun openFirmwareConnection(requestedUrl: URL, method: String,
+        connect: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
+    ): HttpURLConnection {
+        if (!isAllowedFirmwareSource(requestedUrl) && releaseVersion(requestedUrl) == null)
+            throw IOException("Источник прошивки не входит в список разрешённых")
+        val localTestHttp = requestedUrl.protocol == "http"
+        var current = requestedUrl
+        repeat(6) {
+            val allowed = if (localTestHttp) current == requestedUrl else
+                AppUpdatePolicy.allowedDownload(current) && current.ref == null &&
+                    (current.host == "release-assets.githubusercontent.com" ||
+                        isAllowedFirmwareSource(current) || releaseVersion(current) != null)
+            if (!allowed) throw IOException("Источник перенаправил загрузку на непредусмотренный адрес")
+            val connection = connect(current).apply {
+                instanceFollowRedirects = false
+                connectTimeout = DOWNLOAD_TIMEOUT_MS
+                readTimeout = if (method == "HEAD") DOWNLOAD_TIMEOUT_MS else 60_000
+                requestMethod = method
+                setRequestProperty("User-Agent", "TheKidLock-Android")
+                setRequestProperty("Accept", "application/octet-stream")
+            }
+            try {
+                val status = connection.responseCode
+                if (status == HttpURLConnection.HTTP_OK) return connection
+                val location = connection.getHeaderField("Location")
+                if (!localTestHttp && status in setOf(301, 302, 303, 307, 308) && location != null) {
+                    current = URL(current, location)
+                } else throw IOException("GitHub вернул код $status")
+            } catch (error: Exception) {
+                connection.disconnect()
+                throw error
+            }
+            connection.disconnect()
+        }
+        throw IOException("Слишком много перенаправлений GitHub")
     }
 
     fun validateFirmwareLength(length: Long) {
@@ -65,13 +106,7 @@ internal object FirmwareUpdateClient {
             throw IOException("Источник прошивки не входит в список разрешённых")
         }
         val version = if (localTestHttp) null else latestVersion(requestedUrl)
-        val connection = ((if (version == null) requestedUrl else versionUrl(version)).openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = !localTestHttp
-            connectTimeout = DOWNLOAD_TIMEOUT_MS
-            readTimeout = DOWNLOAD_TIMEOUT_MS
-            requestMethod = "HEAD"
-            setRequestProperty("User-Agent", "TheKidLock-Android")
-        }
+        val connection = openFirmwareConnection(if (version == null) requestedUrl else versionUrl(version), "HEAD")
         try {
             val code = connection.responseCode
             if (code != HttpURLConnection.HTTP_OK) {
@@ -195,14 +230,7 @@ internal object FirmwareUpdateClient {
         if (!isAllowedFirmwareSource(requestedUrl) && releaseVersion(requestedUrl) == null) {
             throw IOException("Источник прошивки не входит в список разрешённых")
         }
-        val connection = (requestedUrl.openConnection() as HttpURLConnection).apply {
-            instanceFollowRedirects = !localTestHttp
-            connectTimeout = DOWNLOAD_TIMEOUT_MS
-            readTimeout = 60_000
-            requestMethod = "GET"
-            setRequestProperty("Accept", "application/octet-stream")
-            setRequestProperty("User-Agent", "TheKidLock-Android")
-        }
+        val connection = openFirmwareConnection(requestedUrl, "GET")
         try {
             val code = connection.responseCode
             if (code != HttpURLConnection.HTTP_OK) {

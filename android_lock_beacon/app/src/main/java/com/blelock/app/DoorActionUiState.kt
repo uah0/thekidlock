@@ -85,20 +85,19 @@ object DoorActionReducer {
         )
     }
 
-    fun accessibilityDescription(state: DoorActionUiState): String = when (state) {
+    fun accessibilityDescriptionResource(state: DoorActionUiState): Int = when (state) {
         is DoorActionUiState.Idle -> when {
-            state.doorOpen -> "Дверь открыта"
-            state.lastConfirmedLock == ConfirmedLockState.UNLOCKED -> "Замок открыт"
-            else -> "Дверь закрыта и замок закрыт"
+            state.doorOpen -> R.string.door_open
+            state.lastConfirmedLock == ConfirmedLockState.UNLOCKED -> R.string.lock_open
+            else -> R.string.door_closed_lock_closed
         }
         is DoorActionUiState.Sending -> if (state.brokerAccepted)
-            "Команда передана, ожидание замка" else "Команда отправляется"
-        DoorActionUiState.Unlocked -> "Замок открыт"
-        DoorActionUiState.DoorOpen -> "Дверь открыта"
-        DoorActionUiState.Completed -> "Дверь закрыта и заперта"
+            R.string.command_awaiting_lock else R.string.command_sending
+        DoorActionUiState.Unlocked -> R.string.lock_open
+        DoorActionUiState.DoorOpen -> R.string.door_open
+        DoorActionUiState.Completed -> R.string.internet_closed_locked
         is DoorActionUiState.Error -> if (state.doorOpen)
-            "Ошибка. Последнее подтверждение: дверь открыта" else if (state.lastConfirmedLock == ConfirmedLockState.UNLOCKED)
-            "Ошибка. Последнее подтверждение: замок открыт" else
-            "Ошибка. Последнее подтверждение: дверь закрыта и замок закрыт"
+            R.string.error_last_door_open else if (state.lastConfirmedLock == ConfirmedLockState.UNLOCKED)
+            R.string.error_last_lock_open else R.string.error_last_door_closed
     }
 }

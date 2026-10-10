@@ -8,7 +8,7 @@
     const method = (options?.method || input?.method || 'GET').toUpperCase();
     if (target.origin === location.origin && target.pathname === '/api/ota' && method === 'POST') {
       if (!imageVersion || !BleLockFirmwareTransfer.started(imageVersion)) {
-        throw new Error('Не удалось сохранить номер прошивки. Подключите телефон к интернету и дождитесь скачивания обновления.');
+        throw new Error(window.bleLockTransferError);
       }
     }
     const response = await originalFetch(input, options);

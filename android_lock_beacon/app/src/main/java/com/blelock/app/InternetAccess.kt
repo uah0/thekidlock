@@ -35,9 +35,10 @@ class InternetAccess(context: Context) {
         json.getBoolean("enabled")
         json.put("ble_peer", blePeer)
         val plain = json.toString().toByteArray(Charsets.UTF_8)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrappingKey()) }
-        val sealed = cipher.iv + cipher.doFinal(plain)
-        plain.fill(0)
+        val sealed = try {
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, wrappingKey()) }
+            cipher.iv + cipher.doFinal(plain)
+        } finally { plain.fill(0) }
         val floor = json.optString("last_id", "0").toLongOrNull() ?: 0
         check(prefs.edit().putString("sealed", Base64.encodeToString(sealed, Base64.NO_WRAP))
             .putLong("last_id", maxOf(floor, prefs.getLong("last_id", 0))).commit())
