@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="@dimen/widget_icon_size" android:minHeight="@dimen/widget_icon_size"
+    android:minWidth="@dimen/widget_cell_min_size" android:minHeight="@dimen/widget_cell_min_size"
     android:targetCellWidth="1" android:targetCellHeight="1"
     android:previewImage="@drawable/ic_launcher"
     android:initialLayout="@layout/widget_auto_open" android:previewLayout="@layout/widget_auto_open"
-    android:resizeMode="none" android:widgetCategory="home_screen"
+    android:minResizeWidth="@dimen/widget_cell_min_size" android:minResizeHeight="@dimen/widget_cell_min_size"
+    android:maxResizeWidth="@dimen/widget_icon_size" android:maxResizeHeight="@dimen/widget_icon_size"
+    android:resizeMode="horizontal|vertical" android:widgetCategory="home_screen"
     android:updatePeriodMillis="0" />

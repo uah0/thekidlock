@@ -1,6 +1,7 @@
 package com.blelock.app
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -50,6 +51,12 @@ class InternetAccess(context: Context) {
         val plain = cipher.doFinal(sealed.copyOfRange(12, sealed.size))
         try { JSONObject(plain.toString(Charsets.UTF_8)) } finally { plain.fill(0) }
     }.getOrNull()
+    fun registerListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+    fun unregisterListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) {
+        prefs.unregisterOnSharedPreferenceChangeListener(listener)
+    }
     fun revoke(blePeer: String) {
         if (load()?.optString("ble_peer") == blePeer) prefs.edit().remove("sealed").commit()
     }

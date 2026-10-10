@@ -94,7 +94,6 @@ class MainActivity : Activity() {
     private lateinit var appUpdateButton: TextView
     private val appUpdateExecutor = Executors.newSingleThreadExecutor()
     private var appInstallPermissionPending = false
-    private var manualAppUpdateCheck = false
     private val adminButtons = mutableListOf<Button>()
     private val dynamicInputs = mutableMapOf<String, View>()
     private val dynamicSchemaItems = mutableMapOf<String, DeclarativeUiItem>()
@@ -134,7 +133,8 @@ class MainActivity : Activity() {
     private val signalHandler = Handler(Looper.getMainLooper())
     private val firmwareCheckRunnable: Runnable = object : Runnable {
         override fun run() {
-            if (localHotspotReservation != null || firmwarePrefetchRunning) {
+            if (firmwarePrefetchRunning) return
+            if (localHotspotReservation != null) {
                 signalHandler.postDelayed(this, FIRMWARE_CHECK_RETRY_MS)
                 return
             }
@@ -174,6 +174,7 @@ class MainActivity : Activity() {
                     runOnUiThread {
                         firmwarePrefetchRunning = false
                         refreshSettingsUpdateLabel()
+                        signalHandler.removeCallbacks(firmwareCheckRunnable)
                         if (!isFinishing) signalHandler.postDelayed(firmwareCheckRunnable, nextDelayMs)
                     }
                 }
@@ -231,14 +232,6 @@ class MainActivity : Activity() {
             when (intent.action) {
                 AppUpdateWorker.ACTION_CHANGED -> {
                     refreshAppUpdateButton()
-                    if (manualAppUpdateCheck) {
-                        manualAppUpdateCheck = false
-                        val message = if (AppUpdateClient.pending(this@MainActivity) != null)
-                            "Обновление приложения скачано и готово к установке"
-                        else AppUpdateClient.preferences(this@MainActivity).getString("last_error", null)
-                            ?: "Установлена последняя версия приложения"
-                        Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show()
-                    }
                 }
                 BleLockService.ACTION_CONNECTION_STATE -> {
                     updateLiveRssiColor(intent.getBooleanExtra(BleLockService.EXTRA_CONNECTED, false))
@@ -637,7 +630,7 @@ class MainActivity : Activity() {
             intent.action = null
             showAppUpdateDialog()
         }
-        AppUpdateWorker.checkNow(this)
+        AppUpdateWorker.checkNow(this, force = true)
         // bindBleService() is the single owner of connection startup while the
         // screen is visible. Starting ACTION_START here raced the Binder's
         // full-control request after a process restart and could delay the
@@ -663,7 +656,7 @@ class MainActivity : Activity() {
         showPendingFirmwareNotice()
         refreshSettingsUpdateLabel()
         signalHandler.removeCallbacks(firmwareCheckRunnable)
-        signalHandler.postDelayed(firmwareCheckRunnable, FIRMWARE_CHECK_INITIAL_DELAY_MS)
+        signalHandler.post(firmwareCheckRunnable)
     }
 
     override fun onPause() {
@@ -832,15 +825,6 @@ class MainActivity : Activity() {
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
         accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 16))
-        accessCard.addView(android.widget.ImageButton(this).apply {
-            setImageResource(R.drawable.ic_widget_add_compact)
-            background = selectableBackground()
-            contentDescription = getString(R.string.widget_add)
-            setOnClickListener { requestAutoOpenWidget() }
-        }, LinearLayout.LayoutParams(dp(56), dp(48)).apply {
-            gravity = Gravity.END
-            topMargin = dp(12)
-        })
         root.addView(accessCard, spacedFullWidth().apply { bottomMargin = dp(24) })
 
         // --- Admin container: everything that only appears once the lock exposes admin mode ---
@@ -1030,6 +1014,9 @@ class MainActivity : Activity() {
                     setTextColor(getColor(R.color.secondary_text))
                 }, fullWidth())
                 appUpdateButton = TextView(this@MainActivity).apply {
+                    text = "Есть обновление"
+                    visibility = View.GONE
+                    isEnabled = false
                     minimumHeight = dp(48)
                     textSize = 14f
                     gravity = Gravity.CENTER
@@ -1037,15 +1024,7 @@ class MainActivity : Activity() {
                     setPadding(dp(8), dp(8), dp(8), dp(8))
                     isClickable = true
                     isFocusable = true
-                    setOnClickListener {
-                        if (AppUpdateClient.pending(this@MainActivity) != null) showAppUpdateDialog()
-                        else {
-                            manualAppUpdateCheck = true
-                            AppUpdateWorker.checkNow(this@MainActivity, force = true)
-                            Toast.makeText(this@MainActivity, "Проверка запущена. Нужен доступ к интернету.",
-                                Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    setOnClickListener { installAppUpdate() }
                 }
                 addView(appUpdateButton, fullWidth())
                 addView(privacyPolicyButton, fullWidth())
@@ -1253,9 +1232,8 @@ class MainActivity : Activity() {
     private fun refreshAppUpdateButton() {
         if (!::appUpdateButton.isInitialized) return
         val update = AppUpdateClient.pending(this)
-        appUpdateButton.text = if (update != null)
-            "Доступно обновление приложения ${update.versionName} · Установить"
-        else "Проверить обновление приложения"
+        appUpdateButton.visibility = if (update != null) View.VISIBLE else View.GONE
+        appUpdateButton.isEnabled = update != null
     }
 
     private fun showAppUpdateDialog() {
@@ -1291,10 +1269,16 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!isFinishing && !isDestroyed) {
                         try {
-                            startActivity(Intent(Intent.ACTION_VIEW)
+                            val installIntent = Intent(Intent.ACTION_VIEW)
                                 .setDataAndType(uri, "application/vnd.android.package-archive")
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                .apply { clipData = android.content.ClipData.newRawUri("TheKidLock APK", uri) })
+                                .apply { clipData = android.content.ClipData.newRawUri("TheKidLock APK", uri) }
+                            val installer = packageManager.queryIntentActivities(installIntent, PackageManager.MATCH_DEFAULT_ONLY)
+                                .firstOrNull { it.activityInfo.applicationInfo.flags and
+                                    android.content.pm.ApplicationInfo.FLAG_SYSTEM != 0 }
+                                ?: error("Системный установщик Android не найден")
+                            installIntent.component = ComponentName(installer.activityInfo.packageName, installer.activityInfo.name)
+                            startActivity(installIntent)
                         } catch (error: Exception) {
                             Toast.makeText(this, "Не удалось открыть установщик Android", Toast.LENGTH_LONG).show()
                         }
@@ -1305,18 +1289,6 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Обновление не установлено: ${error.message}", Toast.LENGTH_LONG).show() }
             }
         }
-    }
-
-    private fun requestAutoOpenWidget() {
-        val manager = android.appwidget.AppWidgetManager.getInstance(this)
-        if (!manager.isRequestPinAppWidgetSupported) {
-            Toast.makeText(this, R.string.widget_add_unsupported, Toast.LENGTH_LONG).show()
-            return
-        }
-        val accepted = runCatching {
-            manager.requestPinAppWidget(ComponentName(this, AutoOpenWidget::class.java), null, null)
-        }.getOrDefault(false)
-        if (!accepted) Toast.makeText(this, R.string.widget_add_failed, Toast.LENGTH_LONG).show()
     }
 
     private fun selectableBackground(): android.graphics.drawable.Drawable? {
@@ -2452,7 +2424,6 @@ class MainActivity : Activity() {
         private const val HOTSPOT_IP_CHECK_INTERVAL_MS = 10_000L
         private const val HOTSPOT_PROVISIONING_TIMEOUT_SECONDS = 60
         private const val HOTSPOT_PROVISIONING_TIMEOUT_MS = 60_000L
-        private const val FIRMWARE_CHECK_INITIAL_DELAY_MS = 10_000L
         private const val FIRMWARE_CHECK_INTERVAL_MS = 6 * 60 * 60_000L
         private const val FIRMWARE_CHECK_RETRY_MS = 15 * 60_000L
         private const val FIRMWARE_PREFETCH_PREFS = "firmware_prefetch"

@@ -79,3 +79,37 @@ versionCode теперь равен BUILD_NUMBER; создан постоянн�
 ## Android 292 — исправление интернет-открытия в release, 10.10.2026
 Устранена регрессия первого перехода на оптимизированный release APK: R8 удалял конструктор Paho JSR47Logger, создаваемый библиотекой через reflection, и MQTT-клиент не мог инициализироваться. Добавлено узкое keep-правило только для JSR47Logger. Защита владельца, InternetAccess, HMAC и алгоритмы замка сохранены. Добавлен tools/check_android_mqtt_release.py: проверяет фактическую фабрику MQTT-логгера установленного minified APK через временную подписанную instrumentation, без сети и команды замку; тестовый пакет удаляется, ориентация восстанавливается.
 Изменены: android_lock_beacon/app/proguard-rules.pro, android_lock_beacon/BUILD_NUMBER, AUDIT.md, корневые и Android CHANGELOG.md/TEST_REPORT.md. Добавлен tools/check_android_mqtt_release.py. Подписанная release 292 установлена поверх 290 по Wi-Fi 192.168.1.65:33719 и опубликована; прежний app-релиз 290 удалён, ESP 453 сохранён.
+
+
+## Android 294 — активная строка обновления, 10.10.2026
+Убрана кнопка добавления виджета на главном экране и её pin-helper; существующий виджет сохранён. При каждом открытии экрана выполняется принудительная проверка GitHub. Ручной проверки и её текста больше нет. Только для скачанного/проверенного APK видна активная строка «Есть обновление», нажатие напрямую вызывает установщик без диалога приложения.
+Изменены: MainActivity.kt, Android BUILD_NUMBER, README.md, AUDIT.md, корневые и Android CHANGELOG.md/TEST_REPORT.md.
+
+Android 295: проверены автоматическое обнаружение релиза и активная строка «Есть обновление»; найден chooser Android/WPS при ACTION_VIEW, устраняется следующим этапом.
+
+
+## Android 296 — прямой системный установщик, 10.10.2026
+При установке проверенного APK существующий ACTION_VIEW Intent направляется явно в системный обработчик APK, найденный PackageManager. Убрано окно выбора между системным установщиком и сторонними приложениями; FileProvider/ClipData/read grant и подтверждение Android сохранены. Изменены MainActivity.kt, Android BUILD_NUMBER и отчёты.
+
+
+## Android 297 — активная строка обновления, 10.10.2026
+Удалена кнопка добавления виджета с главного экрана. При каждом открытии выполняется проверка GitHub; ручная строка проверки отсутствует. После загрузки и проверки новой версии появляется только активная строка «Есть обновление», которая сразу вызывает системный установщик APK. Системный обработчик выбирается явно, без выбора между установщиком и WPS. Изменены MainActivity.kt, Android BUILD_NUMBER, README.md и отчёты; существующий виджет сохранён.
+
+
+## Android 299 — компактный виджет, 10.10.2026
+Значок автооткрытия уменьшен с 60 до 48 dp, метка ярлыка с 16 до 12 dp. Минимальная область провайдера отделена от размера значка и уменьшена до 40 dp; целевая ячейка 1×1 сохранена. Ограничено рисование дочерних элементов областью макета. Изменены res/values/dimens.xml, res/xml/widget_auto_open_info.xml, res/layout/widget_auto_open.xml и BUILD_NUMBER; обновлены AUDIT/CHANGELOG/TEST_REPORT. Логика переключения и графика замка сохранены.
+
+
+## Android 301 — область виджета 1×1, 10.10.2026
+Исправлены ограничения provider: minWidth/minHeight и minResizeWidth/minResizeHeight 1 dp, maxResizeWidth/maxResizeHeight 60 dp, разрешено изменение размера по обеим осям, targetCell 1×1 сохранён. Значок возвращён к 60 dp — размеру обычного значка на телефоне. Существующий виджет на рабочем столе пользователя сжат штатными ручками launcher до одной ячейки. Изменены res/values/dimens.xml, res/xml/widget_auto_open_info.xml, BUILD_NUMBER и отчёты. Переключение режима не менялось.
+
+
+## Android 304 — проверка прошивки при открытии, 10.10.2026
+MainActivity.onResume запускает проверку ESP-прошивки сразу, без прежней задержки 10 секунд. Если запрос уже выполняется, второй не запускается; завершение назначает один следующий фоновый запрос. Скачивание и индикатор доступности сохранены. Изменены MainActivity.kt, Android BUILD_NUMBER, README.md и отчёты.
+
+
+## Android 306 — адрес брокера в кнопке, 10.10.2026
+В InternetOpenProgressButton пояснение send_remote_command заменено на host из InternetAccess.load(): источник совпадает с Интернет-командой InternetOpen.start. Изменения sealed обновляют подпись через SharedPreferences listener; подписка при attach и снятие при detach. Пустое значение — «—», длинное сокращается до одной строки с полным адресом в tooltip/contentDescription. Прогресс стадий и настройки подключения не менялись.
+Изменённые файлы этапа: android_lock_beacon/app/src/main/java/com/blelock/app/InternetAccess.kt, android_lock_beacon/app/src/main/java/com/blelock/app/InternetOpenProgressButton.kt, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md, android_lock_beacon/TEST_REPORT.md.
+
+APP 306 опубликован: SHA-256 eea3422a5f020c48c63d43bfecd1b5ba23a4f7402183530dd27b2ef67221a34c. Публичные APK/metadata проверены publisher, APP 304 удалён, ESP global latest сохранён. Комплект production/android-release-306/.

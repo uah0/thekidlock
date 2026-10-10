@@ -3,6 +3,8 @@ package com.blelock.app
 import android.animation.Animator
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.SharedPreferences
+import android.text.TextUtils
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
@@ -47,6 +49,11 @@ class InternetOpenProgressButton @JvmOverloads constructor(
 ) : View(context, attrs) {
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
+    private val internetAccess = InternetAccess(context.applicationContext)
+    private var brokerAddress = ""
+    private val brokerChanges = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "sealed") post { refreshBrokerAddress() }
+    }
     private val rect = RectF()
     private val progressRect = RectF()
     private val outerPath = Path()
@@ -99,6 +106,24 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         minimumWidth = dp(200f).toInt()
     }
 
+    private fun idleDescription() = "$idleLabel\n${brokerAddress.ifBlank { "—" }}"
+
+    private fun refreshBrokerAddress() {
+        brokerAddress = internetAccess.load()?.optString("host").orEmpty()
+        tooltipText = brokerAddress.ifBlank { null }
+        if (stage == InternetOpenStage.IDLE) {
+            contentDescription = idleDescription()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
+        }
+        invalidate()
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        internetAccess.registerListener(brokerChanges)
+        refreshBrokerAddress()
+    }
+
     fun showStage(next: InternetOpenStage, doorState: String? = null) {
         handler.removeCallbacksAndMessages(null)
         blinkAnimator?.cancel()
@@ -106,7 +131,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         blinkOn = false
         stage = next
         displayedStage = internetOpenDisplayedStage(displayedStage, next)
-        contentDescription = descriptionFor(next, doorState)
+        contentDescription = if (next == InternetOpenStage.IDLE) idleDescription() else descriptionFor(next, doorState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
         when (next) {
@@ -149,8 +174,8 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             blinkOn = false
             blinkAnimator?.cancel()
             blinkAnimator = null
-            contentDescription = idleLabel
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = idleLabel
+            contentDescription = idleDescription()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
             isEnabled = true
             invalidate()
         }
@@ -202,7 +227,10 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             val iconTop = (height - dp(28f).toInt()) / 2
             icon.setBounds(dp(20f).toInt(), iconTop, dp(48f).toInt(), iconTop + dp(28f).toInt())
             icon.draw(canvas)
-            val label = android.text.SpannableString("$idleLabel\n${context.getString(R.string.send_remote_command)}").apply {
+            val subtitlePaint = android.text.TextPaint(textPaint).apply { textSize *= 0.72f }
+            val address = TextUtils.ellipsize(brokerAddress.ifBlank { "—" }, subtitlePaint,
+                (width - dp(88f)).coerceAtLeast(1f), TextUtils.TruncateAt.END)
+            val label = android.text.SpannableString("$idleLabel\n$address").apply {
                 setSpan(android.text.style.RelativeSizeSpan(0.72f), idleLabel.length + 1, length, 0)
                 setSpan(android.text.style.ForegroundColorSpan(context.getColor(R.color.secondary_text)), idleLabel.length + 1, length, 0)
             }
@@ -270,6 +298,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     }
 
     override fun onDetachedFromWindow() {
+        internetAccess.unregisterListener(brokerChanges)
         handler.removeCallbacksAndMessages(null)
         blinkAnimator?.cancel()
         super.onDetachedFromWindow()
