@@ -46,7 +46,7 @@ idf_component_register(
         "web/calibration.html"
 )
 
-add_dependencies(${COMPONENT_LIB} app_build_number)
+add_dependencies(${COMPONENT_LIB} app_build_number mqtt_broker_choices)
 
 set(ulp_app_name ulp_${COMPONENT_NAME})
 set(ulp_riscv_sources "ulp/main.c")

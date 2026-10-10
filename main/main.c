@@ -17,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_ota_ops.h"
 #include "esp_rom_sys.h"
+#include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,6 +25,10 @@
 
 static const char *TAG = "main";
 static volatile uint32_t s_buzzer_test_request;
+static portMUX_TYPE s_departure_preview_mux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t s_departure_preview_pulse_ms;
+static int64_t s_departure_preview_until_us;
+static bool s_departure_preview_ready;
 static volatile bool s_ulp_diagnostics_verbose;
 
 #if CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE
@@ -341,12 +346,13 @@ static bool close_failure_alarm_active(ulp_diagnostics_t *d, unsigned *count)
     return *count != 0;
 }
 
-static bool beacon_departure_alarm_active(void)
+static bool beacon_departure_alarm_active(uint32_t *pulse_ms)
 {
     app_config_t cfg;
     lock_feedback_t feedback;
     app_config_get(&cfg);
     if (!cfg.departure_buzzer_enabled) return false;
+    *pulse_ms = cfg.departure_buzzer_pulse_ms;
     lock_control_get_feedback(&feedback);
     return feedback.valid && feedback.state == LOCK_STATE_UNLOCKED &&
            !feedback.hold_open;
@@ -379,6 +385,46 @@ static bool buzzer_tone(uint32_t on_ms, uint32_t off_ms, uint32_t overlap_seen)
     return buzzer_wait(off_ms, overlap_seen);
 }
 
+// Preserve the original 20 ms + eight 25 ms slices after tick conversion.
+static void departure_pulse_off(void *arg)
+{
+    (void)arg;
+    gpio_set_level(APP_BUZZER_GPIO, !APP_BUZZER_ACTIVE_LEVEL);
+}
+
+static bool departure_buzzer_tone(esp_timer_handle_t timer, uint32_t pulse_ms,
+                                 uint32_t overlap_seen)
+{
+    if (!timer) return false;
+    TickType_t wake = xTaskGetTickCount();
+    gpio_set_level(APP_BUZZER_GPIO, APP_BUZZER_ACTIVE_LEVEL);
+    esp_err_t err = esp_timer_start_once(timer, (uint64_t)pulse_ms * 1000);
+    if (err != ESP_OK) {
+        gpio_set_level(APP_BUZZER_GPIO, !APP_BUZZER_ACTIVE_LEVEL);
+        ESP_LOGE("buzzer", "Pulse timer start failed: %s", esp_err_to_name(err));
+        vTaskDelay(pdMS_TO_TICKS(100));
+        return false;
+    }
+    const TickType_t period = pdMS_TO_TICKS(20) + 8 * pdMS_TO_TICKS(25);
+    TickType_t remaining = period;
+    bool completed = true;
+    while (remaining) {
+        const TickType_t slice = remaining > pdMS_TO_TICKS(20)
+            ? pdMS_TO_TICKS(20) : remaining;
+        vTaskDelayUntil(&wake, slice);
+        remaining -= slice;
+        ulp_diagnostics_t d;
+        if (ulp_controller_read_diagnostics(&d) &&
+            d.command_overlap_counter != overlap_seen) {
+            completed = false;
+            break;
+        }
+    }
+    (void)esp_timer_stop(timer);
+    gpio_set_level(APP_BUZZER_GPIO, !APP_BUZZER_ACTIVE_LEVEL);
+    return completed;
+}
+
 static void buzzer_overlap_pattern(uint32_t overlap_seen)
 {
     ESP_LOGW("buzzer", "overlap=%lu: pattern DASH-DOT-DOT-DOT",
@@ -396,9 +442,48 @@ esp_err_t app_buzzer_request_test(uint32_t pattern)
     return ESP_OK;
 }
 
+esp_err_t app_buzzer_request_departure_preview(uint32_t pulse_ms)
+{
+    if (pulse_ms < APP_DEPARTURE_PULSE_MIN_MS ||
+        pulse_ms > APP_DEPARTURE_PULSE_MAX_MS) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&s_departure_preview_mux);
+    if (!s_departure_preview_ready) {
+        portEXIT_CRITICAL(&s_departure_preview_mux);
+        return ESP_ERR_INVALID_STATE;
+    }
+    s_departure_preview_pulse_ms = pulse_ms;
+    s_departure_preview_until_us = esp_timer_get_time() + 5000000;
+    portEXIT_CRITICAL(&s_departure_preview_mux);
+    return ESP_OK;
+}
+
+static bool departure_preview_active(uint32_t *pulse_ms)
+{
+    portENTER_CRITICAL(&s_departure_preview_mux);
+    int64_t until_us = s_departure_preview_until_us;
+    uint32_t width_ms = s_departure_preview_pulse_ms;
+    portEXIT_CRITICAL(&s_departure_preview_mux);
+    const int64_t remaining_ms = (until_us - esp_timer_get_time()) / 1000;
+    if (remaining_ms <= 0) return false;
+    *pulse_ms = remaining_ms < width_ms ? (uint32_t)remaining_ms : width_ms;
+    return true;
+}
+
 static void close_failure_buzzer_task(void *arg)
 {
     (void)arg;
+    esp_timer_handle_t departure_timer = NULL;
+    const esp_timer_create_args_t timer_args = {
+        .callback = departure_pulse_off,
+        .name = "departure_pulse",
+    };
+    esp_err_t timer_err = esp_timer_create(&timer_args, &departure_timer);
+    if (timer_err != ESP_OK) {
+        ESP_LOGE("buzzer", "Pulse timer create failed: %s", esp_err_to_name(timer_err));
+    }
+    portENTER_CRITICAL(&s_departure_preview_mux);
+    s_departure_preview_ready = timer_err == ESP_OK;
+    portEXIT_CRITICAL(&s_departure_preview_mux);
     ulp_diagnostics_t d;
     uint32_t overlap_seen = 0;
     if (ulp_controller_read_diagnostics(&d)) {
@@ -430,8 +515,13 @@ static void close_failure_buzzer_task(void *arg)
 
         unsigned count = 0;
         if (!close_failure_alarm_active(&d, &count)) {
-            if (beacon_departure_alarm_active()) {
-                if (!buzzer_tone(20, 200, overlap_seen)) continue;
+            uint32_t departure_pulse_ms;
+            if (departure_preview_active(&departure_pulse_ms) ||
+                beacon_departure_alarm_active(&departure_pulse_ms)) {
+                if (!departure_buzzer_tone(departure_timer, departure_pulse_ms, overlap_seen)) {
+                    vTaskDelay(pdMS_TO_TICKS(20));
+                    continue;
+                }
             } else {
                 buzzer_set(false);
                 (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));

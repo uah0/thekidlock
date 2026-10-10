@@ -45,6 +45,7 @@ if (-not (Test-Path $LocalConfig)) {
 }
 
 $env:PYTHONDONTWRITEBYTECODE = "1"
+$env:PYTHONIOENCODING = "utf-8"
 
 function Invoke-EimIdf {
     param([Parameter(Mandatory=$true)][string]$IdfCommand)
@@ -71,6 +72,15 @@ function Invoke-EimIdf {
     }
     if ($childCodes.Count -ne 1 -or $childCodes[0] -ne 0) {
         throw "ESP-IDF child command failed or did not report its exit status: $IdfCommand"
+    }
+}
+
+function Ensure-MqttBuildDependency {
+    $dependencyDir = Join-Path $EimStateDir "python-deps"
+    & $IdfPython -c "import sys; sys.path.insert(0, sys.argv[1]); import paho.mqtt; assert paho.mqtt.__version__ == '2.1.0'" $dependencyDir 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        & $IdfPython -m pip install --disable-pip-version-check --upgrade --target $dependencyDir -r (Join-Path $ProjectRoot "tools/requirements-build.txt")
+        if ($LASTEXITCODE -ne 0) { throw "Не удалось установить зависимость проверки MQTT-брокеров" }
     }
 }
 
@@ -161,6 +171,7 @@ function Invoke-DirectFlash {
 
 switch ($Action) {
     "build" {
+        Ensure-MqttBuildDependency
         Apply-NimbleSecurityGuard
         Invoke-ProjectIdf "build"
         if ($Profile -ne "default") {

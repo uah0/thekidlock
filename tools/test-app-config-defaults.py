@@ -15,7 +15,7 @@ def main():
     helper = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(helper)
     source = (ROOT / 'main/app_config.c').read_text(encoding='utf-8')
-    functions = '\n'.join(helper.function(source, name) for name in ('set_defaults', 'values_valid', 'app_config_init'))
+    functions = '\n'.join(helper.function(source, name) for name in ('set_defaults', 'values_valid', 'departure_pulse_valid', 'app_config_init'))
     work = ROOT / '.device-agent/app-config-default-tests'
     work.mkdir(parents=True, exist_ok=True)
     (work / 'esp_err.h').write_text('typedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_ERR_NO_MEM 3\n')
@@ -43,7 +43,11 @@ static int nvs_open(const char *name,int mode,nvs_handle_t *h){
     namespace_exists=true;*h=1;return 0;
 }
 static int nvs_get_i8(int h,const char *key,int8_t *value){return ESP_ERR_NVS_NOT_FOUND;}
-static int nvs_get_u32(int h,const char *key,uint32_t *value){return ESP_ERR_NVS_NOT_FOUND;}
+static int nvs_get_u32(int h,const char *key,uint32_t *value){
+    if(!strcmp(key,"departure_ms")){*value=20;return ESP_OK;}
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+static int nvs_set_u32(int h,const char *key,uint32_t value){return 12;}
 static int nvs_get_u8(int h,const char *key,uint8_t *value){
     if(!strcmp(key,"serial_log"))return ESP_ERR_NVS_NOT_FOUND;
     if(strcmp(key,"departure_beep"))return 11;

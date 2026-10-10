@@ -9,6 +9,10 @@
 #define APP_CONFIG_BUTTON_GPIO          0
 #define APP_BUZZER_GPIO                  8
 #define APP_BUZZER_ACTIVE_LEVEL          0
+#define APP_DEFAULT_DEPARTURE_PULSE_MS   20
+#define APP_DEPARTURE_PULSE_MIN_MS       5
+#define APP_DEPARTURE_PULSE_MAX_MS       160
+#define APP_DEPARTURE_PULSE_STEP_MS      1
 #define APP_RGB_LED_GPIO                 48
 
 #define APP_DEFAULT_PHONE_RSSI_THRESHOLD (-68)
@@ -25,6 +29,7 @@ typedef struct {
     uint8_t shunt_gpio;
     bool serial_log_enabled;
     bool departure_buzzer_enabled;
+    uint32_t departure_buzzer_pulse_ms;
     uint32_t timer_a_ms;
     bool configuration_mode;
 } app_config_t;
@@ -35,3 +40,5 @@ esp_err_t app_config_set_logic(int phone_rssi_threshold,
                                uint32_t timer_a_ms);
 esp_err_t app_config_set_serial_log_enabled(bool enabled);
 esp_err_t app_config_set_departure_buzzer_enabled(bool enabled);
+
+esp_err_t app_config_set_departure_buzzer_pulse_ms(uint32_t pulse_ms);

@@ -144,6 +144,13 @@ input:focus,select:focus{border-color:var(--accent)}
 .field label{font-size:12.5px;color:var(--text-dim)}
 .field-input{display:flex;align-items:center;gap:8px}
 .field-input .unit{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);white-space:nowrap}
+.mqtt-broker-picker{position:relative}
+.mqtt-broker-input{display:flex;align-items:stretch}
+.mqtt-broker-input input{flex:1;min-width:0;border-radius:7px 0 0 7px}
+.mqtt-broker-input>button{flex:0 0 44px;padding:8px;border-radius:0 7px 7px 0;font-size:20px}
+.mqtt-broker-list{position:absolute;top:100%;left:0;right:0;z-index:20;margin-top:4px;max-height:240px;overflow-y:auto;background:var(--surface-2);border:1px solid var(--border);border-radius:7px;box-shadow:0 8px 24px #0008}
+.mqtt-broker-list button{display:block;width:100%;min-height:44px;text-align:left;border:0;border-radius:0;padding:10px 12px;overflow-wrap:anywhere;background:transparent}
+.mqtt-broker-list button:hover,.mqtt-broker-list button:focus-visible{background:var(--accent-dim)}
 .field-row{display:flex;gap:14px;align-items:flex-start}
 .actions-row{display:flex;align-items:center;gap:10px;margin-top:4px;flex-wrap:wrap}
 .saved-msg{font-size:12.5px;color:var(--good);font-family:var(--mono)}
@@ -193,12 +200,6 @@ table.bonds td:first-child{font-family:var(--mono)}
   border:1px dashed var(--border);border-radius:10px;padding:20px;text-align:center;
   background:var(--surface-2);display:flex;flex-direction:column;align-items:center;gap:10px;
 }
-.file-label{
-  display:inline-flex;align-items:center;gap:8px;background:var(--surface-3);border:1px solid var(--border);
-  border-radius:8px;padding:9px 14px;cursor:pointer;font-size:13px;
-}
-.file-label:hover{border-color:var(--accent)}
-#fwName{font-family:var(--mono);font-size:12px;color:var(--text-dim)}
 #ota{font-family:var(--mono);font-size:12.5px;color:var(--text-dim);white-space:pre-wrap;margin-top:10px;min-height:1em}
 
 /* toast */
@@ -229,16 +230,14 @@ table.bonds td:first-child{font-family:var(--mono)}
 <div class="versions" aria-label="Версия устройства">
   <div class="version-item">
     <span class="version-label">Устройство · Замок</span>
+    <span class="version-date" id="uptimeTxt">Время работы: —</span>
     <span class="version-value" id="verTxt">Версия —</span>
     <span class="version-date" id="buildTxt">Собрано: —</span>
   </div>
   <div class="version-update">
     <div class="actions-row">
-      <label class="file-label" id="fwPicker" for="fw">Выбрать файл .bin</label>
-      <input id="fw" type="file" accept=".bin" style="display:none" onchange="fwName.textContent=fw.files[0]?fw.files[0].name:''">
-      <button class="btn-primary" id="uploadFwButton" onclick="uploadFw()">Передать прошивку</button>
+      <button class="btn-primary" id="uploadFwButton" onclick="uploadFw()">Установить обновление</button>
     </div>
-    <span id="fwName"></span>
     <div id="ota"></div>
   </div>
 </div>
@@ -257,7 +256,6 @@ table.bonds td:first-child{font-family:var(--mono)}
     <thead><tr><th>Имя</th><th>Identity address</th><th></th></tr></thead>
     <tbody id="bonds"></tbody>
   </table>
-  <div class="actions-row" style="margin-top:18px"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер настройки замка</button></div>
 </section>
     <section class="panel">
       <div class="panel-head"><span class="tag">NET</span><h2>Wi-Fi</h2></div>
@@ -288,14 +286,8 @@ table.bonds td:first-child{font-family:var(--mono)}
 
 
 <section class="panel">
-  <div class="panel-head"><span class="tag">NET</span><h2>MQTT</h2></div>
-  <div class="field"><label><input id="mEnabled" type="checkbox"> Открытие через интернет</label></div>
-  <div class="field"><input id="mHost" type="text" maxlength="192" aria-label="Адрес публичного брокера" placeholder="Домен брокера" autocomplete="off"></div>
-  <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
- </section>
-
-<section class="panel">
     <div class="panel-head"><span class="tag">CFG</span><h2>Настройки замка</h2></div>
+  <div class="actions-row" style="margin-bottom:18px"><button onclick="window.open('/calibration','lockCalibration','width=720,height=820')">Мастер калибровки замка</button></div>
 
     <div class="field">
       <label for="pr">Зона открытия</label>
@@ -309,11 +301,16 @@ table.bonds td:first-child{font-family:var(--mono)}
       <span>Включение звукового подтверждения открытой двери</span>
       <span class="saved-msg" id="departureBuzzerSaved"></span>
     </div>
+    <div class="field">
+      <label for="departurePulse">Громкость сигнала открытого замка · <span id="departurePulseValue">20 мс</span></label>
+      <input id="departurePulse" class="zone-slider" type="range" min="5" max="160" step="1" value="20" oninput="updateDeparturePulseValue(true)" onchange="saveDeparturePulse()">
+      <span class="saved-msg" id="departurePulseSaved"></span>
+    </div>
 
     <div class="field-row">
       <div class="field" style="flex:1">
-        <label for="ta">Задержка закрытия замка после выхода из зоны открытия</label>
-        <div class="field-input"><input id="ta" type="number" min="0"><span class="unit">мс</span></div>
+        <label for="ta">Задержка закрытия замка после выхода из зоны открытия · <span id="timerAValue">3,0 с</span></label>
+        <input id="ta" class="zone-slider" type="range" min="3000" max="10000" step="100" value="3000" oninput="updateTimerAValue()">
       </div>
     </div>
     <div class="actions-row">
@@ -326,7 +323,6 @@ table.bonds td:first-child{font-family:var(--mono)}
     <button class="btn-primary" onclick="testOpen()">Тест открытия</button>
   </div>
   <table class="reg">
-    <tr><td>Время работы (uptime)</td><td id="uptimeTxt">—</td></tr>
     <tr><td>Аккумулятор</td><td id="ubattery">—</td></tr>
     <tr><td>Измерение при импульсе</td><td id="usense">—</td></tr>
     <tr><td>Калибровка: дверь закрыта</td><td id="ucalcontact">—</td></tr>
@@ -335,6 +331,17 @@ table.bonds td:first-child{font-family:var(--mono)}
   </table>
   <div class="seq-line" id="ulpStatus">Загрузка…</div>
     </div>
+    <div class="field" style="margin-top:20px">
+      <label for="mHost">Домен брокера</label>
+      <div id="mqttBrokerField" class="mqtt-broker-picker">
+        <div class="mqtt-broker-input">
+          <input id="mHost" type="text" maxlength="192" aria-label="Адрес публичного брокера" placeholder="Домен брокера" autocomplete="off" oninput="closeMqttBrokerList();mSaved.textContent=''">
+          <button id="mqttBrokerButton" type="button" aria-label="Выбрать брокер" aria-expanded="false" aria-controls="mqttBrokerList" onclick="toggleMqttBrokerList()" disabled>▾</button>
+        </div>
+        <div id="mqttBrokerList" class="mqtt-broker-list" aria-label="Адреса брокеров" hidden></div>
+      </div>
+    </div>
+    <div class="actions-row"><button id="mSave" class="btn-primary" onclick="saveMqtt()">Сохранить</button><span class="saved-msg" id="mSaved"></span></div>
   </section>
 
 </div>
@@ -351,10 +358,10 @@ async function loadStatus(){
     let s=await j('/api/status');
     verTxt.textContent='Версия '+s.version;
     buildTxt.textContent='Собрано: '+s.build;
-    uptimeTxt.textContent=formatUptime(s.uptime_s);
+    uptimeTxt.textContent='Время работы: '+formatUptime(s.uptime_s);
   }catch(e){
     verTxt.textContent='Версия —';
-    uptimeTxt.textContent='—';
+    uptimeTxt.textContent='Время работы: —';
     buildTxt.textContent='Не удалось получить состояние: '+String(e);
   }
 }
@@ -372,15 +379,28 @@ async function loadUlp(){
 // Ползунок: 30..127 слева направо (от сильного к слабому сигналу); API ожидает порог -30..-127 dBm.
 function zoneSliderToRssi(){return -Number(pr.value)}
 function rssiToZoneSlider(value){return Math.min(127,Math.max(30,-Number(value)))}
-async function loadConfig(){let c=await j('/api/config');pr.value=rssiToZoneSlider(c.phone_rssi_threshold);ta.value=c.timer_a_ms;departureBuzzer.checked=c.departure_buzzer_enabled}
+async function loadConfig(){let c=await j('/api/config');pr.value=rssiToZoneSlider(c.phone_rssi_threshold);ta.value=c.timer_a_ms;updateTimerAValue();departureBuzzer.checked=c.departure_buzzer_enabled;savedDeparturePulse=c.departure_buzzer_pulse_ms??20;departurePulse.value=savedDeparturePulse;updateDeparturePulseValue()}
 async function saveDepartureBuzzer(){try{await j('/api/config/departure-buzzer?enabled='+(departureBuzzer.checked?'1':'0'),{method:'POST'});departureBuzzerSaved.textContent='Сохранено';setTimeout(()=>departureBuzzerSaved.textContent='',2000)}catch(e){departureBuzzer.checked=!departureBuzzer.checked;departureBuzzerSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}}
-async function loadMqtt(){try{let c=await j('/api/mqtt');mEnabled.checked=c.enabled;mHost.value=c.host;mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
+let savedDeparturePulse=20;
+let departurePreviewPending=null,departurePreviewRunning=false;
+function updateDeparturePulseValue(preview=false){departurePulseValue.textContent=departurePulse.value+' мс';departurePulseSaved.textContent='';if(preview){departurePreviewPending=Number(departurePulse.value);sendDeparturePreview()}}
+async function sendDeparturePreview(){if(departurePreviewRunning)return;departurePreviewRunning=true;try{while(departurePreviewPending!==null){const ms=departurePreviewPending;departurePreviewPending=null;await j('/api/config/departure-buzzer-preview?ms='+encodeURIComponent(ms),{method:'POST'})}}catch(e){departurePreviewPending=null;showNotice('Не удалось проверить звук: '+String(e),true)}finally{departurePreviewRunning=false}}
+async function saveDeparturePulse(){if(departurePulse.disabled)return;departurePulse.disabled=true;try{await j('/api/config/departure-buzzer-pulse?ms='+encodeURIComponent(departurePulse.value),{method:'POST'});savedDeparturePulse=Number(departurePulse.value);departurePulseSaved.textContent='Сохранено'}catch(e){departurePulse.value=savedDeparturePulse;updateDeparturePulseValue();departurePulseSaved.textContent='Ошибка сохранения';showNotice(String(e),true)}finally{departurePulse.disabled=false}}
+
+function closeMqttBrokerList(){mqttBrokerList.hidden=true;mqttBrokerButton.setAttribute('aria-expanded','false')}
+function toggleMqttBrokerList(){if(mqttBrokerButton.disabled)return;const opening=mqttBrokerList.hidden;mqttBrokerList.hidden=!opening;mqttBrokerButton.setAttribute('aria-expanded',String(opening));if(opening)mqttBrokerList.scrollIntoView({block:'nearest'})}
+function renderMqttBrokerChoices(hosts){closeMqttBrokerList();mqttBrokerList.replaceChildren(...hosts.map(host=>{const item=document.createElement('button');item.type='button';item.textContent=host;item.onclick=()=>{mHost.value=host;mSaved.textContent='';closeMqttBrokerList();mqttBrokerButton.focus()};return item}));mqttBrokerButton.disabled=hosts.length===0}
+document.addEventListener('click',e=>{if(!mqttBrokerField.contains(e.target))closeMqttBrokerList()});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!mqttBrokerList.hidden){closeMqttBrokerList();mqttBrokerButton.focus()}});
+async function loadMqtt(){try{let c=await j('/api/mqtt');mHost.value=c.host;renderMqttBrokerChoices(c.broker_choices??[]);mSave.disabled=!!c.busy}catch(e){mSaved.textContent=String(e)}}
 async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
-async function saveMqtt(){let cfg={enabled:mEnabled.checked,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
+// Открытие через интернет всегда включено: enabled — постоянное значение true, а не переменная настройки.
+async function saveMqtt(){let cfg={enabled:true,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent='Сохранено';return true}catch(e){mSaved.textContent=String(e);return false}}
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?'Пароль сохранён':'Пароль не задан'}catch(e){wifiSaved.textContent=e}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent='Сохранено';setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent='Ошибка сохранения';throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent='Сохранено'}catch(e){wifiSaved.textContent=e}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice('Нет подтверждения замка: '+e,true)}}
+function updateTimerAValue(){timerAValue.textContent=(Number(ta.value)/1000).toFixed(1).replace('.',',')+' с';saved.textContent=''}
 async function saveConfig(){let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value});try{await j('/api/config?'+q,{method:'POST'});saved.textContent='Сохранено';setTimeout(()=>saved.textContent='',4500)}catch(e){saved.textContent=e}}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice('Команда открытия передана')}catch(e){showNotice(String(e),true)}}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?`Регистрация телефона · ${p.remaining_s} с`:'Разрешить регистрацию телефона';pairingButton.title=''}catch(e){pairingButton.textContent='Регистрация: нет связи';pairingButton.title=String(e)}}
@@ -391,7 +411,6 @@ async function deleteAllBonds(){await inlineConfirm('all-bonds','Нажмите 
 function readOtaState(){try{let state=JSON.parse(sessionStorage.getItem('bleLockOta'));if(state&&Date.now()-state.started<600000)return state;sessionStorage.removeItem('bleLockOta')}catch(e){}return null}
 function saveOtaState(state){try{if(state)sessionStorage.setItem('bleLockOta',JSON.stringify(state));else sessionStorage.removeItem('bleLockOta')}catch(e){}}
 function otaSuccessText(version){return 'Замок обновлён · Версия '+version}
-function useInternalFirmware(){fwPicker.style.display='none';fwName.style.display='none';uploadFwButton.textContent='Установить обновление';let state=readOtaState();if(state&&state.complete)ota.textContent=otaSuccessText(state.version);else if(!uploadFwButton.disabled)ota.textContent=''}
 async function waitFwUpdate(before){
   ota.textContent='Завершение обновления…';
   for(let attempt=0;attempt<60;attempt++){
@@ -413,17 +432,14 @@ async function waitFwUpdate(before){
 async function resumeFwUpdate(){let state=readOtaState();if(!state)return;if(state.complete){ota.textContent=otaSuccessText(state.version);return}if(uploadFwButton.disabled)return;uploadFwButton.disabled=true;try{await waitFwUpdate(state.before)}finally{uploadFwButton.disabled=false}}
 async function uploadFw(){
   if(uploadFwButton.disabled)return;
-  let f=fw.files[0];
-  if(!window.bleLockInternalFirmware&&!f){showNotice('Выберите файл .bin',true);return}
+  if(!window.bleLockInternalFirmware){showNotice('Установите обновление через приложение TheKidLock',true);return}
   uploadFwButton.disabled=true;
   saveOtaState(null);
   ota.textContent='Подготовка прошивки…';
   try{
-    if(window.bleLockInternalFirmware){
-      let cached=await fetch('/__app/firmware',{cache:'no-store'});
-      if(!cached.ok)throw new Error(await cached.text());
-      f=await cached.blob();
-    }
+    let cached=await fetch('/__app/firmware',{cache:'no-store'});
+    if(!cached.ok)throw new Error(await cached.text());
+    let f=await cached.blob();
     let before=await j('/api/status');
     saveOtaState({before:before,started:Date.now()});
     ota.textContent='Передача прошивки… Не закрывайте окно';

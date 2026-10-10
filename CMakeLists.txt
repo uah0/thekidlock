@@ -11,3 +11,12 @@ add_custom_target(app_build_number ALL
     BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/app_build_number.h
     VERBATIM
 )
+
+add_custom_target(mqtt_broker_choices ALL
+    COMMAND ${PYTHON} ${CMAKE_SOURCE_DIR}/tools/check_mqtt_brokers.py
+        --input ${CMAKE_SOURCE_DIR}/main/web/adress_broker.txt
+        --header ${CMAKE_BINARY_DIR}/generated/mqtt_brokers.h
+        --report ${CMAKE_BINARY_DIR}/generated/mqtt_brokers_report.json
+    BYPRODUCTS ${CMAKE_BINARY_DIR}/generated/mqtt_brokers.h
+    VERBATIM
+)

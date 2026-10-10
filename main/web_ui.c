@@ -8,12 +8,14 @@
 #include <string.h>
 #include <errno.h>
 #include "app_config.h"
+#include "app_diagnostics.h"
 #include "ble_phone.h"
 #include "event_log.h"
 #include "lock_control.h"
 #include "cloud_link.h"
 #include "cloud_commands.h"
 #include "mqtt_config.h"
+#include "mqtt_brokers.h"
 #include "cJSON.h"
 #include "ulp_controller.h"
 #include "wifi_ota.h"
@@ -147,11 +149,13 @@ static esp_err_t config_get(httpd_req_t *req)
              "\"shunt_gpio\":%u,"
              "\"serial_log_enabled\":%s,"
              "\"departure_buzzer_enabled\":%s,"
+             "\"departure_buzzer_pulse_ms\":%lu,"
              "\"timer_a_ms\":%lu}",
              cfg.phone_rssi_threshold,
              cfg.shunt_gpio,
              cfg.serial_log_enabled ? "true" : "false",
              cfg.departure_buzzer_enabled ? "true" : "false",
+             (unsigned long)cfg.departure_buzzer_pulse_ms,
              (unsigned long)cfg.timer_a_ms);
     return send_json(req, json);
 }
@@ -309,6 +313,42 @@ static esp_err_t departure_buzzer_post(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Departure buzzer save failed");
 }
 
+static bool departure_pulse_from_request(httpd_req_t *req, uint32_t *pulse_ms)
+{
+    char query[48], duration[16];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+        httpd_query_key_value(query, "ms", duration, sizeof(duration)) != ESP_OK ||
+        duration[0] < '0' || duration[0] > '9') return false;
+    char *end;
+    errno = 0;
+    unsigned long value = strtoul(duration, &end, 10);
+    if (errno || *end || value < APP_DEPARTURE_PULSE_MIN_MS ||
+        value > APP_DEPARTURE_PULSE_MAX_MS ||
+        value % APP_DEPARTURE_PULSE_STEP_MS != 0) return false;
+    *pulse_ms = (uint32_t)value;
+    return true;
+}
+
+static esp_err_t departure_buzzer_pulse_post(httpd_req_t *req)
+{
+    uint32_t pulse_ms;
+    if (!departure_pulse_from_request(req, &pulse_ms))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid duration");
+    esp_err_t err = app_config_set_departure_buzzer_pulse_ms(pulse_ms);
+    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Departure pulse save failed");
+}
+
+static esp_err_t departure_buzzer_preview_post(httpd_req_t *req)
+{
+    uint32_t pulse_ms;
+    if (!departure_pulse_from_request(req, &pulse_ms))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid duration");
+    esp_err_t err = app_buzzer_request_departure_preview(pulse_ms);
+    return err == ESP_OK ? send_json(req, "{\"ok\":true}") :
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Departure preview unavailable");
+}
+
 static esp_err_t mqtt_get(httpd_req_t *req)
 {
     mqtt_config_t *cfg = malloc(sizeof(*cfg));
@@ -318,6 +358,11 @@ static esp_err_t mqtt_get(httpd_req_t *req)
     if (!json) { free(cfg); return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Настройки MQTT недоступны"); }
     cJSON_AddBoolToObject(json, "enabled", cfg->enabled);
     cJSON_AddStringToObject(json,"host",cfg->host);
+    cJSON *choices = cJSON_Parse(MQTT_BROKER_CHOICES_JSON);
+    if (!choices || !cJSON_AddItemToObject(json, "broker_choices", choices)) {
+        cJSON_Delete(choices); cJSON_Delete(json); free(cfg);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Недостаточно памяти");
+    }
     cJSON_AddStringToObject(json,"prefix",cfg->prefix);
     cJSON_AddBoolToObject(json, "connected", cloud_commands_connected());
     cJSON_AddBoolToObject(json, "busy", cloud_commands_busy());
@@ -560,6 +605,8 @@ PHONE_ONLY_HANDLER(ulp_calibration_post)
 PHONE_ONLY_HANDLER(config_get)
 PHONE_ONLY_HANDLER(config_post)
 PHONE_ONLY_HANDLER(departure_buzzer_post)
+PHONE_ONLY_HANDLER(departure_buzzer_pulse_post)
+PHONE_ONLY_HANDLER(departure_buzzer_preview_post)
 PHONE_ONLY_HANDLER(serial_log_post)
 PHONE_ONLY_HANDLER(mqtt_get)
 PHONE_ONLY_HANDLER(mqtt_post)
@@ -603,6 +650,8 @@ esp_err_t web_ui_start(void)
         {.uri="/api/config", .method=HTTP_POST, .handler=config_post_phone_only},
         {.uri="/api/config/serial-log", .method=HTTP_POST, .handler=serial_log_post_phone_only},
         {.uri="/api/config/departure-buzzer", .method=HTTP_POST, .handler=departure_buzzer_post_phone_only},
+        {.uri="/api/config/departure-buzzer-pulse", .method=HTTP_POST, .handler=departure_buzzer_pulse_post_phone_only},
+        {.uri="/api/config/departure-buzzer-preview", .method=HTTP_POST, .handler=departure_buzzer_preview_post_phone_only},
         {.uri="/api/mqtt", .method=HTTP_GET, .handler=mqtt_get_phone_only},
         {.uri="/api/mqtt", .method=HTTP_POST, .handler=mqtt_post_phone_only},
         {.uri="/api/mqtt/test", .method=HTTP_POST, .handler=mqtt_test_post_phone_only},

@@ -22,6 +22,7 @@ static void set_defaults(void)
     s_cfg.shunt_gpio = APP_DEFAULT_SHUNT_GPIO;
     s_cfg.serial_log_enabled = true;
     s_cfg.departure_buzzer_enabled = true;
+    s_cfg.departure_buzzer_pulse_ms = APP_DEFAULT_DEPARTURE_PULSE_MS;
     s_cfg.configuration_mode = false;
 }
 
@@ -30,6 +31,13 @@ static bool values_valid(int phone_rssi, uint32_t timer_a_ms)
     return phone_rssi >= APP_RSSI_THRESHOLD_MIN &&
            phone_rssi <= APP_RSSI_THRESHOLD_MAX &&
            timer_a_ms <= APP_TIMER_A_MS_MAX;
+}
+
+static bool departure_pulse_valid(uint32_t pulse_ms)
+{
+    return pulse_ms >= APP_DEPARTURE_PULSE_MIN_MS &&
+           pulse_ms <= APP_DEPARTURE_PULSE_MAX_MS &&
+           pulse_ms % APP_DEPARTURE_PULSE_STEP_MS == 0;
 }
 
 esp_err_t app_config_init(void)
@@ -45,6 +53,7 @@ esp_err_t app_config_init(void)
     uint32_t timer_a_ms = s_cfg.timer_a_ms;
     uint8_t serial_log = 1;
     uint8_t departure_buzzer = 1;
+    uint32_t departure_pulse_ms = APP_DEFAULT_DEPARTURE_PULSE_MS;
     nvs_get_i8(h, "phone_rssi", &phone_rssi);
     nvs_get_u32(h, "timer_a_ms", &timer_a_ms);
     nvs_get_u8(h, "serial_log", &serial_log);
@@ -52,6 +61,15 @@ esp_err_t app_config_init(void)
     if (err == ESP_ERR_NVS_NOT_FOUND) {
         err = nvs_set_u8(h, "departure_beep", departure_buzzer);
         if (err == ESP_OK) err = nvs_commit(h);
+    }
+    if (err == ESP_OK) {
+        err = nvs_get_u32(h, "departure_ms", &departure_pulse_ms);
+        if (err == ESP_ERR_NVS_NOT_FOUND ||
+            (err == ESP_OK && !departure_pulse_valid(departure_pulse_ms))) {
+            departure_pulse_ms = APP_DEFAULT_DEPARTURE_PULSE_MS;
+            err = nvs_set_u32(h, "departure_ms", departure_pulse_ms);
+            if (err == ESP_OK) err = nvs_commit(h);
+        }
     }
     nvs_close(h);
     if (err != ESP_OK) return err;
@@ -78,6 +96,7 @@ esp_err_t app_config_init(void)
     }
     s_cfg.serial_log_enabled = serial_log != 0;
     s_cfg.departure_buzzer_enabled = departure_buzzer != 0;
+    s_cfg.departure_buzzer_pulse_ms = departure_pulse_ms;
     remote_log_set_serial_enabled(s_cfg.serial_log_enabled);
     return ESP_OK;
 }
@@ -154,6 +173,25 @@ esp_err_t app_config_set_departure_buzzer_enabled(bool enabled)
     if (err == ESP_OK) err = nvs_commit(h);
     if (h) nvs_close(h);
     if (err == ESP_OK) s_cfg.departure_buzzer_enabled = enabled;
+    xSemaphoreGive(s_config_mutex);
+    return err;
+}
+
+esp_err_t app_config_set_departure_buzzer_pulse_ms(uint32_t pulse_ms)
+{
+    if (!departure_pulse_valid(pulse_ms)) return ESP_ERR_INVALID_ARG;
+    if (!s_config_mutex) return ESP_ERR_INVALID_STATE;
+    xSemaphoreTake(s_config_mutex, portMAX_DELAY);
+    if (s_cfg.departure_buzzer_pulse_ms == pulse_ms) {
+        xSemaphoreGive(s_config_mutex);
+        return ESP_OK;
+    }
+    nvs_handle_t h = 0;
+    esp_err_t err = nvs_open(NVS_NS, NVS_READWRITE, &h);
+    if (err == ESP_OK) err = nvs_set_u32(h, "departure_ms", pulse_ms);
+    if (err == ESP_OK) err = nvs_commit(h);
+    if (h) nvs_close(h);
+    if (err == ESP_OK) s_cfg.departure_buzzer_pulse_ms = pulse_ms;
     xSemaphoreGive(s_config_mutex);
     return err;
 }
