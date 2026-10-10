@@ -244,3 +244,7 @@ ESP 480 опубликован; публичные latest/tagged SHA-256 сов�
 Изменённые файлы этапа: android_lock_beacon/app/src/main/java/com/blelock/app/InternetAccess.kt, android_lock_beacon/app/src/main/java/com/blelock/app/InternetOpenProgressButton.kt, android_lock_beacon/BUILD_NUMBER, AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md, android_lock_beacon/TEST_REPORT.md.
 
 APP 306 опубликован: SHA-256 eea3422a5f020c48c63d43bfecd1b5ba23a4f7402183530dd27b2ef67221a34c. Публичные APK/metadata проверены publisher, APP 304 удалён, ESP global latest сохранён. Комплект production/android-release-306/.
+
+
+## Публичное описание проекта — 10.10.2026
+README описывает TheKidLock, функции замка, Android и обновления. Добавлена постоянная ссылка https://uah0.github.io/thekidlock/download/ — страница выбирает последний опубликованный app-v1.0.N и перенаправляет на APK. Постоянная ссылка прошивки сохранена. Публичный коммит 7ad1e3b отправлен в origin/main отдельным worktree: README.md и download/index.html; политика конфиденциальности сохранена. Изменены README.md, download/index.html, AUDIT.md, CHANGELOG.md, TEST_REPORT.md. Исходники приложения/прошивки не менялись.

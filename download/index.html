@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Скачать TheKidLock</title>
+<style>body{font-family:system-ui,sans-serif;max-width:560px;margin:48px auto;padding:0 20px;line-height:1.6}a{color:#1565c0}[hidden]{display:none}</style>
+</head>
+<body>
+<h1>TheKidLock для Android</h1>
+<p id="status">Находим последнюю версию приложения…</p>
+<p><a id="download" hidden>Скачать APK</a></p>
+<p><a href="https://github.com/uah0/thekidlock/releases?q=app-v&amp;expanded=true">Открыть релизы приложения на GitHub</a></p>
+<noscript>Для автоматического выбора версии включите JavaScript или откройте релизы по ссылке выше.</noscript>
+<script>
+async function findLatestApp(){
+ const status=document.getElementById('status'),download=document.getElementById('download');
+ try{
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);
+  let response;try{response=await fetch('https://api.github.com/repos/uah0/thekidlock/releases?per_page=100',{signal:controller.signal})}finally{clearTimeout(timer)}
+  if(!response.ok)throw Error('HTTP '+response.status);
+  const releases=(await response.json()).filter(r=>!r.draft&&!r.prerelease&&/^app-v1\.0\.\d+$/.test(r.tag_name));
+  releases.sort((a,b)=>Number(b.tag_name.split('.').pop())-Number(a.tag_name.split('.').pop()));
+  const latest=releases[0],asset=latest?.assets.find(a=>a.name==='thekidlock.apk');
+  if(!asset||asset.browser_download_url!==`https://github.com/uah0/thekidlock/releases/download/${latest.tag_name}/thekidlock.apk`)throw Error('APK отсутствует');
+  download.href=asset.browser_download_url;download.textContent='Скачать TheKidLock '+latest.tag_name.slice(5);download.hidden=false;
+  status.textContent='Начинается загрузка. Если она не началась, нажмите ссылку ниже.';
+  window.location.replace(asset.browser_download_url);
+ }catch(e){status.textContent='Не удалось найти последнюю версию. Откройте релизы приложения по ссылке ниже.'}
+}
+findLatestApp();
+</script>
+</body>
+</html>
