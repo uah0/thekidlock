@@ -5,8 +5,7 @@ TheKidLock — электронный замок на ESP32-S3 с Android-при
 ## Скачать
 
 - **[Скачать последнюю версию приложения Android](https://uah0.github.io/thekidlock/download/)** — постоянная ссылка, автоматически перенаправляет на актуальный APK.
-- **[Скачать последнюю прошивку замка](https://github.com/uah0/thekidlock/releases/latest/download/ble_lock_stage1_s3.bin)** — постоянная ссылка на зашифрованный OTA-образ.
-- [Релизы и описание изменений](https://github.com/uah0/thekidlock/releases).
+
 
 ## Возможности
 
