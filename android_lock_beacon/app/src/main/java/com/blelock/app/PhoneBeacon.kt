@@ -88,7 +88,7 @@ class PhoneBeacon(private val context: Context) {
     private var holdRequest: ServiceBeaconProtocol.HoldRequest? = null
     private var homeRequestId = 0
     private val homeTimeout = Runnable { synchronized(this) { finishHomeWifiRequest() } }
-    private val holdTimeout = Runnable { synchronized(this) { finishHoldRequest(false, "Таймаут ответа ESP32") } }
+    private val holdTimeout = Runnable { synchronized(this) { finishHoldRequest(false, "Таймаут ответа замка") } }
     val isHoldRequestActive: Boolean get() = synchronized(this) { holdRequest != null }
     val isHomeWifiRequestActive: Boolean get() = synchronized(this) { homeRequestId != 0 }
     val isServiceRequestActive: Boolean get() = isWifiProvisioningActive || isWebUiIpRequestActive || isHoldRequestActive || isHomeWifiRequestActive
@@ -256,7 +256,7 @@ class PhoneBeacon(private val context: Context) {
                     !preparedWrite && offset == 0) parseWebUiIp(value) else null
                 if (webUiIp != null) {
                     LockSettings(context).lockWifiIp = webUiIp
-                    Log.i(TAG, "ESP Web UI IPv4 received over encrypted BLE")
+                    Log.i(TAG, "IPv4 Web UI замка получен по зашифрованному BLE")
                     context.sendBroadcast(
                         Intent(ACTION_WEB_UI_IP_RECEIVED)
                             .setPackage(context.packageName)
@@ -290,8 +290,8 @@ class PhoneBeacon(private val context: Context) {
                             } else finishHoldRequest(true)
                         } else finishHoldRequest(false, when (serviceResult.code) {
                             1 -> "Телефон не зарегистрирован или нет доступа к запрошенным настройкам"
-                            2 -> "ESP32 не приняла команду"
-                            else -> "ESP32 не подтвердила режим: ошибка или таймаут"
+                            2 -> "Замок не принял команду"
+                            else -> "Замок не подтвердил режим: ошибка или таймаут"
                         })
                     } }
                 }

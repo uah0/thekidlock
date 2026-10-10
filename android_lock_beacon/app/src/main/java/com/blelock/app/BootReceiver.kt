@@ -12,7 +12,12 @@ class BootReceiver : BroadcastReceiver() {
             intent.action == Intent.ACTION_LOCKED_BOOT_COMPLETED
         val packageReplaced = intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
         if (!regularBoot && !lockedBoot && !packageReplaced) return
+        if (context.getSystemService(android.os.UserManager::class.java)?.isUserUnlocked == true) {
+            AppUpdateClient.cleanupInstalled(context)
+            AppUpdateWorker.schedule(context)
+        }
         val settings = LockSettings(context)
+        AutoOpenWidget.refresh(context, settings.autoOpenEnabled)
         if (!settings.autoOpenEnabled) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) !=

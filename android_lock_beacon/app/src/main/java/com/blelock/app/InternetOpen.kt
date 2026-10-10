@@ -49,8 +49,10 @@ object InternetOpen {
                 val tag = InternetAuth.sign(signingKey, InternetAuth.command(target, phone, time, id))
                 val request = JSONObject().put("phone", phone).put("time", time.toString())
                     .put("id", id.toString()).put("mac", tag).toString().toByteArray(Charsets.UTF_8)
-                client.publish("$prefix/command", request, 1, false)
+                val delivery = client.getTopic("$prefix/command").publish(request, 1, false)
                 progress(InternetOpenStage.COMMAND_SENT, null)
+                delivery.waitForCompletion(10_000)
+                progress(InternetOpenStage.BROKER_ACCEPTED, null)
                 val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
                 var completed = false
                 var lastResult = ""

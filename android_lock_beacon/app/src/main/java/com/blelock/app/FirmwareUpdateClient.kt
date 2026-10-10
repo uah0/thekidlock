@@ -161,7 +161,7 @@ internal object FirmwareUpdateClient {
         validateFirmwareLength(length)
         val magic = byteArrayOf(0xcf.toByte(), 0xb6.toByte(), 0x88.toByte(), 0x07)
         if (header.size != 512 || !header.copyOfRange(0, 4).contentEquals(magic)) {
-            throw IOException("Файл не является зашифрованной прошивкой ESP")
+            throw IOException("Файл не является зашифрованной прошивкой замка")
         }
         var appLength = 0L
         for (i in 0..3) appLength = appLength or ((header[404 + i].toLong() and 255) shl (8 * i))

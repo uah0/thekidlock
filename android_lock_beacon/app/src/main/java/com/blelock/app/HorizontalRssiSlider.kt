@@ -4,6 +4,7 @@ import android.content.Context
 import android.annotation.SuppressLint
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.view.MotionEvent
 import android.view.View
 import android.view.accessibility.AccessibilityEvent
@@ -22,13 +23,9 @@ internal class HorizontalLevelSlider(
     private val density = resources.displayMetrics.density
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = SettingsUi.DIVIDER
-        strokeWidth = 5f * density
-        strokeCap = Paint.Cap.ROUND
     }
     private val activePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = SettingsUi.ACCENT
-        strokeWidth = 5f * density
-        strokeCap = Paint.Cap.ROUND
     }
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = SettingsUi.ACCENT
@@ -44,6 +41,7 @@ internal class HorizontalLevelSlider(
     var value: Int = minValue
         private set
     private var dragging = false
+    private val trackPath = Path()
     private val minX get() = paddingLeft + 18f * density
     private val maxX get() = width - paddingRight - 18f * density
 
@@ -72,8 +70,22 @@ internal class HorizontalLevelSlider(
         val right = maxX.coerceAtLeast(left + 1f)
         val fraction = (value - minValue).toFloat() / (maxValue - minValue)
         val thumbX = left + fraction * (right - left)
-        canvas.drawLine(left, centerY, right, centerY, trackPaint)
-        canvas.drawLine(left, centerY, thumbX, centerY, activePaint)
+        val thinRadius = 2f * density
+        val thickRadius = 7f * density
+        trackPath.reset()
+        trackPath.moveTo(left, centerY - thinRadius)
+        trackPath.lineTo(right, centerY - thickRadius)
+        trackPath.cubicTo(right + thickRadius, centerY - thickRadius,
+            right + thickRadius, centerY + thickRadius, right, centerY + thickRadius)
+        trackPath.lineTo(left, centerY + thinRadius)
+        trackPath.cubicTo(left - thinRadius, centerY + thinRadius,
+            left - thinRadius, centerY - thinRadius, left, centerY - thinRadius)
+        trackPath.close()
+        canvas.drawPath(trackPath, trackPaint)
+        val savedCanvas = canvas.save()
+        canvas.clipRect(left - thinRadius, 0f, thumbX, height.toFloat())
+        canvas.drawPath(trackPath, activePaint)
+        canvas.restoreToCount(savedCanvas)
         canvas.drawCircle(thumbX, centerY, 12f * density, thumbPaint)
         canvas.drawCircle(thumbX, centerY, 12f * density, thumbOutlinePaint)
     }

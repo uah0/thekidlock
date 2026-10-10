@@ -594,7 +594,7 @@ class BleRepository(
                     scheduleSecureStatusProbeRetry("OPEN write status=$statusCode")
                     return
                 }
-                fail("ESP32 отклонила $pendingLockCommand, GATT status: $statusCode")
+                fail("Замок отклонил $pendingLockCommand, GATT status: $statusCode")
             }
         }
 

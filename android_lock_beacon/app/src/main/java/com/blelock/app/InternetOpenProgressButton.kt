@@ -18,13 +18,18 @@ import android.util.AttributeSet
 import android.view.View
 
 enum class InternetOpenStage {
-    IDLE, CONNECTING, COMMAND_SENT, UNLOCKED, CLOSING, CLOSED, CLOSED_WITHOUT_DOOR_OPEN, ERROR
+    IDLE, CONNECTING, COMMAND_SENT, BROKER_ACCEPTED, UNLOCKED, DOOR_OPEN, CLOSING, CLOSED, CLOSED_WITHOUT_DOOR_OPEN, ERROR
 }
+
+internal fun internetOpenDisplayedStage(previous: InternetOpenStage, next: InternetOpenStage): InternetOpenStage =
+    if (next == InternetOpenStage.CLOSING || next == InternetOpenStage.ERROR) previous else next
 
 internal fun internetOpenStageForReply(
     result: String, faults: Long, door: String? = null,
     lockWasOpened: Boolean = false, doorWasOpened: Boolean = false
 ): InternetOpenStage = when {
+    faults != 0L -> InternetOpenStage.ERROR
+    result in listOf("opened", "closing") && door == "open" -> InternetOpenStage.DOOR_OPEN
     result == "opened" && faults == 0L -> InternetOpenStage.UNLOCKED
     result == "closing" && door == "closed" && lockWasOpened && !doorWasOpened && faults == 0L ->
         InternetOpenStage.UNLOCKED
@@ -72,13 +77,14 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private val inactiveColor = context.getColor(R.color.stepper_pill_background)
     private val idleLabel = context.getString(R.string.open_via_internet)
     private var stage = InternetOpenStage.IDLE
+    private var displayedStage = InternetOpenStage.IDLE
     private var blinkOn = false
     private var blinkAnimator: ValueAnimator? = null
 
     init {
         isClickable = true
         isFocusable = true
-        elevation = dp(5f)
+        elevation = dp(1f)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         contentDescription = idleLabel
         foreground = RippleDrawable(
@@ -99,13 +105,14 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         blinkAnimator = null
         blinkOn = false
         stage = next
+        displayedStage = internetOpenDisplayedStage(displayedStage, next)
         contentDescription = descriptionFor(next, doorState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
         when (next) {
             InternetOpenStage.CLOSED, InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> {
                 isEnabled = false
-                scheduleReset(1000L)
+                scheduleReset(3000L)
             }
             InternetOpenStage.ERROR -> startErrorBlink()
             InternetOpenStage.IDLE -> isEnabled = true
@@ -138,6 +145,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private fun scheduleReset(delayMs: Long) {
         val task = Runnable {
             stage = InternetOpenStage.IDLE
+            displayedStage = InternetOpenStage.IDLE
             blinkOn = false
             blinkAnimator?.cancel()
             blinkAnimator = null
@@ -150,21 +158,26 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     }
 
     private fun descriptionFor(value: InternetOpenStage, doorState: String?): String {
-        val base = when (value) {
-            InternetOpenStage.IDLE -> idleLabel
-            InternetOpenStage.CONNECTING -> "Подключение к брокеру"
-            InternetOpenStage.COMMAND_SENT -> "Команда отправлена, ожидание замка"
-            InternetOpenStage.UNLOCKED -> "Замок открыт"
-            InternetOpenStage.CLOSING -> "Замок закрывается, ожидание ответной пластины"
-            InternetOpenStage.CLOSED -> "Замок закрыт"
-            InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> "Замок закрылся, дверь не открывалась"
-            InternetOpenStage.ERROR -> "Ошибка интернет-открытия"
-        }
-        return when (doorState) {
-            "open" -> "$base. Дверь открыта"
-            "closed" -> "$base. Дверь закрыта"
-            else -> base
-        }
+        return context.getString(when (value) {
+            InternetOpenStage.IDLE -> R.string.open_via_internet
+            InternetOpenStage.CONNECTING -> R.string.internet_command_sent
+            InternetOpenStage.COMMAND_SENT -> R.string.internet_command_sent
+            InternetOpenStage.BROKER_ACCEPTED -> R.string.internet_broker_accepted
+            InternetOpenStage.UNLOCKED -> R.string.internet_unlocked
+            InternetOpenStage.DOOR_OPEN -> R.string.internet_door_opened
+            InternetOpenStage.CLOSING -> if (displayedStage == InternetOpenStage.DOOR_OPEN)
+                R.string.internet_door_opened else R.string.internet_unlocked
+            InternetOpenStage.CLOSED, InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN ->
+                R.string.internet_closed_locked
+            InternetOpenStage.ERROR -> R.string.internet_error
+        })
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val desiredHeight = (96f * resources.displayMetrics.density *
+            resources.configuration.fontScale.coerceAtLeast(1f)).toInt()
+        setMeasuredDimension(resolveSize(minimumWidth, widthMeasureSpec),
+            resolveSize(desiredHeight, heightMeasureSpec))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -181,6 +194,31 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         canvas.clipPath(outerPath)
         fillPaint.color = idleColor
         canvas.drawRect(rect, fillPaint)
+        if (stage == InternetOpenStage.IDLE) {
+            canvas.restore()
+            borderPaint.color = 0xFFDCE5F0.toInt()
+            canvas.drawRoundRect(rect, radius, radius, borderPaint)
+            val icon = context.getDrawable(R.drawable.ic_handoff_cloud)!!
+            val iconTop = (height - dp(28f).toInt()) / 2
+            icon.setBounds(dp(20f).toInt(), iconTop, dp(48f).toInt(), iconTop + dp(28f).toInt())
+            icon.draw(canvas)
+            val label = android.text.SpannableString("$idleLabel\n${context.getString(R.string.send_remote_command)}").apply {
+                setSpan(android.text.style.RelativeSizeSpan(0.72f), idleLabel.length + 1, length, 0)
+                setSpan(android.text.style.ForegroundColorSpan(context.getColor(R.color.secondary_text)), idleLabel.length + 1, length, 0)
+            }
+            val paint = android.text.TextPaint(textPaint).apply {
+                color = context.getColor(R.color.primary_text)
+                textAlign = Paint.Align.LEFT
+            }
+            val layout = android.text.StaticLayout.Builder.obtain(label, 0, label.length, paint,
+                (width - dp(88f).toInt()).coerceAtLeast(1)).build()
+            canvas.save()
+            canvas.translate(dp(64f), (height - layout.height) / 2f)
+            layout.draw(canvas)
+            canvas.restore()
+            return
+        }
+        borderPaint.color = context.getColor(R.color.accent_blue)
         fillPaint.color = inactiveColor
         canvas.drawRect(progressRect, fillPaint)
 
@@ -190,13 +228,14 @@ class InternetOpenProgressButton @JvmOverloads constructor(
                 canvas.drawRect(progressRect, fillPaint)
             }
         } else {
-            val activeCount = when (stage) {
-                InternetOpenStage.CONNECTING -> 1
-                InternetOpenStage.COMMAND_SENT -> 2
+            val activeCount = when (displayedStage) {
+                InternetOpenStage.CONNECTING, InternetOpenStage.COMMAND_SENT -> 1
+                InternetOpenStage.BROKER_ACCEPTED -> 2
                 InternetOpenStage.UNLOCKED -> 3
-                InternetOpenStage.CLOSING -> 4
+                InternetOpenStage.DOOR_OPEN -> 4
+                InternetOpenStage.CLOSING -> if (displayedStage == InternetOpenStage.DOOR_OPEN) 4 else 3
                 InternetOpenStage.CLOSED -> 5
-                InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> 4
+                InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> 5
                 else -> 0
             }
             val segmentWidth = rect.width() / 5f
@@ -209,8 +248,15 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             }
         }
 
-        val labelBaseline = rect.top + rect.height() / 4f - (textPaint.ascent() + textPaint.descent()) / 2f
-        canvas.drawText(idleLabel, width / 2f, labelBaseline, textPaint)
+        val statusLabel = descriptionFor(displayedStage, null)
+        val statusPaint = android.text.TextPaint(textPaint).apply { textAlign = Paint.Align.LEFT }
+        val statusLayout = android.text.StaticLayout.Builder.obtain(statusLabel, 0,
+            statusLabel.length, statusPaint, (width - dp(32f).toInt()).coerceAtLeast(1))
+            .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER).build()
+        canvas.save()
+        canvas.translate(dp(16f), rect.top + (splitY - rect.top - statusLayout.height) / 2f)
+        statusLayout.draw(canvas)
+        canvas.restore()
 
         val segmentWidth = rect.width() / 5f
         for (index in 1..4) {

@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet("debug","clean","install","test")]
+    [ValidateSet("debug","release","clean","install","test")]
     [string]$Action = "debug",
     [ValidateSet("android_lock_beacon")]
     [string]$ProjectName = "android_lock_beacon",
@@ -64,13 +64,19 @@ if (-not [string]::IsNullOrWhiteSpace($OtaFirmwareUrl)) {
     $gradleProperties += "-PotaFirmwareUrl=$OtaFirmwareUrl"
 }
 
-if ($Action -in @("debug", "install")) {
+if ($Action -in @("debug", "release", "install")) {
     $buildNumberFile = Join-Path $ProjectDir "BUILD_NUMBER"
     $buildNumber = [int](Get-Content -LiteralPath $buildNumberFile -Raw).Trim()
     Set-Content -LiteralPath $buildNumberFile -Value ($buildNumber + 1) -Encoding ASCII
 }
 
 switch ($Action) {
+    "release" {
+        if (-not (Test-Path (Join-Path $ProjectDir "keystore.properties"))) {
+            throw "Нет постоянной подписи. Выполните tools/prepare_android_signing.py."
+        }
+        & ".\gradlew.bat" @gradleProperties assembleRelease
+    }
     "test" {
         & ".\gradlew.bat" @gradleProperties test
     }

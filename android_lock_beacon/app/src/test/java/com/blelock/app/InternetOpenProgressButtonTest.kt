@@ -5,6 +5,18 @@ import org.junit.Test
 
 class InternetOpenProgressButtonTest {
     @Test
+    fun closingAndErrorsDoNotInventAnotherVisibleStage() {
+        assertEquals(InternetOpenStage.UNLOCKED,
+            internetOpenDisplayedStage(InternetOpenStage.UNLOCKED, InternetOpenStage.CLOSING))
+        assertEquals(InternetOpenStage.DOOR_OPEN,
+            internetOpenDisplayedStage(InternetOpenStage.DOOR_OPEN, InternetOpenStage.CLOSING))
+        assertEquals(InternetOpenStage.BROKER_ACCEPTED,
+            internetOpenDisplayedStage(InternetOpenStage.BROKER_ACCEPTED, InternetOpenStage.ERROR))
+        assertEquals(InternetOpenStage.CLOSED,
+            internetOpenDisplayedStage(InternetOpenStage.DOOR_OPEN, InternetOpenStage.CLOSED))
+    }
+
+    @Test
     fun mapsConfirmedBrokerResultsToFiveProgressStages() {
         assertEquals(InternetOpenStage.UNLOCKED, internetOpenStageForReply("opened", 0))
         assertEquals(InternetOpenStage.CLOSING, internetOpenStageForReply("closing", 0))
@@ -32,6 +44,15 @@ class InternetOpenProgressButtonTest {
         )
         assertEquals(InternetOpenStage.CLOSED, internetOpenStageForReply("closed", 0, "unknown"))
         assertEquals(InternetOpenStage.ERROR, internetOpenStageForReply("closed", 0, "open"))
+    }
+
+    @Test
+    fun doorOpeningRequiresSignedDoorEvidenceAndNoFaults() {
+        assertEquals(InternetOpenStage.DOOR_OPEN, internetOpenStageForReply("opened", 0, "open"))
+        assertEquals(InternetOpenStage.DOOR_OPEN, internetOpenStageForReply("closing", 0, "open"))
+        assertEquals(InternetOpenStage.CLOSING, internetOpenStageForReply("closing", 0, "unknown"))
+        assertEquals(InternetOpenStage.ERROR, internetOpenStageForReply("closing", 1, "open"))
+        assertEquals(InternetOpenStage.ERROR, internetOpenStageForReply("closing", 1, "closed"))
     }
 
     @Test

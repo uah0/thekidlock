@@ -10,7 +10,7 @@ object WifiLockControl {
     data class Result(val holdOpen: Boolean)
 
     fun toggle(ip: String): Result {
-        require(ip.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) { "IP ESP32 не задан" }
+        require(ip.matches(Regex("\\d{1,3}(\\.\\d{1,3}){3}"))) { "IP замка не задан" }
         val base = "http://$ip"
         val current = request("$base/api/agent/status", "GET")
         val next = !current.getBoolean("hold_open")
@@ -22,7 +22,7 @@ object WifiLockControl {
             if (confirmed == next) return Result(confirmed)
             Thread.sleep(200)
         }
-        throw IOException("ESP32 не подтвердила переключение режима")
+        throw IOException("Замок не подтвердил переключение режима")
     }
 
     private fun request(address: String, method: String): JSONObject {
@@ -35,7 +35,7 @@ object WifiLockControl {
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) throw IOException("ESP32 HTTP $status: $body")
+            if (status !in 200..299) throw IOException("Замок HTTP $status: $body")
             return JSONObject(body)
         } finally {
             connection.disconnect()

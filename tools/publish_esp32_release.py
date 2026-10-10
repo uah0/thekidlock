@@ -33,8 +33,9 @@ def prune_old_releases(request, api, keep_id, keep_tag):
             raise ValueError("Latest release changed; cleanup stopped")
 
     check_latest()
-    releases = list_releases(request, api)
-    tags = request(f"{api}/git/matching-refs/tags/esp-v")
+    releases = [r for r in list_releases(request, api) if r["tag_name"].startswith("esp-v")]
+    tags = [t for t in request(f"{api}/git/matching-refs/tags/esp-v")
+            if t["ref"].startswith("refs/tags/esp-v")]
     keep_version = tuple(map(int, keep_tag.removeprefix("esp-v").split(".")))
     for tag in {r["tag_name"] for r in releases} | {t["ref"].removeprefix("refs/tags/") for t in tags}:
         if not re.fullmatch(r"esp-v\d+\.\d+\.\d+", tag):
@@ -57,7 +58,7 @@ def prune_old_releases(request, api, keep_id, keep_tag):
         request(f"{api}/git/refs/tags/{urllib.parse.quote(tag, safe='')}", "DELETE")
         removed_tags.append(tag)
     check_latest()
-    remaining = list_releases(request, api)
+    remaining = [r for r in list_releases(request, api) if r["tag_name"].startswith("esp-v")]
     if len(remaining) != 1 or remaining[0]["id"] != keep_id:
         raise ValueError("Release cleanup incomplete")
     return {"removed_releases": removed_releases, "removed_tags": removed_tags}

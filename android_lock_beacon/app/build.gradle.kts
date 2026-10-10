@@ -38,9 +38,9 @@ android {
         minSdk = 26
         targetSdk = 36
         testInstrumentationRunner = "com.blelock.app.WebUiOtaInstrumentation"
-        versionCode = 1
-        versionName = "1.0.0"
         val buildNumber = rootProject.file("BUILD_NUMBER").readText().trim().toInt()
+        versionCode = buildNumber
+        versionName = "1.0.$buildNumber"
         buildConfigField("int", "BUILD_NUMBER", buildNumber.toString())
         val buildTimestamp = LocalDateTime.now()
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))
@@ -82,5 +82,6 @@ dependencies {
     implementation("org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.5")
     implementation("androidx.core:core:1.13.1")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+    implementation("androidx.work:work-runtime:2.10.5")
     testImplementation("junit:junit:4.13.2")
 }

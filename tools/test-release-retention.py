@@ -79,6 +79,15 @@ class RetentionTests(unittest.TestCase):
             publisher.prune_old_releases(fixture.request, "https://api.github.com/repos/other/repo", 3, TAG)
         self.assertEqual(fixture.deleted, [])
 
+    def test_app_releases_and_tags_are_preserved(self):
+        fixture = GitHubFixture()
+        fixture.releases.append({"id": 500, "tag_name": "app-v1.0.287"})
+        fixture.tags.append("refs/tags/app-v1.0.287")
+        publisher.prune_old_releases(fixture.request, API, 3, TAG)
+        self.assertEqual({r["id"] for r in fixture.releases}, {3, 500})
+        self.assertIn("refs/tags/app-v1.0.287", fixture.tags)
+        self.assertNotIn("/releases/500", fixture.deleted)
+
 
 if __name__ == "__main__":
     unittest.main()

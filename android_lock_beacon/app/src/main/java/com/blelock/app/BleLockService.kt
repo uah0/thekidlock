@@ -195,8 +195,8 @@ class BleLockService : Service(), BleRepository.Listener {
                 updateNotification("Автоматический режим · BLE-маяк активен")
             } else if (phoneBeacon.isWebUiIpRequestActive) {
                 mode = Mode.WEB_UI_DISCOVERY
-                startAsForeground("ESP32 получила Wi-Fi · ожидаю Web UI IP")
-                updateNotification("ESP32 получила Wi-Fi · ожидаю Web UI IP")
+                startAsForeground("Замок получил Wi-Fi · ожидаю Web UI IP")
+                updateNotification("Замок получил Wi-Fi · ожидаю Web UI IP")
             } else {
                 mode = Mode.IDLE
                 stopSelfSafely()
@@ -262,6 +262,23 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // A bound service survives stopSelf; a new start must revive command handling.
         stopping = false
+        if (intent?.action == ACTION_AUTO_OPEN_TOGGLE) {
+            // Widget taps start this service directly, including when AUTO is OFF.
+            startAsForeground(getString(R.string.service_starting))
+            val enabled = !settings.autoOpenEnabled
+            if (enabled && !hasPermissions()) {
+                android.widget.Toast.makeText(this, R.string.widget_permissions_missing,
+                    android.widget.Toast.LENGTH_LONG).show()
+                stopSelfSafely()
+                return START_NOT_STICKY
+            }
+            settings.autoOpenEnabled = enabled
+            autoOffClosePending = false
+            autoOffCloseWriteInFlight = false
+            setAutomaticModeInternal(enabled)
+            Log.i(TAG, "Widget switched auto open -> $enabled")
+            return if (enabled) START_STICKY else START_NOT_STICKY
+        }
         if (intent?.action == ACTION_HOME_WIFI_REQUEST) {
             bluetoothAvailable = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
             if (!hasPermissions() || !bluetoothAvailable || phoneBeacon.isServiceRequestActive)
@@ -318,8 +335,8 @@ class BleLockService : Service(), BleRepository.Listener {
             } else {
                 mode = Mode.WEB_UI_DISCOVERY
                 phoneBeacon.startWebUiIpRequest()
-                startAsForeground("Ожидание Web UI IP от ESP32")
-                updateNotification("Ожидание Web UI IP от ESP32")
+                startAsForeground("Ожидание Web UI IP от замка")
+                updateNotification("Ожидание Web UI IP от замка")
             }
             return START_STICKY
         }
@@ -369,7 +386,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 repository.close()
                 repositoryActive = false
             }
-            startAsForeground("Настройка Wi-Fi · ждём ESP32")
+            startAsForeground("Настройка Wi-Fi · ждём замок")
             runCatching { phoneBeacon.startWifiProvisioning(ssid, password, hotspotIp) }
                 .onFailure {
                     Log.e(TAG, "Wi-Fi provisioning beacon failed", it)
@@ -725,7 +742,7 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     private fun requestAdminConnectionInternal() {
-        Log.w(TAG, "Legacy Android Central request rejected; ESP initiates BLE pairing and AUTO")
+        Log.w(TAG, "Запрос старого Android Central отклонён; BLE-регистрацию и AUTO инициирует замок")
     }
 
     private fun startHomeOtaInternal(): Boolean {
@@ -753,7 +770,7 @@ class BleLockService : Service(), BleRepository.Listener {
             return
         }
         if (mode == Mode.AUTO_OPEN) phoneBeacon.start()
-        val message = if (phoneBeacon.isServiceRequestActive) "Служебный BLE-обмен с ESP32"
+        val message = if (phoneBeacon.isServiceRequestActive) "Служебный BLE-обмен с замком"
             else "Автоматический режим · BLE-маяк активен"
         startAsForeground(message)
         updateNotification(message)
@@ -1027,6 +1044,7 @@ class BleLockService : Service(), BleRepository.Listener {
     companion object {
         private const val TAG = "BleLockService"
         const val ACTION_START = "com.blelock.app.action.START"
+        const val ACTION_AUTO_OPEN_TOGGLE = "com.blelock.app.action.AUTO_OPEN_TOGGLE"
         const val ACTION_HOLD_OPEN_TOGGLE = "com.blelock.app.action.HOLD_OPEN_TOGGLE"
         const val ACTION_HOME_WIFI_REQUEST = "com.blelock.app.action.HOME_WIFI_REQUEST"
         @Volatile var lastHoldCommandPending = false

@@ -4,7 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.UserManager
 
-class LockSettings(context: Context) {
+class LockSettings(private val context: Context) {
     private val storageContext = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N &&
         !context.isDeviceProtectedStorage) {
         context.createDeviceProtectedStorageContext()
@@ -29,6 +29,7 @@ class LockSettings(context: Context) {
         get() = preferences.getBoolean(KEY_AUTO_OPEN, false)
         set(value) {
             preferences.edit().putBoolean(KEY_AUTO_OPEN, value).commit()
+            AutoOpenWidget.refresh(context, value)
         }
 
     var ownerAccessConfirmed: Boolean
