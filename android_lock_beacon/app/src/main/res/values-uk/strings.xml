@@ -1,9 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_options_title">Застосунок</string>
-    <string name="app_options_settings">Налаштування застосунку</string>
-    <string name="app_options_simulator">Симулятор замка</string>
-    <string name="app_options_simulator_coming_soon">Симуляція замка з’явиться в майбутній версії.</string>
+    <string name="app_options_settings">Системні налаштування застосунку</string>
     <string name="app_language_title">Мова</string>
     <string name="back">Назад</string>
     <string name="widget_auto_enable">Вимкнено · увімкнути</string>

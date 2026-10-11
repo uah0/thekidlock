@@ -93,11 +93,7 @@ class Demo:
         if node.get("clickable") != "true":
             raise RuntimeError(f"Элемент не принимает нажатие: {pattern}")
         x1, y1, x2, y2 = self.bounds(node)
-        y = (y1+y2)//2
-        # The existing edge-to-edge back label overlaps the status bar on this phone.
-        if kind == "android.widget.TextView" and node.get("content-desc") in ("Назад", "Back"):
-            y = y2 - max(4, (y2-y1)//10)
-        self.adb("shell", "input", "tap", str((x1+x2)//2), str(y))
+        self.adb("shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2))
 
     def auto_mode(self, enabled):
         pattern = r"Автооткрытие замка|Auto-open lock|Автовідкриття замка"
@@ -185,7 +181,7 @@ class Demo:
         self.adb("shell", "am", "start", "-n", "com.blelock.app/.MainActivity")
         nodes = self.dump()
         if any(n.get("class") == "android.widget.RadioButton" for n in nodes):
-            self.tap(r"^Назад$|^Back$", "android.widget.TextView")
+            self.adb("shell", "input", "keyevent", "4")
         self.find(r"^Настройки замка|^Lock settings|^Налаштування замка", kind="android.widget.Button")
         if self.args.mode == "smoke":
             with self.record("00-smoke"):
@@ -193,7 +189,7 @@ class Demo:
                 self.tap(r"^Настройки приложения|^App settings|^Налаштування застосунку", "android.widget.ImageButton")
                 self.find(r"Язык|Language|Мова", kind="android.widget.TextView")
                 time.sleep(4)
-                self.tap(r"^Назад$|^Back$", "android.widget.TextView")
+                self.adb("shell", "input", "keyevent", "4")
                 self.find(r"^Настройки замка|^Lock settings|^Налаштування замка", kind="android.widget.Button")
                 time.sleep(3)
             return

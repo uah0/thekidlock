@@ -34,6 +34,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.window.OnBackInvokedCallback
+import android.window.OnBackInvokedDispatcher
 import android.widget.AdapterView
 import android.widget.Button
 import android.widget.EditText
@@ -111,7 +113,7 @@ class MainActivity : Activity() {
     private var runtimeWebPending = false
     private var webUiRequestPending = false
     private var optionsPageOpen = false
-    private var simulatorPageOpen = false
+    private var optionsBackCallback: OnBackInvokedCallback? = null
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLanguage.wrap(newBase))
@@ -607,12 +609,8 @@ class MainActivity : Activity() {
 
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
-        if (simulatorPageOpen) {
-            simulatorPageOpen = false
-            showOptionsPage()
-        } else if (optionsPageOpen) {
-            optionsPageOpen = false
-            setContentView(mainContentView)
+        if (optionsPageOpen) {
+            closeOptionsPage()
         } else if (serviceMenuRequested) {
             closeServiceMenu()
         } else {
@@ -729,6 +727,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        clearOptionsBackCallback()
         lockWebUiDialog?.dismiss()
         lockWebUiDialog = null
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
@@ -1064,43 +1063,39 @@ class MainActivity : Activity() {
 
     private fun showOptionsPage() {
         optionsPageOpen = true
-        simulatorPageOpen = false
+        if (Build.VERSION.SDK_INT >= 33 && optionsBackCallback == null) {
+            val callback = OnBackInvokedCallback { closeOptionsPage() }
+            optionsBackCallback = callback
+            onBackInvokedDispatcher.registerOnBackInvokedCallback(
+                OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback
+            )
+        }
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(16))
             setBackgroundColor(Color.WHITE)
-        }
-        val header = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        header.addView(TextView(this).apply {
-            text = "‹"
-            textSize = 42f
-            gravity = Gravity.CENTER
-            background = selectableBackground()
-            contentDescription = getString(R.string.back)
-            setOnClickListener {
-                optionsPageOpen = false
-                setContentView(mainContentView)
+            setOnApplyWindowInsetsListener { view, insets ->
+                val topInset: Int
+                val bottomInset: Int
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val bars = insets.getInsets(WindowInsets.Type.systemBars())
+                    topInset = bars.top
+                    bottomInset = bars.bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    topInset = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    bottomInset = insets.systemWindowInsetBottom
+                }
+                view.setPadding(dp(16), dp(12) + topInset, dp(16), dp(16) + bottomInset)
+                insets
             }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        header.addView(TextView(this).apply {
-            text = getString(R.string.app_options_title)
-            textSize = 22f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(getColor(R.color.primary_text))
-            gravity = Gravity.CENTER_VERTICAL
-        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
+        }
 
         root.addView(filledButton(R.string.app_options_settings) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:$packageName")))
         }, spacedFullWidth())
-        root.addView(filledButton(R.string.app_options_simulator) {
-            showSimulatorPlaceholder()
-        }, spacedFullWidth().apply { topMargin = dp(12) })
 
         root.addView(TextView(this).apply {
             text = getString(R.string.app_language_title)
@@ -1135,27 +1130,20 @@ class MainActivity : Activity() {
         }
         root.addView(languages, fullWidth())
         setContentView(root)
+        root.post { root.requestApplyInsets() }
     }
 
-    private fun showSimulatorPlaceholder() {
-        simulatorPageOpen = true
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(20))
-            setBackgroundColor(Color.WHITE)
+    private fun closeOptionsPage() {
+        optionsPageOpen = false
+        clearOptionsBackCallback()
+        setContentView(mainContentView)
+    }
+
+    private fun clearOptionsBackCallback() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            optionsBackCallback?.let(onBackInvokedDispatcher::unregisterOnBackInvokedCallback)
         }
-        root.addView(filledButton(R.string.back) {
-            simulatorPageOpen = false
-            showOptionsPage()
-        }, spacedFullWidth())
-        root.addView(TextView(this).apply {
-            text = getString(R.string.app_options_simulator_coming_soon)
-            textSize = 18f
-            setTextColor(getColor(R.color.primary_text))
-            gravity = Gravity.CENTER
-            setPadding(dp(12), dp(36), dp(12), dp(36))
-        }, fullWidth())
-        setContentView(root)
+        optionsBackCallback = null
     }
 
     // ---------- Layout helpers (grouped-card / iOS-style settings look) ----------

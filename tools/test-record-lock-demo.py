@@ -47,14 +47,6 @@ class DemoSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "не виден"):
             self.demo.bounds(ET.Element("node", {"bounds": "[0,0][0,0]"}))
 
-    def test_back_tap_avoids_status_bar_overlap(self):
-        self.nodes({"content-desc": "Назад", "class": "android.widget.TextView", "clickable": "true", "bounds": "[45,33][180,168]"})
-        calls = []
-        self.demo.adb = lambda *args: calls.append(args)
-        self.demo.tap("^Назад$", "android.widget.TextView")
-        self.assertEqual(calls[0][:3], ("shell", "input", "tap"))
-        self.assertGreater(int(calls[0][-1]), 128)
-
     def test_auto_mode_already_correct_no_command(self):
         self.nodes({"text": "Автооткрытие замка", "class": "android.widget.Switch", "checked": "false"})
         self.demo.tap = lambda *args: self.fail("Unexpected command")

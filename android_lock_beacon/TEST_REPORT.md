@@ -213,3 +213,24 @@ ADB 192.168.1.65:33719; подтверждены versionCode=328, versionName=1.
 Первая потоковая установка прервана потерей ADB; после переподключения установка
 --no-streaming завершена Success. Ориентация сохранена, восстановлена и проверена:
 accelerometer_rotation=0, user_rotation=0. Данные приложения не удалялись.
+
+## Android 330 — меню настроек приложения, 11.10.2026
+
+PASS: исходная debug-сборка проектным build-android.ps1 до изменений (329).
+PASS: release-сборка проектным build-android.ps1 -Action release (330).
+PASS: установка APK 1.0.330 по Wi-Fi ADB, версия подтверждена package dump.
+Размер 545969 байт; SHA-256 9DD08F434F9E3A952CF498A8BD84800DAEE83AB7CA69447CFEEBE3ABCB48388B.
+PASS: ориентация до установки сохранена, после установки восстановлена и повторно
+прочитана 0/0; после запуска и UI-проверок остаётся 0/0.
+PASS: два прохода главное меню → настройки → системный Back → главное меню.
+По UIAutomator подтверждены новое название, отсутствие строки/стрелки и симулятора.
+PASS: новое название открывает настройки TheKidLock в com.miui.securitycenter
+на этом Xiaomi; системный Back возвращает сначала меню приложения, затем главный экран.
+Первоначальное ожидание пакета com.android.settings в проверке уточнено под Xiaomi.
+PASS: 8 проверок ADB-инструмента после адаптации к системному Back.
+Android 26–32 на физическом устройстве не проверялись; сохранён legacy onBackPressed.
+ESP не менялся, видео не записывалось.
+Изменённые файлы: MainActivity.kt, strings.xml в values/values-en/values-ru/values-uk,
+android_lock_beacon/BUILD_NUMBER, tools/record-lock-demo.py, tools/test-record-lock-demo.py,
+AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md,
+android_lock_beacon/TEST_REPORT.md.
