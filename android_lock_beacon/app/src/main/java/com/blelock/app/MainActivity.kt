@@ -139,7 +139,7 @@ class MainActivity : Activity() {
     private var webUiBlePermissionPending = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private var webUiStartedAtMs = 0L
-    private var webUiCountdownStartSeconds = 6
+    private var webUiCountdownStartSeconds = 10
     private val signalHandler = Handler(Looper.getMainLooper())
     private val firmwareCheckRunnable: Runnable = object : Runnable {
         override fun run() {

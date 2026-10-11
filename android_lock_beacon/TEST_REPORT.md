@@ -234,3 +234,16 @@ ESP не менялся, видео не записывалось.
 android_lock_beacon/BUILD_NUMBER, tools/record-lock-demo.py, tools/test-record-lock-demo.py,
 AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md,
 android_lock_beacon/TEST_REPORT.md.
+
+## Android 332 — дефолт отсчёта Web UI, 11.10.2026
+
+PASS: исходная debug-сборка до изменений (331), итоговая release-сборка (332).
+PASS: проверено изменение только двух значений 6 → 10; diff --check без ошибок.
+PASS: Wi-Fi ADB установил release APK, package dump подтвердил 1.0.332/332.
+Ориентация сохранена до установки, восстановлена и повторно проверена: 0/0.
+Данные приложения не удалялись; отсчёт на чистых preferences отдельно на телефоне
+не проверялся, чтобы не сбрасывать его настройки. Новые тесты для смены константы
+не добавлялись. ESP не изменялся, запись видео остаётся приостановленной.
+Изменённые файлы: LockSettings.kt, MainActivity.kt, android_lock_beacon/BUILD_NUMBER,
+AUDIT.md, CHANGELOG.md, TEST_REPORT.md, android_lock_beacon/CHANGELOG.md,
+android_lock_beacon/TEST_REPORT.md.

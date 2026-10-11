@@ -69,7 +69,7 @@ class LockSettings(private val context: Context) {
         }
 
     var webUiCountdownSeconds: Int
-        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 6).coerceIn(1, 60)
+        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 10).coerceIn(1, 60)
         set(value) {
             preferences.edit().putInt(KEY_WEB_UI_COUNTDOWN_SECONDS, value.coerceIn(1, 60)).commit()
         }
