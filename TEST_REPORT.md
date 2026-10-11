@@ -418,3 +418,13 @@ accelerometer_rotation/user_rotation прочитаны как 0/0. APK уста
 Физический экран заблокирован, поэтому ручная проверка пунктов меню и пяти статусов
 не выполнена. Firmware build 484 успешно передан через encrypted OTA;
 device-agent подтвердил смену 10.0.483 → 10.0.484.
+
+## Android 325 — виртуальный замок
+
+PASS: `build-android.ps1 -Action test` — 71 debug + 71 release unit tests.
+PASS: `build-android.ps1 -Action release`; APK 1.0.325, 550233 байта,
+SHA-256 `DC03A1E73E82C8A962FC9251F8AF5F0212FDCC0BCE04C05E74C7164BD0C8153E`.
+PASS: APK установлен по Wi-Fi ADB, versionCode/versionName 325/1.0.325 подтверждены.
+До и после установки `accelerometer_rotation/user_rotation` равны 0/0.
+Ограничение: после старта приложения ADB стало offline, поэтому переключение режима
+и визуальное поведение на устройстве вручную не проверены.

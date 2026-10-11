@@ -32,6 +32,12 @@ class LockSettings(private val context: Context) {
             AutoOpenWidget.refresh(context, value)
         }
 
+    var simulatorModeEnabled: Boolean
+        get() = preferences.getBoolean(KEY_SIMULATOR_MODE, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_SIMULATOR_MODE, value).commit()
+        }
+
     var ownerAccessConfirmed: Boolean
         get() = preferences.getBoolean(KEY_OWNER_ACCESS_CONFIRMED, false)
         set(value) {
@@ -97,6 +103,7 @@ class LockSettings(private val context: Context) {
 
     companion object {
         private const val KEY_AUTO_OPEN = "auto_open_enabled"
+        private const val KEY_SIMULATOR_MODE = "simulator_mode_enabled"
         private const val KEY_OWNER_ACCESS_CONFIRMED = "owner_access_confirmed"
         private const val KEY_BATTERY_NOTICE_SHOWN = "battery_optimization_notice_shown"
         private const val KEY_AUTOSTART_NOTICE_SHOWN = "autostart_notice_shown"

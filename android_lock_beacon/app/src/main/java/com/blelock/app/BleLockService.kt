@@ -127,6 +127,10 @@ class BleLockService : Service(), BleRepository.Listener {
         }
 
         fun resumeAutomaticMode() = resumeAutomaticModeInternal()
+
+        fun stopForSimulatorMode() {
+            if (settings.simulatorModeEnabled) stopSelfSafely()
+        }
     }
     private val bluetoothStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -222,12 +226,12 @@ class BleLockService : Service(), BleRepository.Listener {
         super.onCreate()
         settings = LockSettings(this)
         phoneBeacon = PhoneBeacon(this)
-        mode = if (settings.autoOpenEnabled) Mode.AUTO_OPEN else Mode.IDLE
+        mode = if (settings.autoOpenEnabled && !settings.simulatorModeEnabled) Mode.AUTO_OPEN else Mode.IDLE
         createNotificationChannel()
         // Publish the foreground notification immediately when this service
         // is restoring an enabled beacon. A UI-only bind with Auto Open OFF
         // must not start a background advertising/client session.
-        if (settings.autoOpenEnabled) {
+        if (settings.autoOpenEnabled && !settings.simulatorModeEnabled) {
             startAsForeground(
                 if (hasPermissions()) R.string.service_starting
                 else R.string.service_permissions_missing
@@ -266,6 +270,10 @@ class BleLockService : Service(), BleRepository.Listener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         // A bound service survives stopSelf; a new start must revive command handling.
         stopping = false
+        if (settings.simulatorModeEnabled) {
+            stopSelfSafely()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_AUTO_OPEN_TOGGLE) {
             // Widget taps start this service directly, including when AUTO is OFF.
             startAsForeground(R.string.service_starting)
@@ -477,7 +485,7 @@ class BleLockService : Service(), BleRepository.Listener {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (settings.autoOpenEnabled && !stopping) {
+        if (settings.autoOpenEnabled && !settings.simulatorModeEnabled && !stopping) {
             scheduleServiceRecovery()
         }
         super.onTaskRemoved(rootIntent)

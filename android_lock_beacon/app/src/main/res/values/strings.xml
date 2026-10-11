@@ -2,8 +2,9 @@
 <resources>
     <string name="app_options_title">Application</string>
     <string name="app_options_settings">App settings</string>
-    <string name="app_options_simulator">Connect lock simulator</string>
+    <string name="app_options_simulator">Lock simulator</string>
     <string name="simulator_notice">Demo mode. No commands are sent to a real lock.</string>
+    <string name="simulator_busy_message">Wait for the current internet command to finish before enabling the simulator.</string>
     <string name="app_language_title">Language</string>
     <string name="back">Back</string>
     <string name="widget_auto_enable">Off · turn on</string>

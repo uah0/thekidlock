@@ -66,6 +66,7 @@ class MainActivity : Activity() {
     private lateinit var mainContentView: View
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
+    private var serviceBindRequested = false
     private lateinit var permissionButton: Button
     private lateinit var beaconModeSwitch: Switch
     private lateinit var manualOpenButton: Button
@@ -111,8 +112,12 @@ class MainActivity : Activity() {
     private var runtimeWebPending = false
     private var webUiRequestPending = false
     private var optionsPageOpen = false
-    private var simulatorPageOpen = false
-    private var simulatorSequenceRunnable: Runnable? = null
+    private var simulatorAutoOpenEnabled = false
+    private var simulatorHoldOpenEnabled = false
+    private var simulatorStatusString = R.string.lock_closed
+    private var simulatorInternetRunnable: Runnable? = null
+    private lateinit var simulatorNoticeView: TextView
+    private lateinit var simulatorStatusView: TextView
 
     override fun attachBaseContext(newBase: Context) {
         super.attachBaseContext(AppLanguage.wrap(newBase))
@@ -214,7 +219,9 @@ class MainActivity : Activity() {
         }
     }
     private val resumeService = Runnable {
-        if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
+        if (!settings.simulatorModeEnabled && settings.autoOpenEnabled && hasBlePermissions()) {
+            startAutoOpenService()
+        }
     }
     private var backgroundReceiverRegistered = false
     private var localHotspotReservation: WifiManager.LocalOnlyHotspotReservation? = null
@@ -302,6 +309,10 @@ class MainActivity : Activity() {
         AutoOpenWidget.refresh(this, settings.autoOpenEnabled)
         bleListener = object : BleRepository.Listener {
             override fun onBleState(state: BleRepository.State, detail: String) {
+                if (settings.simulatorModeEnabled) {
+                    lastBleState = BleRepository.State.IDLE
+                    return
+                }
                 lastBleState = state
                 when (state) {
                     BleRepository.State.OPEN_SENT -> {
@@ -374,6 +385,7 @@ class MainActivity : Activity() {
             }
 
             override fun onAdminAvailability(available: Boolean) {
+                if (settings.simulatorModeEnabled) return
                 if (available) adminProbeRetries = 0
                 if (!available && serviceMenuRequested && manualConnectionActive &&
                     repository.currentState == BleRepository.State.READY &&
@@ -602,19 +614,17 @@ class MainActivity : Activity() {
         setContentView(mainContentView)
         showBatteryOptimizationNoticeIfNeeded()
         workingModeState = workingModeState.copy(autoOpenEnabled = settings.autoOpenEnabled)
-        bindBleService()
+        if (settings.simulatorModeEnabled) stopRealLockServiceForSimulator()
+        else bindBleService()
         refreshState()
     }
 
     @Deprecated("Deprecated by Android in favor of predictive Back")
     override fun onBackPressed() {
-        if (simulatorPageOpen) {
-            cancelSimulatorSequence()
-            simulatorPageOpen = false
-            showOptionsPage()
-        } else if (optionsPageOpen) {
+        if (optionsPageOpen) {
             optionsPageOpen = false
             setContentView(mainContentView)
+            refreshState()
         } else if (serviceMenuRequested) {
             closeServiceMenu()
         } else {
@@ -652,11 +662,12 @@ class MainActivity : Activity() {
         // screen is visible. Starting ACTION_START here raced the Binder's
         // full-control request after a process restart and could delay the
         // visible connection until the background reconnect backoff expired.
-        registerBackgroundReceiver()
+        if (settings.simulatorModeEnabled) stopRealLockServiceForSimulator()
+        else registerBackgroundReceiver()
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
         workingModeState = workingModeState.copy(holdCommandConfirmed = false)
         refreshState()
-        showLegacyBleLocationNoticeIfNeeded()
+        if (!settings.simulatorModeEnabled) showLegacyBleLocationNoticeIfNeeded()
         if (webUiBrowserOpen && lockWebUiDialog?.isShowing != true) {
             webUiBrowserOpen = false
             if (localHotspotReservation != null) {
@@ -665,12 +676,12 @@ class MainActivity : Activity() {
                 finishWebUiIpRequest()
             }
         }
-        if (!webUiRequestPending && localHotspotReservation == null) {
+        if (!settings.simulatorModeEnabled && !webUiRequestPending && localHotspotReservation == null) {
             runCatching { startService(Intent(this, BleLockService::class.java)
                 .setAction(BleLockService.ACTION_HOME_WIFI_REQUEST)) }
                 .onFailure { appendLog("Не удалось запросить домашний Wi-Fi: ${it.message}") }
         }
-        showPendingFirmwareNotice()
+        if (!settings.simulatorModeEnabled) showPendingFirmwareNotice()
         refreshSettingsUpdateLabel()
         signalHandler.removeCallbacks(firmwareCheckRunnable)
         signalHandler.post(firmwareCheckRunnable)
@@ -684,7 +695,7 @@ class MainActivity : Activity() {
 
     override fun onStop() {
         super.onStop()
-        if (settings.autoOpenEnabled) {
+        if (settings.autoOpenEnabled && !settings.simulatorModeEnabled) {
             // The visible screen temporarily promotes the shared BLE session to
             // ADMIN. Screen lock/backgrounding does not destroy the Activity, so
             // onDestroy() cannot be relied on to restore background automation.
@@ -731,7 +742,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        cancelSimulatorSequence()
+        cancelSimulatorInternetSequence()
         lockWebUiDialog?.dismiss()
         lockWebUiDialog = null
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
@@ -740,12 +751,13 @@ class MainActivity : Activity() {
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
         signalHandler.removeCallbacks(webUiCountdown)
         signalHandler.removeCallbacks(firmwareCheckRunnable)
-        if (serviceBound) {
-            boundService?.unregisterClient(bleListener)
-            unbindService(serviceConnection)
+        if (serviceBindRequested) {
+            if (serviceBound) boundService?.unregisterClient(bleListener)
+            runCatching { unbindService(serviceConnection) }
             serviceBound = false
+            serviceBindRequested = false
         }
-        if (settings.autoOpenEnabled) startAutoOpenService()
+        if (settings.autoOpenEnabled && !settings.simulatorModeEnabled) startAutoOpenService()
         clearPhoneBeaconHotspotIp()
         localHotspotReservation?.close()
         localHotspotReservation = null
@@ -811,6 +823,26 @@ class MainActivity : Activity() {
         permissionButton = filledButton(R.string.grant_permissions) { requestMissingPermissions() }
         root.addView(permissionButton, spacedFullWidth())
 
+        simulatorNoticeView = TextView(this).apply {
+            text = getString(R.string.simulator_notice)
+            textSize = 14f
+            setTextColor(getColor(R.color.secondary_text))
+            setPadding(dp(4), dp(4), dp(4), dp(8))
+            visibility = View.GONE
+        }
+        root.addView(simulatorNoticeView, spacedFullWidth())
+        simulatorStatusView = TextView(this).apply {
+            text = getString(R.string.lock_closed)
+            textSize = 20f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(getColor(R.color.primary_text))
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(18), dp(16), dp(18))
+            background = getDrawable(R.drawable.bg_card)
+            visibility = View.GONE
+        }
+        root.addView(simulatorStatusView, spacedFullWidth())
+
         // Main controls intentionally resemble a simple industrial pendant:
         // large, well-separated tiles that are easy to hit with one hand.
         val accessCard = LinearLayout(this).apply {
@@ -824,6 +856,10 @@ class MainActivity : Activity() {
         accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 16))
         internetOpenButton = InternetOpenProgressButton(this).apply {
             setOnClickListener {
+                if (settings.simulatorModeEnabled) {
+                    startSimulatorInternetOpen()
+                    return@setOnClickListener
+                }
                 val started = InternetOpen.start(this@MainActivity,
                     { stage, door -> runOnUiThread { showStage(stage, door) } },
                     { message -> runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() } },
@@ -1067,7 +1103,6 @@ class MainActivity : Activity() {
 
     private fun showOptionsPage() {
         optionsPageOpen = true
-        simulatorPageOpen = false
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(16))
@@ -1086,6 +1121,7 @@ class MainActivity : Activity() {
             setOnClickListener {
                 optionsPageOpen = false
                 setContentView(mainContentView)
+                refreshState()
             }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         header.addView(TextView(this).apply {
@@ -1101,9 +1137,20 @@ class MainActivity : Activity() {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:$packageName")))
         }, spacedFullWidth())
-        root.addView(filledButton(R.string.app_options_simulator) {
-            showLockSimulator()
-        }, spacedFullWidth().apply { topMargin = dp(12) })
+        val simulatorSwitch = Switch(this).apply {
+            isChecked = settings.simulatorModeEnabled
+        }
+        val simulatorCard = newCard()
+        addRow(simulatorCard, switchRow(getString(R.string.app_options_simulator), simulatorSwitch))
+        root.addView(simulatorCard, topSpacedFullWidth(12))
+        simulatorSwitch.setOnCheckedChangeListener { _, enabled ->
+            if (enabled && InternetOpen.isBusy) {
+                simulatorSwitch.isChecked = false
+                Toast.makeText(this, R.string.simulator_busy_message, Toast.LENGTH_LONG).show()
+            } else {
+                setSimulatorModeEnabled(enabled)
+            }
+        }
 
         root.addView(TextView(this).apply {
             text = getString(R.string.app_language_title)
@@ -1140,94 +1187,105 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
-    private fun showLockSimulator() {
-        simulatorPageOpen = true
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(12), dp(16), dp(20))
-            setBackgroundColor(Color.WHITE)
+    private fun setSimulatorModeEnabled(enabled: Boolean) {
+        if (enabled == settings.simulatorModeEnabled) return
+        settings.simulatorModeEnabled = enabled
+        if (enabled) {
+            simulatorAutoOpenEnabled = false
+            simulatorHoldOpenEnabled = false
+            updateSimulatorStatus(R.string.lock_closed)
+            stopRealLockServiceForSimulator()
+            AutoOpenWidget.refresh(this, false)
+        } else {
+            cancelSimulatorInternetSequence()
+            if (::internetOpenButton.isInitialized) {
+                internetOpenButton.showStage(InternetOpenStage.IDLE)
+            }
+            registerBackgroundReceiver()
+            bindBleService()
+            if (settings.autoOpenEnabled && hasBlePermissions()) startAutoOpenService()
+            AutoOpenWidget.refresh(this, settings.autoOpenEnabled)
         }
-        root.addView(filledButton(R.string.back) {
-            cancelSimulatorSequence()
-            simulatorPageOpen = false
-            showOptionsPage()
-        }, spacedFullWidth())
+        optionsPageOpen = false
+        setContentView(mainContentView)
+        refreshState()
+    }
 
-        root.addView(TextView(this).apply {
-            text = getString(R.string.app_options_simulator)
-            textSize = 22f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(getColor(R.color.primary_text))
-            setPadding(dp(4), dp(16), dp(4), dp(8))
-        }, fullWidth())
-        root.addView(TextView(this).apply {
-            text = getString(R.string.simulator_notice)
-            textSize = 14f
-            setTextColor(getColor(R.color.secondary_text))
-            setPadding(dp(4), 0, dp(4), dp(16))
-        }, fullWidth())
-
-        val lockStatus = TextView(this).apply {
-            text = getString(R.string.lock_closed)
-            textSize = 20f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(getColor(R.color.primary_text))
-            gravity = Gravity.CENTER
-            setPadding(dp(16), dp(22), dp(16), dp(22))
-            background = getDrawable(R.drawable.bg_card)
+    private fun stopRealLockServiceForSimulator() {
+        signalHandler.removeCallbacks(resumeService)
+        signalHandler.removeCallbacks(adminSignalPoll)
+        signalHandler.removeCallbacks(otaStatusPoll)
+        signalHandler.removeCallbacks(clearHoldCommandConfirmation)
+        manualOpenCommandPending = false
+        keepOpenCommandPending = false
+        keepOpenStatusExpected = false
+        manualCommandWaitingForReady = false
+        hotspotCredentialWriteInFlight = false
+        pendingHotspotWifi = null
+        otaStartPending = false
+        runtimeWebPending = false
+        PassiveBleScan.stop(this)
+        if (serviceBound) {
+            boundService?.stopForSimulatorMode()
+            boundService?.unregisterClient(bleListener)
         }
-        root.addView(lockStatus, spacedFullWidth())
-
-        val demoModes = newCard()
-        val autoSwitch = Switch(this)
-        addRow(demoModes, switchRow(getString(R.string.mode_auto), autoSwitch))
-        val holdSwitch = Switch(this)
-        addRow(demoModes, switchRow(getString(R.string.mode_always_open), holdSwitch))
-        holdSwitch.setOnCheckedChangeListener { _, checked ->
-            lockStatus.setText(if (checked) R.string.internet_unlocked else R.string.lock_closed)
+        if (serviceBindRequested) {
+            runCatching { unbindService(serviceConnection) }
+            serviceBound = false
+            serviceBindRequested = false
+            boundService = null
         }
-        root.addView(demoModes, topSpacedFullWidth(16))
+        stopService(Intent(this, BleLockService::class.java))
+        manualConnectionActive = false
+        serviceMenuRequested = false
+        adminModeAvailable = false
+        lastBleState = BleRepository.State.IDLE
+        unregisterBackgroundReceiver()
+    }
 
-        val stages = intArrayOf(
-            R.string.internet_command_sent,
-            R.string.internet_broker_accepted,
+    private fun startSimulatorInternetOpen() {
+        if (!settings.simulatorModeEnabled || simulatorInternetRunnable != null) return
+        val stages = listOf(
+            InternetOpenStage.COMMAND_SENT,
+            InternetOpenStage.BROKER_ACCEPTED,
+            InternetOpenStage.UNLOCKED,
+            InternetOpenStage.DOOR_OPEN,
+            InternetOpenStage.CLOSED
+        )
+        val statusStrings = listOf(
+            R.string.lock_closed,
+            R.string.lock_closed,
             R.string.internet_unlocked,
             R.string.internet_door_opened,
             R.string.internet_closed_locked
         )
-        val internetButton = filledButton(R.string.open_via_internet) { }
-        var stageIndex = -1
-        lateinit var advanceStage: Runnable
-        advanceStage = Runnable {
-            if (!simulatorPageOpen) return@Runnable
-            stageIndex++
-            if (stageIndex < stages.size) {
-                internetButton.setText(stages[stageIndex])
-                when (stageIndex) {
-                    2 -> lockStatus.setText(R.string.internet_unlocked)
-                    3 -> lockStatus.setText(R.string.internet_door_opened)
-                    4 -> lockStatus.setText(R.string.internet_closed_locked)
-                }
-                signalHandler.postDelayed(advanceStage, 900L)
+        var index = 0
+        lateinit var advance: Runnable
+        advance = Runnable {
+            if (!settings.simulatorModeEnabled) return@Runnable
+            internetOpenButton.showStage(stages[index])
+            updateSimulatorStatus(statusStrings[index])
+            index++
+            if (index < stages.size) {
+                signalHandler.postDelayed(advance, 900L)
             } else {
-                simulatorSequenceRunnable = null
-                internetButton.isEnabled = true
+                simulatorHoldOpenEnabled = false
+                simulatorInternetRunnable = null
+                renderWorkingMode()
             }
         }
-        internetButton.setOnClickListener {
-            if (simulatorSequenceRunnable != null) return@setOnClickListener
-            stageIndex = -1
-            internetButton.isEnabled = false
-            simulatorSequenceRunnable = advanceStage
-            signalHandler.post(advanceStage)
-        }
-        root.addView(internetButton, topSpacedFullWidth(16))
-        setContentView(root)
+        simulatorInternetRunnable = advance
+        signalHandler.post(advance)
     }
 
-    private fun cancelSimulatorSequence() {
-        simulatorSequenceRunnable?.let(signalHandler::removeCallbacks)
-        simulatorSequenceRunnable = null
+    private fun cancelSimulatorInternetSequence() {
+        simulatorInternetRunnable?.let(signalHandler::removeCallbacks)
+        simulatorInternetRunnable = null
+    }
+
+    private fun updateSimulatorStatus(stringId: Int) {
+        simulatorStatusString = stringId
+        if (::simulatorStatusView.isInitialized) simulatorStatusView.setText(stringId)
     }
 
     // ---------- Layout helpers (grouped-card / iOS-style settings look) ----------
@@ -1394,7 +1452,11 @@ class MainActivity : Activity() {
             trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
                 intArrayOf(getColor(R.color.accent_blue), getColor(R.color.switch_track_off)))
             thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            setOnClickListener { toggleAutomaticMode(); isChecked = settings.autoOpenEnabled }
+            setOnClickListener {
+                toggleAutomaticMode()
+                isChecked = if (settings.simulatorModeEnabled) simulatorAutoOpenEnabled
+                    else settings.autoOpenEnabled
+            }
         }
         row.addView(beaconModeSwitch, LinearLayout.LayoutParams(dp(56), dp(48)))
         container.addView(row)
@@ -1405,8 +1467,10 @@ class MainActivity : Activity() {
             setValue(settings.phoneBeaconTxPowerLevel, notify = false)
             onValueChanged = { value ->
                 settings.phoneBeaconTxPowerLevel = value
-                startService(Intent(this@MainActivity, BleLockService::class.java)
-                    .setAction(BleLockService.ACTION_BEACON_TX_POWER_CHANGED))
+                if (!settings.simulatorModeEnabled) {
+                    startService(Intent(this@MainActivity, BleLockService::class.java)
+                        .setAction(BleLockService.ACTION_BEACON_TX_POWER_CHANGED))
+                }
             }
         }
         container.addView(beaconPowerSlider, fullWidth().apply { height = dp(48) })
@@ -1528,6 +1592,12 @@ class MainActivity : Activity() {
     }
 
     private fun refreshState() {
+        if (settings.simulatorModeEnabled) {
+            lastBleState = BleRepository.State.IDLE
+            updateMainControlsEnabled()
+            updateAdminButtonsEnabled()
+            return
+        }
         val permissionsGranted = hasBlePermissions()
         if (serviceBound) lastBleState = repository.currentState
         permissionButton.visibility = if (permissionsGranted) View.GONE else View.VISIBLE
@@ -1566,6 +1636,18 @@ class MainActivity : Activity() {
     private fun updateMainControlsEnabled() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         renderWorkingMode()
+        if (settings.simulatorModeEnabled) {
+            permissionButton.visibility = View.GONE
+            simulatorNoticeView.visibility = View.VISIBLE
+            simulatorStatusView.visibility = View.VISIBLE
+            hotspotOpenButton.visibility = View.GONE
+            adminContainer.visibility = View.GONE
+            if (::beaconPowerSlider.isInitialized) beaconPowerSlider.visibility = View.GONE
+            return
+        }
+        simulatorNoticeView.visibility = View.GONE
+        simulatorStatusView.visibility = View.GONE
+        if (::beaconPowerSlider.isInitialized) beaconPowerSlider.visibility = View.VISIBLE
         if (::hotspotOpenButton.isInitialized) {
             val settingsEnabled = settings.ownerAccessConfirmed
             hotspotOpenButton.visibility = if (settingsEnabled) View.VISIBLE else View.GONE
@@ -1630,6 +1712,7 @@ class MainActivity : Activity() {
     }
 
     private fun requestMissingPermissions() {
+        if (settings.simulatorModeEnabled) return
         val missing = requiredPermissions().filter {
             checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
         }
@@ -1641,7 +1724,7 @@ class MainActivity : Activity() {
     }
 
     private fun startAutoOpenService() {
-        if (!hasBlePermissions()) return
+        if (settings.simulatorModeEnabled || !hasBlePermissions()) return
         val intent = Intent(this, BleLockService::class.java)
             .setAction(BleLockService.ACTION_START)
         // Activity is in the foreground here, so startService avoids the
@@ -1651,12 +1734,19 @@ class MainActivity : Activity() {
     }
 
     private fun bindBleService() {
+        if (settings.simulatorModeEnabled) {
+            stopRealLockServiceForSimulator()
+            return
+        }
         if (serviceBound) return
         val intent = Intent(this, BleLockService::class.java)
-        bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        if (!serviceBindRequested) {
+            serviceBindRequested = bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
+        }
     }
 
     private fun startServiceConnection() {
+        if (settings.simulatorModeEnabled) return
         // The foreground service remains the only BLE owner. Admin mode is
         // requested through its Binder instead of creating an Activity GATT.
         manualConnectionActive = true
@@ -1671,6 +1761,7 @@ class MainActivity : Activity() {
     }
 
     private fun activateServiceMenu() {
+        if (settings.simulatorModeEnabled) return
         serviceMenuRequested = true
         updateAdminEntryState()
         if (adminModeAvailable && repository.currentState == BleRepository.State.READY) {
@@ -1777,6 +1868,7 @@ class MainActivity : Activity() {
     }
 
     private fun sendOpenCommand(keepOpen: Boolean) {
+        if (settings.simulatorModeEnabled) return
         manualOpenCommandPending = !keepOpen
         keepOpenCommandPending = keepOpen
         keepOpenStatusExpected = false
@@ -1792,6 +1884,11 @@ class MainActivity : Activity() {
     }
 
     private fun toggleAutomaticMode() {
+        if (settings.simulatorModeEnabled) {
+            simulatorAutoOpenEnabled = !simulatorAutoOpenEnabled
+            renderWorkingMode()
+            return
+        }
         if (!hasBlePermissions()) {
             autoOpenPermissionPending = true
             requestMissingPermissions()
@@ -1801,6 +1898,7 @@ class MainActivity : Activity() {
     }
 
     private fun setAutomaticBeaconEnabled(enabled: Boolean) {
+        if (settings.simulatorModeEnabled) return
         settings.autoOpenEnabled = enabled
         workingModeState = WorkingModeReducer.reduce(
             workingModeState, WorkingModeEvent.AutoOpenChanged(enabled)
@@ -1818,6 +1916,14 @@ class MainActivity : Activity() {
     }
 
     private fun toggleKeepOpenMode() {
+        if (settings.simulatorModeEnabled) {
+            simulatorHoldOpenEnabled = !simulatorHoldOpenEnabled
+            updateSimulatorStatus(
+                if (simulatorHoldOpenEnabled) R.string.internet_unlocked else R.string.lock_closed
+            )
+            renderWorkingMode()
+            return
+        }
         if (BleLockService.lastHoldCommandPending) return
         signalHandler.removeCallbacks(clearHoldCommandConfirmation)
         workingModeState = workingModeState.copy(holdCommandConfirmed = false)
@@ -1838,6 +1944,30 @@ class MainActivity : Activity() {
 
     private fun renderWorkingMode() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
+        if (settings.simulatorModeEnabled) {
+            manualOpenButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                R.drawable.ic_handoff_unlock, 0, 0, 0
+            )
+            manualOpenButton.setTextColor(getColor(R.color.primary_text))
+            manualOpenButton.isEnabled = true
+            manualOpenButton.alpha = 1f
+            beaconModeSwitch.isChecked = simulatorAutoOpenEnabled
+            beaconModeSwitch.isEnabled = true
+            manualKeepOpenButton.text = if (simulatorHoldOpenEnabled) {
+                getString(R.string.command_completed)
+            } else {
+                commandLabel(R.string.mode_always_open, R.string.send_lock_command)
+            }
+            manualKeepOpenButton.isEnabled = true
+            manualKeepOpenButton.alpha = 1f
+            manualKeepOpenButton.setTextColor(getColor(R.color.primary_text))
+            simulatorStatusView.setText(simulatorStatusString)
+            hotspotOpenButton.visibility = View.GONE
+            return
+        }
+        manualOpenButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            R.drawable.ic_handoff_bluetooth, 0, 0, 0
+        )
         val bluetoothReady = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
         val ui = WorkingModeUi.compute(workingModeState,
             bluetoothReady && (settings.registeredAccessConfirmed || settings.ownerAccessConfirmed) && !BleLockService.lastHoldCommandPending)
@@ -1867,6 +1997,7 @@ class MainActivity : Activity() {
     }
 
     private fun setAdminPanelVisible(visible: Boolean) {
+        if (settings.simulatorModeEnabled && visible) return
         adminContainer.visibility = if (visible) View.VISIBLE else View.GONE
         if (::privacyPolicyButton.isInitialized) {
             privacyPolicyButton.visibility = if (visible) View.GONE else View.VISIBLE
@@ -1895,6 +2026,12 @@ class MainActivity : Activity() {
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as? BleLockService.LocalBinder ?: return
+            if (settings.simulatorModeEnabled) {
+                boundService = binder
+                serviceBound = true
+                stopRealLockServiceForSimulator()
+                return
+            }
             boundService = binder
             repository = binder
             serviceBound = true
@@ -2147,6 +2284,7 @@ class MainActivity : Activity() {
     }
 
     private fun openEspWebUi() {
+        if (settings.simulatorModeEnabled) return
         if (!settings.ownerAccessConfirmed || hotspotCredentialWriteInFlight) return
         if (!hasBlePermissions()) {
             webUiBlePermissionPending = true

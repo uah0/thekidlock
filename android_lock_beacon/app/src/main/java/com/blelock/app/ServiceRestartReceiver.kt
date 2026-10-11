@@ -9,7 +9,8 @@ import android.util.Log
 class ServiceRestartReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val settings = LockSettings(context)
-        if (intent.action != ACTION_RESTART_SERVICE || !settings.autoOpenEnabled) return
+        if (intent.action != ACTION_RESTART_SERVICE || !settings.autoOpenEnabled ||
+            settings.simulatorModeEnabled) return
 
         val service = Intent(context, BleLockService::class.java)
             .setAction(BleLockService.ACTION_START)
