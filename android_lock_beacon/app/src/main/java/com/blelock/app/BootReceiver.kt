@@ -18,7 +18,7 @@ class BootReceiver : BroadcastReceiver() {
         }
         val settings = LockSettings(context)
         AutoOpenWidget.refresh(context, settings.autoOpenEnabled)
-        if (!settings.autoOpenEnabled || settings.simulatorModeEnabled) return
+        if (!settings.autoOpenEnabled) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
             (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) !=
                 android.content.pm.PackageManager.PERMISSION_GRANTED ||

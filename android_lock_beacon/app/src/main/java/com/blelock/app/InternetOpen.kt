@@ -14,9 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object InternetOpen {
     private const val MQTT_PORT = 1883
     private val busy = AtomicBoolean(false)
-    val isBusy: Boolean get() = busy.get()
     fun start(context: Context, progress: (InternetOpenStage, String?) -> Unit, onError: (String) -> Unit, done: () -> Unit): Boolean {
-        if (LockSettings(context).simulatorModeEnabled) return false
         if (!busy.compareAndSet(false, true)) return false
         val app = context.applicationContext
         Thread {

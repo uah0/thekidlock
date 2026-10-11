@@ -19,8 +19,7 @@ internal object PassiveBleScan {
     private const val REQUEST_CODE = 3107
 
     fun register(context: Context): Boolean {
-        val appSettings = LockSettings(context)
-        if (appSettings.simulatorModeEnabled || !appSettings.autoOpenEnabled) {
+        if (!LockSettings(context).autoOpenEnabled) {
             stop(context)
             return false
         }
@@ -154,12 +153,6 @@ class BleScanReceiver : android.content.BroadcastReceiver() {
 
     private fun receiveScanResult(context: Context, intent: Intent) {
         Log.i(TAG, "BLE_PENDING_INTENT_RECEIVED")
-        if (LockSettings(context).simulatorModeEnabled) {
-            PassiveBleScan.stop(context)
-            gate.release()
-            Log.i(TAG, "Ignoring scan event: lock simulator is active")
-            return
-        }
         val error = intent.getIntExtra(
             android.bluetooth.le.BluetoothLeScanner.EXTRA_ERROR_CODE,
             0
