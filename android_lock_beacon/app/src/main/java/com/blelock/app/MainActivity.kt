@@ -793,7 +793,7 @@ class MainActivity : Activity() {
             setImageResource(R.drawable.ic_handoff_settings)
             background = selectableBackground()
             contentDescription = getString(R.string.application_settings)
-            setOnClickListener { showOptionsPage() }
+            setHapticClickListener { showOptionsPage() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
 
@@ -813,7 +813,7 @@ class MainActivity : Activity() {
         accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 16))
         internetOpenButton = InternetOpenProgressButton(this).apply {
             visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
-            setOnClickListener {
+            setHapticClickListener {
                 val started = InternetOpen.start(this@MainActivity,
                     { stage, door, closeRemainingMs -> runOnUiThread { internetOpenButton.showStage(stage, door, closeRemainingMs) } },
                     { message -> runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() } },
@@ -847,7 +847,7 @@ class MainActivity : Activity() {
             maxLines = 4
             elevation = dp(4).toFloat()
             setPadding(dp(20), dp(20), dp(20), dp(20))
-            setOnClickListener { openEspWebUi() }
+            setHapticClickListener { openEspWebUi() }
             val settingsIcon = requireNotNull(getDrawable(R.drawable.ic_handoff_settings))
                 .mutate().apply { setTint(Color.BLACK) }
             setCompoundDrawablesRelativeWithIntrinsicBounds(
@@ -983,7 +983,7 @@ class MainActivity : Activity() {
             setPadding(dp(8), dp(12), dp(8), dp(12))
             isClickable = true
             isFocusable = true
-            setOnClickListener { showPrivacyPolicy() }
+            setHapticClickListener { showPrivacyPolicy() }
         }
         adminContainer.addView(Space(this), fullWidth().apply { height = dp(32) })
 
@@ -1061,7 +1061,7 @@ class MainActivity : Activity() {
                     setPadding(dp(8), dp(8), dp(8), dp(8))
                     isClickable = true
                     isFocusable = true
-                    setOnClickListener { installAppUpdate() }
+                    setHapticClickListener { installAppUpdate() }
                 }
                 addView(appUpdateButton, fullWidth())
                 addView(privacyPolicyButton, fullWidth())
@@ -1141,6 +1141,7 @@ class MainActivity : Activity() {
                 setTextColor(getColor(R.color.primary_text))
                 setPadding(dp(8), dp(10), dp(8), dp(10))
                 isChecked = tag == selectedTag
+                setOnClickListener { buttonHaptic() }
             }, RadioGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         languages.setOnCheckedChangeListener { group, checkedId ->
@@ -1151,7 +1152,7 @@ class MainActivity : Activity() {
                 if (Build.VERSION.SDK_INT < 33) recreate()
             }
         }
-        content.addView(languages, fullWidth())
+        content.addView(languages, mainScreenControlParams())
 
         appSettingsSystemButton = filledButton(R.string.app_options_settings) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
@@ -1167,10 +1168,10 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setTextColor(getColor(R.color.accent_blue))
             setPadding(dp(8), dp(14), dp(8), dp(14))
-            setOnClickListener {
+            setHapticClickListener {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/uah0/thekidlock")))
             }
-        }, fullWidth().apply { topMargin = dp(24) })
+        }, mainScreenControlParams(topMarginDp = 24))
         setContentView(root)
         root.post { root.requestApplyInsets() }
     }
@@ -1265,7 +1266,7 @@ class MainActivity : Activity() {
             isClickable = true
             isFocusable = true
             background = selectableBackground()
-            setOnClickListener { spinner.performClick() }
+            setHapticClickListener { spinner.performClick() }
             addView(rowLabel(label))
             addView(valueContainer)
         }
@@ -1380,7 +1381,8 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle(getString(R.string.app_update_title))
             .setMessage(getString(R.string.app_update_description, update.versionName, update.notes))
             .setNegativeButton(getString(R.string.later), null)
-            .setPositiveButton(getString(R.string.install)) { _, _ -> installAppUpdate() }.show()
+            .setPositiveButton(getString(R.string.install)) { _, _ -> installAppUpdate() }
+            .create().showWithHapticButtons()
     }
 
     private fun installAppUpdate() {
@@ -1444,7 +1446,7 @@ class MainActivity : Activity() {
         setTextColor(Color.WHITE)
         gravity = Gravity.CENTER
         setTypeface(typeface, Typeface.BOLD)
-        setOnClickListener { onClick() }
+        setHapticClickListener { onClick() }
     }
 
     private fun outlineButton(textRes: Int, onClick: () -> Unit): Button = styledButton(textRes).apply {
@@ -1452,14 +1454,14 @@ class MainActivity : Activity() {
         setTextColor(getColor(R.color.accent_blue))
         gravity = Gravity.CENTER
         setTypeface(typeface, Typeface.BOLD)
-        setOnClickListener { onClick() }
+        setHapticClickListener { onClick() }
     }
 
     private fun destructiveButton(textRes: Int, onClick: () -> Unit): Button = styledButton(textRes).apply {
         background = selectableBackground()
         setTextColor(getColor(R.color.danger_red))
         gravity = Gravity.CENTER_VERTICAL or Gravity.START
-        setOnClickListener { onClick() }
+        setHapticClickListener { onClick() }
     }
 
     private fun tintSwitch(switch: Switch) {
@@ -1510,7 +1512,7 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener { legacyLocationDialog = null }
-            .show()
+            .create().showWithHapticButtons()
     }
 
     private fun updateMainControlsEnabled() {
@@ -1650,7 +1652,7 @@ class MainActivity : Activity() {
                 .setTitle(R.string.revoke_keys)
                 .setMessage(R.string.revoke_keys_no_phones)
                 .setPositiveButton(android.R.string.ok, null)
-                .show()
+                .create().showWithHapticButtons()
             return
         }
         val selected = mutableSetOf<Int>()
@@ -1674,7 +1676,7 @@ class MainActivity : Activity() {
                             it.message ?: getString(R.string.revoke_keys_error), Toast.LENGTH_LONG).show() }
                 }
             }.create()
-        dialog.show()
+        dialog.showWithHapticButtons()
     }
 
 
@@ -1775,7 +1777,7 @@ class MainActivity : Activity() {
             }
             .setNegativeButton(android.R.string.cancel, null)
             .setOnDismissListener { showAutoStartNoticeIfNeeded() }
-            .show()
+            .create().showWithHapticButtons()
     }
 
     private fun showAutoStartNoticeIfNeeded() {
@@ -1795,7 +1797,7 @@ class MainActivity : Activity() {
                 runCatching { startActivity(intent) }
             }
             .setNegativeButton(android.R.string.cancel, null)
-            .show()
+            .create().showWithHapticButtons()
     }
 
     private fun isMiuiDevice(): Boolean {
@@ -2208,7 +2210,7 @@ class MainActivity : Activity() {
                         if (address == selectedBondAddress) getColor(R.color.row_selected)
                         else Color.TRANSPARENT
                     )
-                    setOnClickListener {
+                    setHapticClickListener {
                         selectedBondAddress = address
                         renderBondList(value)
                     }

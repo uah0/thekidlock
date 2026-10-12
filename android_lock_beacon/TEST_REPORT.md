@@ -490,3 +490,10 @@ SHA-256 APK: `f9d3a020477d9d15a809ec329e429cfc6b11e8ca27fb2a3a5504b95b646523a6`.
 - PASS release APK 1.0.393 установлен; системная ориентация `0/0` восстановлена и проверена.
 - PASS UI Automator: пять видимых кнопок главного экрана и кнопка системных настроек приложения имеют равную высоту 277 px.
 - Изменены `MainActivity.kt`, `bg_handoff_card_active.xml`, `ic_handoff_check.xml`, `values*/strings.xml`, `CHANGELOG.md`, `TEST_REPORT.md`.
+
+# 12.10.2026 — виброотклик кнопок и выравнивание настроек
+
+- PASS: исходная debug-сборка и итоговые debug/release unit tests проектным скриптом.
+- PASS: подписанный release APK 1.0.395 собран и установлен через ADB на `192.168.1.65:38489`; системные параметры ориентации до и после установки `0/0`.
+- PASS UI Automator: языковые RadioButton, кнопка системных настроек приложения и ссылка на проект имеют одинаковые горизонтальные границы `[144,936]` на текущем телефоне. В системных настройках телефона тактильный отклик разрешён (`haptic_feedback_enabled=1`).
+- Изменены `ButtonHaptics.kt`, `MainActivity.kt`, `SettingsUi.kt`, `BUILD_NUMBER`, `CHANGELOG.md`, `TEST_REPORT.md`.

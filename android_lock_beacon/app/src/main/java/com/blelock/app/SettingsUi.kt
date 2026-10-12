@@ -115,8 +115,8 @@ internal class NumberSettingRow(
             setSelectAllOnFocus(true)
         }
         val plus = compactButton(context, "+")
-        minus.setOnClickListener { nudge(-step) }
-        plus.setOnClickListener { nudge(step) }
+        minus.setHapticClickListener { nudge(-step) }
+        plus.setHapticClickListener { nudge(step) }
         control.addView(minus, LayoutParams(context.dp(42), context.dp(38)))
         control.addView(editor, LayoutParams(context.dp(76), context.dp(38)))
         control.addView(plus, LayoutParams(context.dp(42), context.dp(38)))
