@@ -1037,3 +1037,18 @@ GitHub API подтвердил опубликованный релиз с дв�
 - PASS UI Automator: все пять видимых кнопок главного экрана и кнопка системных настроек приложения имеют высоту 277 px на текущем телефоне.
 - PASS: повторный Agent API `firmware_version=10.0.556` и тот же `device_id`.
 - Изменённые файлы этапа: `android_lock_beacon/app/src/main/java/com/blelock/app/MainActivity.kt`, `android_lock_beacon/app/src/main/res/drawable/bg_handoff_card_active.xml`, `ic_handoff_check.xml`, десять `values*/strings.xml`, `main/web/index.html`, `tools/test-sound-slider.cjs`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md` и Android отчёты.
+
+## Виброотклик и стрелки крутилок — 12.10.2026
+
+- PASS: до изменений Android debug и ESP signed-dev 10.0.557 собраны проектными скриптами; замок не ответил Device Agent, исходная сборка по OTA не установлена.
+- PASS: после изменений `build-android.ps1 -Action test`, `build-android.ps1 -Action release`, `node tools/test-sound-slider.cjs`, проверка синтаксиса встроенного JavaScript и `build-esp32.ps1` выполнены успешно. ESP signed-dev 10.0.558 прошла RSA-проверку и encrypted OTA round-trip.
+- PASS: release APK 1.0.395 установлен на телефон `192.168.1.65:38489`; `accelerometer_rotation/user_rotation` до и после `0/0`. UI Automator подтвердил одинаковые границы по горизонтали `[144,936]` для девяти языков, системной кнопки и ссылки проекта.
+- NOT INSTALLED: Device Agent по `192.168.1.54` не ответил; поиск не нашёл ESP в ARP-кэше. OTA 10.0.558 и версия на замке не подтверждены.
+- Изменённые файлы: `main/web/index.html`, `android_lock_beacon/app/src/main/java/com/blelock/app/{ButtonHaptics.kt,MainActivity.kt,SettingsUi.kt}`, `BUILD_NUMBER`, `android_lock_beacon/BUILD_NUMBER`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`, `android_lock_beacon/CHANGELOG.md`, `android_lock_beacon/TEST_REPORT.md`.
+
+## Подписи Web UI крутилок — 12.10.2026
+
+- PASS baseline ESP signed-dev 10.0.559; OTA замку подтверждена Device Agent.
+- PASS: `build-esp32.ps1` собрал ESP signed-dev 10.0.560; подпись RSA и encrypted OTA round-trip проверены сборочным скриптом.
+- PASS OTA: Device Agent подтвердил обновление замка 10.0.559 → 10.0.560.
+- Изменены `main/web/index.html`, `BUILD_NUMBER`, `AUDIT.md`, `CHANGELOG.md`, `TEST_REPORT.md`.

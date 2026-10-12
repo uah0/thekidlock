@@ -168,6 +168,7 @@ input:focus,select:focus{border-color:var(--accent)}
 .knob-body{stroke:var(--border);stroke-width:1.5}
 .knob-grip{fill:none;stroke:rgba(255,255,255,.16);stroke-width:5;stroke-dasharray:1.5 3.1}
 .knob-rot line{stroke:var(--accent);stroke-width:5;stroke-linecap:round}
+.knob-direction{fill:none;stroke:var(--text-dim);stroke-width:3;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .knob-num{fill:var(--text);font-size:27px;font-weight:650;text-anchor:middle;font-variant-numeric:tabular-nums}
 .knob-body.save-flash{animation:knob-save-flash 700ms ease-out}
 @keyframes knob-save-flash{0%,100%{fill:var(--knob-rest-fill)}20%,55%{fill:var(--good)}38%,75%{fill:var(--knob-rest-fill)}}
@@ -305,26 +306,26 @@ table.bonds td:first-child{font-family:var(--mono)}
   <div class="actions-row" style="margin-bottom:18px"><button data-wui="calibration_wizard" onclick="window.open('/calibration','lockCalibration','width=720,height=820')"></button></div>
 
     <div class="field">
-      <label for="pr"><span data-wui="opening_zone"></span> · <span id="prValue"></span></label>
+      <label for="pr"><span data-wui="opening_zone"></span></label>
       <input id="pr" class="zone-slider" type="range" min="30" max="127" step="1" value="75" data-wui-aria="opening_zone_aria" oninput="updateZoneValue()" onchange="saveConfig('prKnob')">
       <div id="prKnob" class="knob-control" data-input="pr" data-unit="dBm" data-format="opening-zone" data-wui-aria="opening_zone_aria"></div>
 
     </div>
     <div class="field">
-        <label for="departurePulse"><span data-wui="open_lock_sound_duration"></span> · <span id="departurePulseValue"></span></label>
+        <label for="departurePulse"><span data-wui="open_lock_sound_duration"></span></label>
       <input id="departurePulse" class="zone-slider" type="range" min="0" max="1000" step="1" value="635" oninput="updateDeparturePulseValue(true)" onchange="saveDeparturePulse()">
       <div id="departurePulseKnob" class="knob-control" data-input="departurePulse" data-unit="ms" data-format="pulse" data-wui-aria="open_lock_sound_duration"></div>
     </div>
 
     <div class="field-row">
       <div class="field" style="flex:1">
-        <label for="ta"><span data-wui="lock_close_delay"></span> · <span id="timerAValue"></span></label>
+        <label for="ta"><span data-wui="lock_close_delay"></span></label>
         <input id="ta" class="zone-slider" type="range" min="3000" max="10000" step="100" value="3000" oninput="updateTimerAValue()" onchange="saveConfig('taKnob')">
         <div id="taKnob" class="knob-control" data-input="ta" data-unit="s" data-format="seconds" data-wui-aria="lock_close_delay"></div>
       </div>
     </div>
     <div class="field">
-      <label for="beaconReopenProtection"><span data-wui="beacon_reopen_protection"></span> · <span id="beaconReopenProtectionValue"></span></label>
+      <label for="beaconReopenProtection"><span data-wui="beacon_reopen_protection"></span></label>
       <input id="beaconReopenProtection" class="zone-slider" type="range" min="3000" max="8000" step="100" value="3000" oninput="updateBeaconReopenProtectionValue()" onchange="saveConfig('beaconReopenProtectionKnob')">
       <div id="beaconReopenProtectionKnob" class="knob-control" data-input="beaconReopenProtection" data-unit="s" data-format="seconds" data-wui-aria="beacon_reopen_protection"></div>
     </div>
@@ -382,6 +383,8 @@ async function inlineConfirm(key,message,action){let now=Date.now();if(pendingCo
     const ticks=[];for(let i=0;i<TICKS;i++){const a=-135+SW*i/(TICKS-1),big=i%9===0,p=point(a,big?86:89),q=point(a,96);ticks.push(svgEl('line',{class:'knob-tick',x1:p[0],y1:p[1],x2:q[0],y2:q[1]},svg))}
     const arc=svgEl('path',{class:'knob-arc'},svg),body=svgEl('circle',{class:'knob-body',cx:100,cy:100,r:62,fill:'url(#'+gid+')'},svg);body.style.setProperty('--knob-rest-fill','url(#'+gid+')');svgEl('circle',{class:'knob-grip',cx:100,cy:100,r:59},svg);
     const rot=svgEl('g',{class:'knob-rot'},svg);svgEl('line',{x1:100,y1:44,x2:100,y2:58},rot);const num=svgEl('text',{class:'knob-num',x:100,y:108},svg);svgEl('text',{class:'knob-unit',x:100,y:126},svg).textContent=el.dataset.unit||'';
+    svgEl('path',{class:'knob-direction',d:'M78 172H60l8-7M60 172l8 7'},svg);
+    svgEl('path',{class:'knob-direction',d:'M122 172h18l-8-7M140 172l-8 7'},svg);
     function draw(){const a=-135+SW*fraction,s=point(-135,78),e=point(a,78);rot.setAttribute('transform','rotate('+a+' 100 100)');arc.setAttribute('d',fraction<.002?'':'M'+s[0]+' '+s[1]+' A78 78 0 '+(a+135>180?1:0)+' 1 '+e[0]+' '+e[1]);ticks.forEach((t,i)=>t.classList.toggle('on',i/(TICKS-1)<=fraction+1e-6));
       let shown=value;if(el.dataset.format==='opening-zone')shown=-value;else if(el.dataset.format==='pulse')shown=pulseSliderToMs(value);else if(el.dataset.format==='seconds')shown=(value/1000).toFixed(1).replace('.',wui('decimal_separator'));
       num.textContent=shown;el.setAttribute('aria-valuenow',value);el.setAttribute('aria-valuetext',input.getAttribute('aria-valuetext')||String(shown)+(el.dataset.unit?' '+el.dataset.unit:''));
@@ -399,6 +402,8 @@ async function inlineConfirm(key,message,action){let now=Date.now();if(pendingCo
   }
   document.querySelectorAll('.knob-control').forEach(initKnob);
 })();
+
+document.addEventListener('click',e=>{if(e.target.closest('button')&&window.BleLockHaptics)window.BleLockHaptics.tick()});
 
 async function loadStatus(){
   try{
@@ -426,13 +431,13 @@ async function loadUlp(){
 // Slider values map to the negative RSSI threshold expected by the API.
 function zoneSliderToRssi(){return -Number(pr.value)}
 function rssiToZoneSlider(value){return Math.min(127,Math.max(30,-Number(value)))}
-function updateZoneValue(){prValue.textContent=zoneSliderToRssi()+' dBm';pr.setAttribute('aria-valuetext',prValue.textContent);prKnob.setAttribute('aria-valuetext',prValue.textContent)}
+function updateZoneValue(){const value=zoneSliderToRssi()+' dBm';pr.setAttribute('aria-valuetext',value);prKnob.setAttribute('aria-valuetext',value)}
 async function loadConfig(){let c=await j('/api/config');pr.value=rssiToZoneSlider(c.phone_rssi_threshold);prKnob.knobValue=pr.value;updateZoneValue();ta.value=c.timer_a_ms;taKnob.knobValue=ta.value;beaconReopenProtection.value=c.beacon_reopen_protection_ms;beaconReopenProtectionKnob.knobValue=beaconReopenProtection.value;updateTimerAValue();updateBeaconReopenProtectionValue();savedDeparturePulse=c.departure_buzzer_enabled?Math.min(120,Math.max(0,c.departure_buzzer_pulse_ms??20)):0;departurePulse.value=pulseMsToSlider(savedDeparturePulse);departurePulseKnob.knobValue=departurePulse.value;updateDeparturePulseValue()}
 let savedDeparturePulse=20;
 let departurePreviewPending=null,departurePreviewRunning=false;
 function pulseSliderToMs(value){return Math.round(Math.expm1(Math.min(1000,Math.max(0,Number(value)))/1000*Math.log1p(120)))}
 function pulseMsToSlider(value){return Math.round(Math.log1p(Math.min(120,Math.max(0,Number(value))))/Math.log1p(120)*1000)}
-function updateDeparturePulseValue(preview=false){const ms=pulseSliderToMs(departurePulse.value);departurePulseValue.textContent=ms===0?wui('sound_off'):wui('milliseconds',{value:ms});departurePulse.setAttribute('aria-valuetext',departurePulseValue.textContent);departurePulseKnob.setAttribute('aria-valuetext',departurePulseValue.textContent);if(preview){departurePreviewPending=ms;sendDeparturePreview()}}
+function updateDeparturePulseValue(preview=false){const ms=pulseSliderToMs(departurePulse.value),value=ms===0?wui('sound_off'):wui('milliseconds',{value:ms});departurePulse.setAttribute('aria-valuetext',value);departurePulseKnob.setAttribute('aria-valuetext',value);if(preview){departurePreviewPending=ms;sendDeparturePreview()}}
 async function sendDeparturePreview(){if(departurePreviewRunning)return;departurePreviewRunning=true;try{while(departurePreviewPending!==null){const ms=departurePreviewPending;departurePreviewPending=null;await j('/api/config/departure-buzzer-preview?ms='+encodeURIComponent(ms),{method:'POST'})}}catch(e){departurePreviewPending=null;showNotice(wui('preview_sound_failed',{error:uiError(e)}),true)}finally{departurePreviewRunning=false}}
 async function saveDeparturePulse(){if(departurePulse.disabled)return;departurePulse.disabled=true;try{const ms=pulseSliderToMs(departurePulse.value);await j('/api/config/departure-buzzer-pulse?ms='+encodeURIComponent(ms),{method:'POST'});savedDeparturePulse=ms;departurePulseKnob.flashSavedValue()}catch(e){departurePulse.value=pulseMsToSlider(savedDeparturePulse);departurePulseKnob.knobValue=departurePulse.value;updateDeparturePulseValue();showNotice(uiError(e),true)}finally{departurePulse.disabled=false}}
 
@@ -449,8 +454,8 @@ async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpas
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent=wui('saved');setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent=wui('save_error');throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent=wui('saved')}catch(e){wifiSaved.textContent=uiError(e)}}
 async function restartEsp(){try{let reply=await j('/api/system/restart',{method:'POST'});if(reply.accepted){restartButton.classList.remove('command-ok');void restartButton.offsetWidth;restartButton.classList.add('command-ok');setTimeout(()=>restartButton.classList.remove('command-ok'),700)}}catch(e){showNotice(wui('restart_not_confirmed',{error:uiError(e)}),true)}}
-function updateTimerAValue(){timerAValue.textContent=wui('seconds',{value:(Number(ta.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});taKnob.setAttribute('aria-valuetext',timerAValue.textContent)}
-function updateBeaconReopenProtectionValue(){beaconReopenProtectionValue.textContent=wui('seconds',{value:(Number(beaconReopenProtection.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});beaconReopenProtectionKnob.setAttribute('aria-valuetext',beaconReopenProtectionValue.textContent)}
+function updateTimerAValue(){const value=wui('seconds',{value:(Number(ta.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});ta.setAttribute('aria-valuetext',value);taKnob.setAttribute('aria-valuetext',value)}
+function updateBeaconReopenProtectionValue(){const value=wui('seconds',{value:(Number(beaconReopenProtection.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});beaconReopenProtection.setAttribute('aria-valuetext',value);beaconReopenProtectionKnob.setAttribute('aria-valuetext',value)}
 let configSaveRunning=false;const configSavePendingKnobs=new Set();
 async function saveConfig(knobId){if(knobId)configSavePendingKnobs.add(knobId);if(configSaveRunning)return;configSaveRunning=true;try{while(configSavePendingKnobs.size){const changedKnobs=[...configSavePendingKnobs];configSavePendingKnobs.clear();let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value,beacon_reopen_protection_ms:beaconReopenProtection.value});await j('/api/config?'+q,{method:'POST'});changedKnobs.forEach(id=>document.getElementById(id)?.flashSavedValue())}}catch(e){configSavePendingKnobs.clear();showNotice(uiError(e),true)}finally{configSaveRunning=false}}
 async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice(wui('open_command_sent'))}catch(e){showNotice(uiError(e),true)}}
