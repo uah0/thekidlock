@@ -5,6 +5,14 @@ import org.junit.Test
 
 class InternetOpenProgressButtonTest {
     @Test
+    fun closeCountdownRoundsUpAndStopsAtZero() {
+        assertEquals(20, internetCloseCountdownSeconds(19_001))
+        assertEquals(1, internetCloseCountdownSeconds(1))
+        assertEquals(0, internetCloseCountdownSeconds(0))
+        assertEquals(0, internetCloseCountdownSeconds(-1))
+    }
+
+    @Test
     fun closingAndErrorsDoNotInventAnotherVisibleStage() {
         assertEquals(InternetOpenStage.UNLOCKED,
             internetOpenDisplayedStage(InternetOpenStage.UNLOCKED, InternetOpenStage.CLOSING))

@@ -146,10 +146,6 @@ class BleLockService : Service(), BleRepository.Listener {
     }
     private val phoneBeaconReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == PhoneBeacon.ACTION_HOME_WIFI_FINISHED) {
-                restoreBeaconMode()
-                return
-            }
             if (intent.action == PhoneBeacon.ACTION_HOLD_OPEN_RESULT) {
                 lastHoldCommandPending = false
                 lastHoldCommandError = intent.getStringExtra(PhoneBeacon.EXTRA_ERROR).orEmpty()
@@ -164,7 +160,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 Log.i(TAG, "LocalOnlyHotspot stopped; PhoneBeacon hotspot IP cleared")
                 if (phoneBeacon.isWifiProvisioningActive) {
                     phoneBeacon.cancelWifiProvisioning()
-                    if (phoneBeacon.isHoldRequestActive || phoneBeacon.isHomeWifiRequestActive) {
+                    if (phoneBeacon.isHoldRequestActive) {
                         restoreBeaconMode()
                         return
                     }
@@ -186,7 +182,7 @@ class BleLockService : Service(), BleRepository.Listener {
                 }
                 return
             }
-            if (intent.action == PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED && (phoneBeacon.isHoldRequestActive || phoneBeacon.isHomeWifiRequestActive)) {
+            if (intent.action == PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED && phoneBeacon.isHoldRequestActive) {
                 restoreBeaconMode()
                 return
             }
@@ -248,7 +244,6 @@ class BleLockService : Service(), BleRepository.Listener {
                 IntentFilter().apply {
                     addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
                     addAction(PhoneBeacon.ACTION_HOLD_OPEN_RESULT)
-                    addAction(PhoneBeacon.ACTION_HOME_WIFI_FINISHED)
                     addAction(ACTION_CLEAR_HOTSPOT_IP)
                 }, RECEIVER_NOT_EXPORTED)
         } else {
@@ -257,7 +252,6 @@ class BleLockService : Service(), BleRepository.Listener {
                 IntentFilter().apply {
                     addAction(PhoneBeacon.ACTION_WIFI_PROVISIONING_DISCONNECTED)
                     addAction(PhoneBeacon.ACTION_HOLD_OPEN_RESULT)
-                    addAction(PhoneBeacon.ACTION_HOME_WIFI_FINISHED)
                     addAction(ACTION_CLEAR_HOTSPOT_IP)
                 })
         }
@@ -282,16 +276,6 @@ class BleLockService : Service(), BleRepository.Listener {
             setAutomaticModeInternal(enabled)
             Log.i(TAG, "Widget switched auto open -> $enabled")
             return if (enabled) START_STICKY else START_NOT_STICKY
-        }
-        if (intent?.action == ACTION_HOME_WIFI_REQUEST) {
-            bluetoothAvailable = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
-            if (!hasPermissions() || !bluetoothAvailable || phoneBeacon.isServiceRequestActive)
-                return START_NOT_STICKY
-            if (repositoryActive) { repository.close(); repositoryActive = false }
-            startAsForeground(R.string.service_home_wifi_request)
-            phoneBeacon.requestHomeWifi()
-            restoreBeaconMode()
-            return START_NOT_STICKY
         }
         if (intent?.action == ACTION_HOLD_OPEN_TOGGLE) {
             bluetoothAvailable = getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true
@@ -780,7 +764,7 @@ class BleLockService : Service(), BleRepository.Listener {
         mode = when {
             phoneBeacon.isWifiProvisioningActive -> Mode.WIFI_PROVISIONING
             phoneBeacon.isWebUiIpRequestActive -> Mode.WEB_UI_DISCOVERY
-            phoneBeacon.isHoldRequestActive || phoneBeacon.isHomeWifiRequestActive -> Mode.SERVICE_REQUEST
+            phoneBeacon.isHoldRequestActive -> Mode.SERVICE_REQUEST
             settings.autoOpenEnabled -> Mode.AUTO_OPEN
             else -> Mode.IDLE
         }
@@ -1082,7 +1066,6 @@ class BleLockService : Service(), BleRepository.Listener {
         const val ACTION_START = "com.blelock.app.action.START"
         const val ACTION_AUTO_OPEN_TOGGLE = "com.blelock.app.action.AUTO_OPEN_TOGGLE"
         const val ACTION_HOLD_OPEN_TOGGLE = "com.blelock.app.action.HOLD_OPEN_TOGGLE"
-        const val ACTION_HOME_WIFI_REQUEST = "com.blelock.app.action.HOME_WIFI_REQUEST"
         @Volatile var lastHoldCommandPending = false
         @Volatile var lastHoldCommandError = ""
         const val ACTION_STOP = "com.blelock.app.action.STOP"

@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.text.TextUtils
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -16,6 +17,7 @@ import android.content.res.ColorStateList
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 
@@ -25,6 +27,9 @@ enum class InternetOpenStage {
 
 internal fun internetOpenDisplayedStage(previous: InternetOpenStage, next: InternetOpenStage): InternetOpenStage =
     if (next == InternetOpenStage.CLOSING || next == InternetOpenStage.ERROR) previous else next
+
+internal fun internetCloseCountdownSeconds(remainingMs: Long): Int =
+    if (remainingMs <= 0) 0 else ((remainingMs + 999) / 1000).toInt()
 
 internal fun internetOpenStageForReply(
     result: String, faults: Long, door: String? = null,
@@ -87,11 +92,24 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private var displayedStage = InternetOpenStage.IDLE
     private var blinkOn = false
     private var blinkAnimator: ValueAnimator? = null
+    private var closeCountdownUntilMs = 0L
+    private val closeCountdownTicker = object : Runnable {
+        override fun run() {
+            if (stage != InternetOpenStage.UNLOCKED || closeCountdownUntilMs == 0L) return
+            if (closeCountdownUntilMs <= SystemClock.elapsedRealtime()) {
+                closeCountdownUntilMs = 0L
+                invalidate()
+                return
+            }
+            invalidate()
+            handler.postDelayed(this, 250L)
+        }
+    }
 
     init {
         isClickable = true
         isFocusable = true
-        elevation = dp(1f)
+        elevation = dp(4f)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_YES
         contentDescription = idleLabel
         foreground = RippleDrawable(
@@ -102,7 +120,6 @@ class InternetOpenProgressButton @JvmOverloads constructor(
                 cornerRadius = dp(14f)
             }
         )
-        minimumHeight = dp(96f).toInt()
         minimumWidth = dp(200f).toInt()
     }
 
@@ -124,13 +141,18 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         refreshBrokerAddress()
     }
 
-    fun showStage(next: InternetOpenStage, doorState: String? = null) {
+    fun showStage(next: InternetOpenStage, doorState: String? = null, closeRemainingMs: Long? = null) {
         handler.removeCallbacksAndMessages(null)
         blinkAnimator?.cancel()
         blinkAnimator = null
         blinkOn = false
         stage = next
         displayedStage = internetOpenDisplayedStage(displayedStage, next)
+        closeCountdownUntilMs = if (next == InternetOpenStage.UNLOCKED && doorState != "open" &&
+            closeRemainingMs != null && closeRemainingMs > 0) {
+            SystemClock.elapsedRealtime() + closeRemainingMs
+        } else 0L
+        if (closeCountdownUntilMs > 0) handler.postDelayed(closeCountdownTicker, 0L)
         contentDescription = if (next == InternetOpenStage.IDLE) idleDescription() else descriptionFor(next, doorState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
@@ -172,6 +194,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             stage = InternetOpenStage.IDLE
             displayedStage = InternetOpenStage.IDLE
             blinkOn = false
+            closeCountdownUntilMs = 0L
             blinkAnimator?.cancel()
             blinkAnimator = null
             contentDescription = idleDescription()
@@ -199,10 +222,8 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        val desiredHeight = (96f * resources.displayMetrics.density *
-            resources.configuration.fontScale.coerceAtLeast(1f)).toInt()
         setMeasuredDimension(resolveSize(minimumWidth, widthMeasureSpec),
-            resolveSize(desiredHeight, heightMeasureSpec))
+            resolveSize(suggestedMinimumHeight, heightMeasureSpec))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -273,6 +294,23 @@ class InternetOpenProgressButton @JvmOverloads constructor(
                 } else colors[index]
                 val left = rect.left + index * segmentWidth
                 canvas.drawRect(left, splitY, left + segmentWidth, rect.bottom, fillPaint)
+            }
+            if (stage == InternetOpenStage.UNLOCKED && closeCountdownUntilMs > 0L) {
+                val seconds = internetCloseCountdownSeconds(closeCountdownUntilMs - SystemClock.elapsedRealtime())
+                if (seconds > 0) {
+                    val countdownPaint = android.text.TextPaint(textPaint).apply {
+                        color = Color.WHITE
+                        textAlign = Paint.Align.CENTER
+                        textSize = resources.displayMetrics.scaledDensity * 12f
+                    }
+                    val countdownLabel = context.getString(R.string.internet_close_timer_unit, seconds)
+                    val clippedLabel = TextUtils.ellipsize(countdownLabel, countdownPaint,
+                        (segmentWidth - dp(8f)).coerceAtLeast(1f), TextUtils.TruncateAt.END).toString()
+                    val centerX = rect.left + segmentWidth * 2.5f
+                    val centerY = (splitY + rect.bottom) / 2f
+                    val baseline = centerY - (countdownPaint.ascent() + countdownPaint.descent()) / 2f
+                    canvas.drawText(clippedLabel, centerX, baseline, countdownPaint)
+                }
             }
         }
 

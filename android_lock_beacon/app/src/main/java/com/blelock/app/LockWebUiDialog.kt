@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.graphics.Bitmap
 import android.os.Bundle
 import android.os.Build
+import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
 import android.view.ViewGroup
 import android.view.WindowInsets
@@ -37,6 +39,23 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
             if (!FirmwareTransferState.markStarted(context, lockAddress, version)) return false
             activity.runOnUiThread { onTransferStarted() }
             return true
+        }
+    }
+
+    private inner class HapticsBridge {
+        private var lastTickMs = 0L
+
+        @JavascriptInterface
+        fun tick() {
+            if (!trustedPage) return
+            synchronized(this) {
+                val now = SystemClock.uptimeMillis()
+                if (now - lastTickMs < 35L) return
+                lastTickMs = now
+            }
+            webView.post {
+                if (trustedPage) webView.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
         }
     }
 
@@ -137,6 +156,7 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
         }
         wizardSpeech = LockWizardSpeech(context, webView, policy)
         webView.addJavascriptInterface(wizardSpeech, "BleLockWizardSpeech")
+        webView.addJavascriptInterface(HapticsBridge(), "BleLockHaptics")
         webView.addJavascriptInterface(TransferBridge(), "BleLockFirmwareTransfer")
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         layout.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
@@ -167,6 +187,7 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
         trustedPage = false
         wizardSpeech.close()
         webView.removeJavascriptInterface("BleLockWizardSpeech")
+        webView.removeJavascriptInterface("BleLockHaptics")
         webView.removeJavascriptInterface("BleLockFirmwareTransfer")
         webView.stopLoading()
         webView.destroy()

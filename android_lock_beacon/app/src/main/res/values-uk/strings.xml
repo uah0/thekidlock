@@ -16,13 +16,14 @@
     <string name="legacy_location_required_message">На Android 6–11 система дозволяє пошук BLE-пристроїв лише з увімкненою геолокацією. TheKidLock не використовує та не зберігає місцеположення телефона. Починаючи з Android 12 цієї системної вимоги немає.</string>
     <string name="legacy_location_open_settings">Відкрити налаштування</string>
     <string name="local_hotspot_status">Локальну точку доступу не запущено</string>
-    <string name="control_settings">Налаштування замка</string>
+    <string name="control_settings">До налаштувань замка</string>
     <string name="firmware_update_available">(доступне оновлення)</string>
     <string name="firmware_download_ready">Нова прошивка готова. Натисніть «Установити оновлення» у Web UI замка.</string>
     <string name="mode_auto">Автовідкриття замка</string>
+    <string name="mode_auto_enabled">Увімкнено</string>
+    <string name="mode_auto_disabled">Вимкнено</string>
     <string name="mode_always_open">Залишити замок відкритим</string>
     <string name="open_via_internet">Відкрити через інтернет</string>
-    <string name="settings_waiting_esp">Налаштування · очікування замка</string>
     <string name="auto_open">Автоматичний режим</string>
     <string name="manual_open">Відкрити</string>
     <string name="manual_keep_open">Не зачиняти</string>
@@ -99,11 +100,11 @@
     <string name="internet_command_sent">Команду надіслано</string>
     <string name="internet_broker_accepted">Хмара прийняла команду</string>
     <string name="internet_unlocked">Замок розблоковано</string>
+    <string name="internet_close_timer_unit">%1$d с</string>
     <string name="internet_door_opened">Двері відчинилися</string>
     <string name="internet_closed_locked">Двері зачинено та замкнено</string>
     <string name="internet_error">Помилка відкриття через інтернет</string>
     <string name="done">Готово</string>
-    <string name="settings_countdown">%1$s · %2$d с</string>
     <string name="hotspot_lock_connecting">Замок отримав параметри мережі та підключається до Wi-Fi</string>
     <string name="firmware_update_started">Оновлення прошивки розпочалося</string>
     <string name="firmware_update_failed">Оновлення прошивки не виконано</string>
@@ -151,7 +152,6 @@
     <string name="bluetooth_access_unavailable">Bluetooth або дозволи недоступні</string>
     <string name="service_beacon_active">Автоматичний режим · BLE-маяк активний</string>
     <string name="service_wifi_received">Замок отримав Wi-Fi · очікування IP Web UI</string>
-    <string name="service_home_wifi_request">Запит домашнього Wi-Fi замка</string>
     <string name="service_mode_waiting">Очікування підтвердження режиму замка</string>
     <string name="service_web_ip_request">Автоматичний режим · запит IP Web UI</string>
     <string name="service_web_ip_waiting">Очікування IP Web UI від замка</string>
@@ -185,4 +185,14 @@
     <string name="speech_text_invalid">Недопустимий текст інструкції</string>
     <string name="speech_russian_unavailable">Російське озвучення недоступне. Перевірте синтезатор мовлення в налаштуваннях Android</string>
     <string name="speech_start_failed">Не вдалося запустити озвучення</string>
+    <string name="revoke_keys">Відкликати ключі через інтернет</string>
+    <string name="revoke_keys_loading">Завантаження телефонів…</string>
+    <string name="revoke_keys_no_phones">Інших зареєстрованих телефонів немає</string>
+    <string name="revoke_keys_owner">власник</string>
+    <string name="revoke_keys_apply">Відкликати вибрані</string>
+    <string name="revoke_keys_done">Відкликано: %1$d</string>
+    <string name="revoke_keys_error">Не вдалося відкликати ключі</string>
+    <string name="keys_list_changed">Список телефонів змінився. Відкрийте його знову</string>
+    <string name="revoke_keys_partial">Частково відкликано: %1$d</string>
+    <string name="revoke_keys_timeout">Замок не відповів</string>
 </resources>

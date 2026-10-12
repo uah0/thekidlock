@@ -20,7 +20,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.IBinder
-import android.os.SystemClock
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.net.wifi.WifiManager
@@ -56,6 +55,11 @@ import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.File
 import java.util.concurrent.Executors
 
+internal fun calculateMainActionButtonHeightPx(
+    availableHeightPx: Int, buttonCount: Int, minHeightPx: Int
+): Int = if (buttonCount <= 0) 0 else
+    (availableHeightPx / buttonCount).coerceAtLeast(minHeightPx)
+
 class MainActivity : Activity() {
     private enum class WebUiConnectionState {
         IDLE, STARTING_HOTSPOT, SENDING_WIFI_CREDENTIALS, ESP_CONNECTING,
@@ -66,16 +70,20 @@ class MainActivity : Activity() {
     private lateinit var repository: BleClient
     private lateinit var bleListener: BleRepository.Listener
     private lateinit var mainContentView: View
+    private lateinit var mainScrollView: ScrollView
+    private lateinit var accessCardView: LinearLayout
+    private lateinit var appSettingsSystemButton: Button
+    private var mainActionButtonHeightPx = 0
     private var boundService: BleLockService.LocalBinder? = null
     private var serviceBound = false
     private lateinit var permissionButton: Button
-    private lateinit var beaconModeSwitch: Switch
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
     private lateinit var internetOpenButton: InternetOpenProgressButton
+    private lateinit var revokeKeysButton: Button
     private lateinit var hotspotStatusView: TextView
     private lateinit var hotspotWebUrlView: TextView
-    private lateinit var hotspotOpenButton: Button
+    private lateinit var hotspotOpenButton: WebUiProgressButton
     private lateinit var freeKeysView: TextView
     private lateinit var espOpenRssiField: EditText
     private lateinit var espHoldRssiField: EditText
@@ -138,8 +146,6 @@ class MainActivity : Activity() {
     private var hotspotCredentialWriteInFlight = false
     private var webUiBlePermissionPending = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
-    private var webUiStartedAtMs = 0L
-    private var webUiCountdownStartSeconds = 10
     private val signalHandler = Handler(Looper.getMainLooper())
     private val firmwareCheckRunnable: Runnable = object : Runnable {
         override fun run() {
@@ -189,20 +195,6 @@ class MainActivity : Activity() {
                     }
                 }
             }
-        }
-    }
-    private val webUiCountdown = object : Runnable {
-        override fun run() {
-            if (!webUiRequestPending) return
-            val elapsedSeconds =
-                ((SystemClock.elapsedRealtime() - webUiStartedAtMs) / 1000L).toInt()
-            val remaining = (webUiCountdownStartSeconds - elapsedSeconds).coerceAtLeast(0)
-            hotspotOpenButton.text = if (remaining > 0) {
-                getString(R.string.settings_countdown, getString(R.string.control_settings), remaining)
-            } else {
-                getString(R.string.settings_waiting_esp)
-            }
-            signalHandler.postDelayed(this, 250L)
         }
     }
     private val adminSignalPoll = object : Runnable {
@@ -280,6 +272,13 @@ class MainActivity : Activity() {
                     hotspotStatusView.text = getString(R.string.hotspot_lock_connecting)
                     appendLog("Замок прочитал параметры hotspot; BLE-сеанс настройки завершён")
                     signalHandler.removeCallbacks(otaStatusPoll)
+                    runCatching {
+                        startService(Intent(this@MainActivity, BleLockService::class.java)
+                            .setAction(BleLockService.ACTION_WEB_UI_IP_REQUEST))
+                    }.onFailure {
+                        setWebUiConnectionState(WebUiConnectionState.ERROR)
+                        appendLog("Не удалось включить ожидание адреса Web UI: ${it.message}")
+                    }
                 }
                 PhoneBeacon.ACTION_WEB_UI_IP_RECEIVED -> {
                     val ip = intent.getStringExtra(PhoneBeacon.EXTRA_WEB_UI_IP).orEmpty()
@@ -656,15 +655,10 @@ class MainActivity : Activity() {
         if (webUiBrowserOpen && lockWebUiDialog?.isShowing != true) {
             webUiBrowserOpen = false
             if (localHotspotReservation != null) {
-                closeLocalHotspot("Возврат из Web UI")
+                closeLocalHotspot("Возврат из Web UI", completedNormally = true)
             } else {
                 finishWebUiIpRequest()
             }
-        }
-        if (!webUiRequestPending && localHotspotReservation == null) {
-            runCatching { startService(Intent(this, BleLockService::class.java)
-                .setAction(BleLockService.ACTION_HOME_WIFI_REQUEST)) }
-                .onFailure { appendLog("Не удалось запросить домашний Wi-Fi: ${it.message}") }
         }
         showPendingFirmwareNotice()
         refreshSettingsUpdateLabel()
@@ -734,7 +728,6 @@ class MainActivity : Activity() {
         signalHandler.removeCallbacks(adminSignalPoll)
         signalHandler.removeCallbacks(resumeService)
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
-        signalHandler.removeCallbacks(webUiCountdown)
         signalHandler.removeCallbacks(firmwareCheckRunnable)
         if (serviceBound) {
             boundService?.unregisterClient(bleListener)
@@ -805,7 +798,7 @@ class MainActivity : Activity() {
         root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
 
         permissionButton = filledButton(R.string.grant_permissions) { requestMissingPermissions() }
-        root.addView(permissionButton, spacedFullWidth())
+        root.addView(permissionButton, mainScreenControlParams(topMarginDp = 14))
 
         // Main controls intentionally resemble a simple industrial pendant:
         // large, well-separated tiles that are easy to hit with one hand.
@@ -819,28 +812,53 @@ class MainActivity : Activity() {
         }
         accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 16))
         internetOpenButton = InternetOpenProgressButton(this).apply {
+            visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
             setOnClickListener {
                 val started = InternetOpen.start(this@MainActivity,
-                    { stage, door -> runOnUiThread { showStage(stage, door) } },
+                    { stage, door, closeRemainingMs -> runOnUiThread { internetOpenButton.showStage(stage, door, closeRemainingMs) } },
                     { message -> runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() } },
                     { })
                 if (started) {
-                    showStage(InternetOpenStage.CONNECTING)
+                    internetOpenButton.showStage(InternetOpenStage.CONNECTING)
                     isEnabled = false
                 }
             }
         }
         accessCard.addView(internetOpenButton, controlTileParams(topMarginDp = 16))
 
-        hotspotOpenButton = controlTile(R.string.control_settings) { openEspWebUi() }.apply {
+        revokeKeysButton = controlTile(R.string.revoke_keys) { openRemoteKeys() }.apply {
+            visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
+            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_revoke_key, 0, 0, 0)
+            contentDescription = getString(R.string.revoke_keys)
+        }
+        accessCard.addView(revokeKeysButton, controlTileParams(topMarginDp = 16))
+
+        hotspotOpenButton = WebUiProgressButton(this).apply {
+            text = getString(R.string.control_settings)
+            isAllCaps = false
+            textSize = 18f
+            stateListAnimator = null
+            background = getDrawable(R.drawable.bg_handoff_card)
+            setTextColor(getColor(R.color.primary_text))
+            compoundDrawablePadding = dp(16)
+            minHeight = 0
+            minWidth = 0
+            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            maxLines = 4
+            elevation = dp(4).toFloat()
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setOnClickListener { openEspWebUi() }
+            val settingsIcon = requireNotNull(getDrawable(R.drawable.ic_handoff_settings))
+                .mutate().apply { setTint(Color.BLACK) }
             setCompoundDrawablesRelativeWithIntrinsicBounds(
-                R.drawable.ic_handoff_settings, 0, R.drawable.ic_handoff_chevron, 0
+                settingsIcon, null, getDrawable(R.drawable.ic_handoff_chevron), null
             )
         }
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
         accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 16))
-        root.addView(accessCard, spacedFullWidth().apply { bottomMargin = dp(24) })
+        accessCardView = accessCard
+        root.addView(accessCard, mainScreenControlParams().apply { bottomMargin = dp(24) })
 
         // --- Admin container: everything that only appears once the lock exposes admin mode ---
         adminContainer = LinearLayout(this).apply {
@@ -974,6 +992,10 @@ class MainActivity : Activity() {
             setBackgroundColor(Color.TRANSPARENT)
             addView(root)
         }
+        mainScrollView = scroll
+        scroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateMainActionButtonHeights() }
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> updateMainActionButtonHeights() }
+        scroll.post { updateMainActionButtonHeights() }
         swipeRefresh = SwipeRefreshLayout(this).apply {
             setColorSchemeResources(R.color.accent_blue)
             isEnabled = false
@@ -1070,8 +1092,7 @@ class MainActivity : Activity() {
                 OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback
             )
         }
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val root = ScrollView(this).apply {
             setPadding(dp(16), dp(12), dp(16), dp(16))
             setBackgroundColor(Color.WHITE)
             setOnApplyWindowInsetsListener { view, insets ->
@@ -1091,24 +1112,26 @@ class MainActivity : Activity() {
                 insets
             }
         }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        root.addView(content, ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        ))
 
-        root.addView(filledButton(R.string.app_options_settings) {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:$packageName")))
-        }, spacedFullWidth())
-
-        root.addView(TextView(this).apply {
+        content.addView(TextView(this).apply {
             text = getString(R.string.app_language_title)
             textSize = 18f
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(getColor(R.color.primary_text))
-        }, topSpacedFullWidth(24))
+        }, topSpacedFullWidth(4))
         val languages = RadioGroup(this).apply {
             orientation = RadioGroup.VERTICAL
             setBackgroundColor(Color.WHITE)
         }
         val tags = AppLanguage.supportedTags
-        val labels = listOf("English", "Русский", "Українська")
+        val labels = listOf("English", "Русский", "Українська", "Polski", "Беларуская", "Lietuvių", "Latviešu", "Deutsch", "日本語")
         val selectedTag = AppLanguage.currentTag(this)
         tags.zip(labels).forEach { (tag, label) ->
             languages.addView(RadioButton(this).apply {
@@ -1128,7 +1151,26 @@ class MainActivity : Activity() {
                 if (Build.VERSION.SDK_INT < 33) recreate()
             }
         }
-        root.addView(languages, fullWidth())
+        content.addView(languages, fullWidth())
+
+        appSettingsSystemButton = filledButton(R.string.app_options_settings) {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")))
+        }
+        content.addView(appSettingsSystemButton,
+            mainScreenControlParams(heightPx = mainActionButtonHeightPx, topMarginDp = 16))
+
+        content.addView(createBeaconPowerControl(), topSpacedFullWidth(20))
+        content.addView(TextView(this).apply {
+            text = "https://github.com/uah0/thekidlock"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(getColor(R.color.accent_blue))
+            setPadding(dp(8), dp(14), dp(8), dp(14))
+            setOnClickListener {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/uah0/thekidlock")))
+            }
+        }, fullWidth().apply { topMargin = dp(24) })
         setContentView(root)
         root.post { root.requestApplyInsets() }
     }
@@ -1290,30 +1332,13 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createAutoModeControl(): View {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = getDrawable(R.drawable.bg_handoff_card)
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+    private fun createAutoModeControl(): Button =
+        controlTile(R.string.mode_auto) { toggleAutomaticMode() }.also {
+            manualOpenButton = it
+            it.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_bluetooth, 0, 0, 0)
         }
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        manualOpenButton = controlTile(R.string.mode_auto) { toggleAutomaticMode() }.apply {
-            background = null
-            elevation = 0f
-            setPadding(0, 0, dp(8), 0)
-            textSize = 18f
-            setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_bluetooth, 0, 0, 0)
-        }
-        row.addView(manualOpenButton, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        beaconModeSwitch = Switch(this).apply {
-            contentDescription = getString(R.string.mode_auto)
-            trackTintList = ColorStateList(arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                intArrayOf(getColor(R.color.accent_blue), getColor(R.color.switch_track_off)))
-            thumbTintList = ColorStateList.valueOf(Color.WHITE)
-            setOnClickListener { toggleAutomaticMode(); isChecked = settings.autoOpenEnabled }
-        }
-        row.addView(beaconModeSwitch, LinearLayout.LayoutParams(dp(56), dp(48)))
-        container.addView(row)
+
+    private fun createBeaconPowerControl(): View {
         beaconPowerSlider = HorizontalLevelSlider(this,
             LockSettings.MIN_PHONE_BEACON_TX_POWER_LEVEL,
             LockSettings.MAX_PHONE_BEACON_TX_POWER_LEVEL,
@@ -1325,8 +1350,17 @@ class MainActivity : Activity() {
                     .setAction(BleLockService.ACTION_BEACON_TX_POWER_CHANGED))
             }
         }
-        container.addView(beaconPowerSlider, fullWidth().apply { height = dp(48) })
-        return container
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = getDrawable(R.drawable.bg_handoff_card)
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            addView(TextView(this@MainActivity).apply {
+                text = getString(R.string.phone_beacon_tx_power_title)
+                textSize = 16f
+                setTextColor(getColor(R.color.primary_text))
+            }, fullWidth())
+            addView(beaconPowerSlider, fullWidth().apply { height = dp(48); topMargin = dp(8) })
+        }
     }
 
     private fun refreshAppUpdateButton() {
@@ -1482,6 +1516,12 @@ class MainActivity : Activity() {
     private fun updateMainControlsEnabled() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         renderWorkingMode()
+        if (::internetOpenButton.isInitialized) {
+            internetOpenButton.visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
+        }
+        if (::revokeKeysButton.isInitialized) {
+            revokeKeysButton.visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
+        }
         if (::hotspotOpenButton.isInitialized) {
             val settingsEnabled = settings.ownerAccessConfirmed
             hotspotOpenButton.visibility = if (settingsEnabled) View.VISIBLE else View.GONE
@@ -1489,6 +1529,7 @@ class MainActivity : Activity() {
             hotspotOpenButton.alpha = if (settingsEnabled) 1f else 0.38f
             refreshSettingsUpdateLabel()
         }
+        if (::mainScrollView.isInitialized) mainScrollView.post { updateMainActionButtonHeights() }
     }
 
     private fun commandLabel(title: Int, subtitle: Int): CharSequence {
@@ -1499,17 +1540,28 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun autoModeLabel(enabled: Boolean): CharSequence {
+        val title = getString(R.string.mode_auto)
+        val state = getString(if (enabled) R.string.mode_auto_enabled else R.string.mode_auto_disabled)
+        return android.text.SpannableString("$title\n$state").apply {
+            setSpan(android.text.style.RelativeSizeSpan(0.72f), title.length + 1, length, 0)
+            setSpan(android.text.style.ForegroundColorSpan(
+                getColor(if (enabled) R.color.accent_blue else R.color.secondary_text)),
+                title.length + 1, length, 0)
+        }
+    }
+
     private fun controlTile(textRes: Int, onClick: () -> Unit): Button =
         outlineButton(textRes, onClick).apply {
             textSize = 18f
             background = getDrawable(R.drawable.bg_handoff_card)
             setTextColor(getColor(R.color.primary_text))
             compoundDrawablePadding = dp(16)
-            minHeight = dp(80)
+            minHeight = 0
             minWidth = 0
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             maxLines = 4
-            elevation = dp(1).toFloat()
+            elevation = dp(4).toFloat()
             setPadding(dp(20), dp(20), dp(20), dp(20))
         }
 
@@ -1518,6 +1570,112 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER_HORIZONTAL
             topMargin = dp(topMarginDp)
         }
+
+    private fun mainScreenControlParams(
+        heightPx: Int = ViewGroup.LayoutParams.WRAP_CONTENT,
+        topMarginDp: Int = 0
+    ) = LinearLayout.LayoutParams(
+        ViewGroup.LayoutParams.MATCH_PARENT,
+        heightPx
+    ).apply {
+        val availableWidth = resources.displayMetrics.widthPixels - 2 * dp(16)
+        val sideMargin = (availableWidth * 0.1f).toInt()
+        leftMargin = sideMargin
+        rightMargin = sideMargin
+        topMargin = dp(topMarginDp)
+        gravity = Gravity.CENTER_HORIZONTAL
+    }
+
+    private fun updateMainActionButtonHeights() {
+        if (!::mainScrollView.isInitialized || mainScrollView.height <= 0 ||
+            !::permissionButton.isInitialized || !::accessCardView.isInitialized) return
+        val root = mainScrollView.getChildAt(0) as? LinearLayout ?: return
+        if (root.childCount < 4) return
+        val header = root.getChildAt(0)
+        val permissionLp = permissionButton.layoutParams as? LinearLayout.LayoutParams ?: return
+        val headerLp = header.layoutParams as? LinearLayout.LayoutParams ?: return
+        val accessLp = accessCardView.layoutParams as? LinearLayout.LayoutParams ?: return
+        val visibleTiles = (0 until accessCardView.childCount)
+            .map { accessCardView.getChildAt(it) }.filter { it.visibility == View.VISIBLE }
+        val count = visibleTiles.size + if (permissionButton.visibility == View.VISIBLE) 1 else 0
+        if (count == 0) return
+        val tileMargins = visibleTiles.sumOf {
+            (it.layoutParams as? LinearLayout.LayoutParams)?.topMargin ?: 0
+        }
+        val adminHeight = if (root.childCount > 3 && root.getChildAt(3).visibility == View.VISIBLE)
+            root.getChildAt(3).height else 0
+        val fixed = root.paddingTop + root.paddingBottom + header.height + headerLp.bottomMargin +
+            (if (permissionButton.visibility == View.VISIBLE)
+                permissionLp.topMargin + permissionLp.bottomMargin else 0) +
+            accessLp.topMargin + accessLp.bottomMargin +
+            accessCardView.paddingTop + accessCardView.paddingBottom + tileMargins + adminHeight
+        val available = (mainScrollView.height - fixed).coerceAtLeast(0)
+        val target = calculateMainActionButtonHeightPx(available, count, dp(64))
+        if (target == 0) return
+        mainActionButtonHeightPx = target
+        fun setHeight(view: View) {
+            val lp = view.layoutParams ?: return
+            if (lp.height != target) {
+                lp.height = target
+                view.layoutParams = lp
+            }
+            if (view is Button) view.minHeight = 0
+        }
+        if (permissionButton.visibility == View.VISIBLE) setHeight(permissionButton)
+        visibleTiles.forEach(::setHeight)
+        if (::appSettingsSystemButton.isInitialized) {
+            val lp = appSettingsSystemButton.layoutParams as? LinearLayout.LayoutParams
+            if (lp != null && lp.height != target) {
+                lp.height = target
+                appSettingsSystemButton.layoutParams = lp
+            }
+        }
+    }
+
+    private fun openRemoteKeys() {
+        if (!settings.ownerAccessConfirmed || !::revokeKeysButton.isInitialized || !revokeKeysButton.isEnabled) return
+        revokeKeysButton.isEnabled = false
+        revokeKeysButton.text = getString(R.string.revoke_keys_loading)
+        RemoteKeys.fetch(this) { result ->
+            revokeKeysButton.isEnabled = true
+            revokeKeysButton.text = getString(R.string.revoke_keys)
+            result.onSuccess { snapshot -> showRemoteKeys(snapshot) }
+                .onFailure { Toast.makeText(this, it.message ?: getString(R.string.revoke_keys_error), Toast.LENGTH_LONG).show() }
+        }
+    }
+
+    private fun showRemoteKeys(snapshot: RemoteKeys.Snapshot) {
+        if (snapshot.phones.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.revoke_keys)
+                .setMessage(R.string.revoke_keys_no_phones)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
+        }
+        val selected = mutableSetOf<Int>()
+        val labels = snapshot.phones.map { phone -> "${phone.name} (${phone.address})" }.toTypedArray()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.revoke_keys)
+            .setMultiChoiceItems(labels, BooleanArray(labels.size)) { view, index, checked ->
+                if (checked) selected.add(index) else selected.remove(index)
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.revoke_keys_apply) { _, _ ->
+                if (selected.isEmpty()) return@setPositiveButton
+                revokeKeysButton.isEnabled = false
+                revokeKeysButton.text = getString(R.string.revoke_keys_loading)
+                RemoteKeys.apply(this, snapshot, selected) { result ->
+                    revokeKeysButton.isEnabled = true
+                    revokeKeysButton.text = getString(R.string.revoke_keys)
+                    result.onSuccess { count -> Toast.makeText(this,
+                        getString(R.string.revoke_keys_done, count), Toast.LENGTH_LONG).show() }
+                        .onFailure { Toast.makeText(this,
+                            it.message ?: getString(R.string.revoke_keys_error), Toast.LENGTH_LONG).show() }
+                }
+            }.create()
+        dialog.show()
+    }
 
 
 
@@ -1760,9 +1918,20 @@ class MainActivity : Activity() {
         manualKeepOpenButton.text = if (BleLockService.lastHoldCommandPending) getString(R.string.waiting_for_lock)
             else if (workingModeState.holdCommandConfirmed) getString(R.string.command_completed)
             else getString(R.string.mode_always_open)
+        val autoOpenEnabled = settings.autoOpenEnabled
+        manualOpenButton.text = autoModeLabel(autoOpenEnabled)
         manualOpenButton.setTextColor(getColor(R.color.primary_text))
-        beaconModeSwitch.isChecked = settings.autoOpenEnabled
-        beaconModeSwitch.isEnabled = ui.autoEnabled
+        manualOpenButton.isSelected = autoOpenEnabled
+        manualOpenButton.background = getDrawable(if (autoOpenEnabled)
+            R.drawable.bg_handoff_card_active else R.drawable.bg_handoff_card)
+        manualOpenButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            R.drawable.ic_handoff_bluetooth, 0,
+            if (autoOpenEnabled) R.drawable.ic_handoff_check else 0, 0
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            manualOpenButton.stateDescription = getString(if (autoOpenEnabled)
+                R.string.mode_auto_enabled else R.string.mode_auto_disabled)
+        }
         manualKeepOpenButton.background = getDrawable(R.drawable.bg_handoff_card)
         manualKeepOpenButton.setTextColor(getColor(R.color.primary_text))
         if (!BleLockService.lastHoldCommandPending && !workingModeState.holdCommandConfirmed) {
@@ -2076,36 +2245,14 @@ class MainActivity : Activity() {
         webUiRequestPending = true
         hotspotProvisioningStarted = true
         runtimeWebPending = false
-        webUiStartedAtMs = SystemClock.elapsedRealtime()
-        webUiCountdownStartSeconds = settings.webUiCountdownSeconds
         setWebUiConnectionState(WebUiConnectionState.STARTING_HOTSPOT)
-        signalHandler.removeCallbacks(webUiCountdown)
-        signalHandler.post(webUiCountdown)
-        runCatching {
-            startService(
-                Intent(this, BleLockService::class.java)
-                    .setAction(BleLockService.ACTION_WEB_UI_IP_REQUEST)
-            )
-        }.onFailure {
-            webUiRequestPending = false
-            signalHandler.removeCallbacks(webUiCountdown)
-            setWebUiConnectionState(WebUiConnectionState.ERROR)
-            appendLog("Не удалось запросить IP замка по BLE: ${it.message}")
-            return
-        }
-        appendLog("Создаю точку доступа телефона для Web UI и передаю её параметры по encrypted BLE")
+        appendLog("Создаю точку доступа телефона для Web UI; проверку прежнего Wi-Fi адреса пропускаю")
         startWebUiProvisioning()
     }
 
     private fun openWebUiAt(ip: String) {
         if (!ip.isValidIpv4()) return
         val hadPendingRequest = webUiRequestPending
-        signalHandler.removeCallbacks(webUiCountdown)
-        if (hadPendingRequest) {
-            val elapsedMs = SystemClock.elapsedRealtime() - webUiStartedAtMs
-            settings.webUiCountdownSeconds =
-                ((elapsedMs + 999L) / 1000L).toInt().coerceIn(1, HOTSPOT_PROVISIONING_TIMEOUT_SECONDS)
-        }
         settings.lockWifiIp = ip
         val url = "http://$ip/"
         hotspotWebUrlView.text = url
@@ -2135,7 +2282,7 @@ class MainActivity : Activity() {
             }.apply {
                 setOnDismissListener {
                     webUiBrowserOpen = false
-                    if (localHotspotReservation != null) closeLocalHotspot("Закрыт Web UI")
+                    if (localHotspotReservation != null) closeLocalHotspot("Закрыт Web UI", completedNormally = true)
                     else finishWebUiIpRequest()
                 }
                 show()
@@ -2157,7 +2304,6 @@ class MainActivity : Activity() {
     }
 
     private fun finishWebUiIpRequest() {
-        signalHandler.removeCallbacks(webUiCountdown)
         runCatching {
             startService(
                 Intent(this, BleLockService::class.java)
@@ -2297,7 +2443,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun closeLocalHotspot(reason: String) {
+    private fun closeLocalHotspot(reason: String, completedNormally: Boolean = false) {
         clearPhoneBeaconHotspotIp(hotspotSessionId)
         localHotspotReservation?.close()
         localHotspotReservation = null
@@ -2312,13 +2458,12 @@ class MainActivity : Activity() {
         runtimeWebPending = false
         signalHandler.removeCallbacks(hotspotNoClientWatchdog)
         signalHandler.removeCallbacks(otaStatusPoll)
-        signalHandler.removeCallbacks(webUiCountdown)
         finishWebUiIpRequest()
         hotspotStatusView.setText(R.string.local_hotspot_status)
         hotspotWebUrlView.text = ""
         hotspotWebUrlView.tag = null
         hotspotWebUrlView.visibility = View.GONE
-        setWebUiConnectionState(WebUiConnectionState.ERROR)
+        setWebUiConnectionState(if (completedNormally) WebUiConnectionState.IDLE else WebUiConnectionState.ERROR)
         appendLog("Локальная точка доступа отключена: $reason")
     }
 
@@ -2455,27 +2600,32 @@ class MainActivity : Activity() {
         webUiConnectionState = state
         if (!::hotspotOpenButton.isInitialized) return
         when (state) {
-            WebUiConnectionState.IDLE -> hotspotOpenButton.setText(R.string.control_settings)
-            WebUiConnectionState.COMPLETE -> {
-                signalHandler.removeCallbacks(webUiCountdown)
-                hotspotOpenButton.setText(R.string.control_settings)
+            WebUiConnectionState.IDLE -> {
+                hotspotOpenButton.clearProgress()
+                hotspotOpenButton.text = getString(R.string.control_settings)
+                val settingsIcon = requireNotNull(getDrawable(R.drawable.ic_handoff_settings))
+                    .mutate().apply { setTint(Color.BLACK) }
+                hotspotOpenButton.setCompoundDrawablesRelativeWithIntrinsicBounds(
+                    settingsIcon, null, getDrawable(R.drawable.ic_handoff_chevron), null
+                )
             }
-            WebUiConnectionState.ERROR -> {
-                signalHandler.removeCallbacks(webUiCountdown)
-                hotspotOpenButton.setText(R.string.control_settings)
-            }
-            WebUiConnectionState.STARTING_HOTSPOT -> hotspotOpenButton.text = getString(R.string.hotspot_starting)
-            WebUiConnectionState.SENDING_WIFI_CREDENTIALS,
-            WebUiConnectionState.ESP_CONNECTING,
-            WebUiConnectionState.WAITING_WEBUI_ADDRESS,
-            WebUiConnectionState.OPENING_BROWSER -> hotspotOpenButton.text = getString(R.string.waiting_for_lock)
+            WebUiConnectionState.STARTING_HOTSPOT -> showWebUiProgress(0)
+            WebUiConnectionState.SENDING_WIFI_CREDENTIALS -> showWebUiProgress(1)
+            WebUiConnectionState.ESP_CONNECTING -> showWebUiProgress(2)
+            WebUiConnectionState.WAITING_WEBUI_ADDRESS -> showWebUiProgress(3)
+            WebUiConnectionState.OPENING_BROWSER -> showWebUiProgress(3)
+            WebUiConnectionState.COMPLETE -> showWebUiProgress(3, complete = true)
+            WebUiConnectionState.ERROR -> hotspotOpenButton.invalidate()
         }
         refreshSettingsUpdateLabel()
     }
 
+    private fun showWebUiProgress(step: Int, complete: Boolean = false) {
+        hotspotOpenButton.showProgress(step, complete)
+    }
+
     private fun refreshSettingsUpdateLabel() {
-        if (!::hotspotOpenButton.isInitialized || webUiConnectionState !in setOf(
-                WebUiConnectionState.IDLE, WebUiConnectionState.COMPLETE, WebUiConnectionState.ERROR)) return
+        if (!::hotspotOpenButton.isInitialized || webUiConnectionState != WebUiConnectionState.IDLE) return
         val title = getString(R.string.control_settings)
         hotspotOpenButton.text = if (FirmwareTransferState.updateAvailable(this, FirmwareTransferState.currentLock(this))) {
             android.text.SpannableString("$title\n${getString(R.string.firmware_update_available)}").apply {
@@ -2485,6 +2635,7 @@ class MainActivity : Activity() {
                     android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             }
         } else title
+        hotspotOpenButton.contentDescription = hotspotOpenButton.text
     }
 
 

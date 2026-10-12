@@ -27,6 +27,12 @@ internal class LockWizardSpeech(private val context: Context, private val view: 
         when (AppLanguage.currentTag(context)) {
             "ru" -> "ru-RU"
             "uk" -> "uk-UA"
+            "pl" -> "pl-PL"
+            "be" -> "be-BY"
+            "lt" -> "lt-LT"
+            "lv" -> "lv-LV"
+            "de" -> "de-DE"
+            "ja" -> "ja-JP"
             else -> "en-US"
         }
     )

@@ -16,13 +16,14 @@
     <string name="legacy_location_required_message">On Android 6–11, the system only allows BLE scanning when location is turned on. TheKidLock does not use or store your phone’s location. Android 12 and later do not have this requirement.</string>
     <string name="legacy_location_open_settings">Open settings</string>
     <string name="local_hotspot_status">Local hotspot is off</string>
-    <string name="control_settings">Lock settings</string>
+    <string name="control_settings">Go to lock settings</string>
     <string name="firmware_update_available">(update available)</string>
     <string name="firmware_download_ready">New firmware is ready. Tap “Install update” in the lock’s Web UI.</string>
     <string name="mode_auto">Auto-open lock</string>
+    <string name="mode_auto_enabled">Enabled</string>
+    <string name="mode_auto_disabled">Disabled</string>
     <string name="mode_always_open">Keep lock open</string>
     <string name="open_via_internet">Open over the internet</string>
-    <string name="settings_waiting_esp">Settings · waiting for lock</string>
     <string name="auto_open">Automatic mode</string>
     <string name="manual_open">Open</string>
     <string name="manual_keep_open">Keep open</string>
@@ -99,11 +100,11 @@
     <string name="internet_command_sent">Command sent</string>
     <string name="internet_broker_accepted">Cloud accepted command</string>
     <string name="internet_unlocked">Lock unlocked</string>
+    <string name="internet_close_timer_unit">%1$d sec</string>
     <string name="internet_door_opened">Door opened</string>
     <string name="internet_closed_locked">Door closed and locked</string>
     <string name="internet_error">Internet opening failed</string>
     <string name="done">Done</string>
-    <string name="settings_countdown">%1$s · %2$d s</string>
     <string name="hotspot_lock_connecting">Lock received network settings and is connecting to Wi-Fi</string>
     <string name="firmware_update_started">Firmware update started</string>
     <string name="firmware_update_failed">Firmware update failed</string>
@@ -151,7 +152,6 @@
     <string name="bluetooth_access_unavailable">Bluetooth or permissions unavailable</string>
     <string name="service_beacon_active">Automatic mode · BLE beacon active</string>
     <string name="service_wifi_received">Lock received Wi-Fi · waiting for Web UI IP</string>
-    <string name="service_home_wifi_request">Requesting lock home Wi-Fi</string>
     <string name="service_mode_waiting">Waiting for lock mode confirmation</string>
     <string name="service_web_ip_request">Automatic mode · requesting Web UI IP</string>
     <string name="service_web_ip_waiting">Waiting for Web UI IP from lock</string>
@@ -185,4 +185,14 @@
     <string name="speech_text_invalid">Invalid instruction text</string>
     <string name="speech_russian_unavailable">Russian speech is unavailable. Check text-to-speech in Android settings</string>
     <string name="speech_start_failed">Could not start text-to-speech</string>
+    <string name="revoke_keys">Revoke keys over the internet</string>
+    <string name="revoke_keys_loading">Loading phones…</string>
+    <string name="revoke_keys_no_phones">No other phones are registered</string>
+    <string name="revoke_keys_owner">owner</string>
+    <string name="revoke_keys_apply">Revoke selected</string>
+    <string name="revoke_keys_done">Revoked: %1$d</string>
+    <string name="revoke_keys_error">Could not revoke keys</string>
+    <string name="keys_list_changed">Phone list changed. Open it again</string>
+    <string name="revoke_keys_partial">Partially revoked: %1$d</string>
+    <string name="revoke_keys_timeout">Lock did not respond</string>
 </resources>

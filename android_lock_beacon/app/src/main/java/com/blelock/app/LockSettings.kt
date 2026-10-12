@@ -68,12 +68,6 @@ class LockSettings(private val context: Context) {
             preferences.edit().putString(KEY_LOCK_WIFI_IP, value).commit()
         }
 
-    var webUiCountdownSeconds: Int
-        get() = preferences.getInt(KEY_WEB_UI_COUNTDOWN_SECONDS, 10).coerceIn(1, 60)
-        set(value) {
-            preferences.edit().putInt(KEY_WEB_UI_COUNTDOWN_SECONDS, value.coerceIn(1, 60)).commit()
-        }
-
     var rssiThreshold: Int
         get() = preferences.getInt(KEY_RSSI_THRESHOLD, DEFAULT_RSSI_THRESHOLD)
             .coerceIn(MIN_RSSI_THRESHOLD, MAX_RSSI_THRESHOLD)
@@ -102,7 +96,6 @@ class LockSettings(private val context: Context) {
         private const val KEY_AUTOSTART_NOTICE_SHOWN = "autostart_notice_shown"
         private const val KEY_LOCK_ADDRESS = "lock_address"
         private const val KEY_LOCK_WIFI_IP = "lock_wifi_ip"
-        private const val KEY_WEB_UI_COUNTDOWN_SECONDS = "web_ui_countdown_seconds"
         private const val KEY_RSSI_THRESHOLD = "rssi_threshold"
         private const val KEY_PHONE_BEACON_TX_POWER_LEVEL = "phone_beacon_tx_power_level"
         private const val DEFAULT_RSSI_THRESHOLD = -75

@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object InternetOpen {
     private const val MQTT_PORT = 1883
     private val busy = AtomicBoolean(false)
-    fun start(context: Context, progress: (InternetOpenStage, String?) -> Unit, onError: (String) -> Unit, done: () -> Unit): Boolean {
+    fun start(context: Context, progress: (InternetOpenStage, String?, Long?) -> Unit, onError: (String) -> Unit, done: () -> Unit): Boolean {
         if (!busy.compareAndSet(false, true)) return false
         val app = context.applicationContext
         Thread {
@@ -29,9 +29,9 @@ object InternetOpen {
                 val target = cfg.getString("target")
                 val phone = cfg.getString("phone")
                 val signingKey = InternetAccess.key(cfg); key = signingKey
-                val prefix = "locks/" + target.replace(":", "")
+                val prefix = "j" + target.replace(":", "")
                 val replies = LinkedBlockingQueue<ByteArray>(16)
-                progress(InternetOpenStage.CONNECTING, null)
+                progress(InternetOpenStage.CONNECTING, null, null)
                 client = MqttClient("tcp://" + cfg.getString("host") + ":" + MQTT_PORT,
                     "phone-" + UUID.randomUUID().toString(), MemoryPersistence()).apply {
                     timeToWait = 10_000
@@ -40,8 +40,8 @@ object InternetOpen {
                         keepAliveInterval = 30
                         isCleanSession = true
                     })
-                    subscribe("$prefix/result", 1) { _, message ->
-                        if (!message.isRetained && message.payload.size <= 384) replies.offer(message.payload.clone())
+                    subscribe("$prefix/7qK", 1) { _, message ->
+                        if (!message.isRetained && message.payload.size <= 1024) replies.offer(message.payload.clone())
                     }
                 }
                 val id = access.nextId()
@@ -49,10 +49,11 @@ object InternetOpen {
                 val tag = InternetAuth.sign(signingKey, InternetAuth.command(target, phone, time, id))
                 val request = JSONObject().put("phone", phone).put("time", time.toString())
                     .put("id", id.toString()).put("mac", tag).toString().toByteArray(Charsets.UTF_8)
-                val delivery = client.getTopic("$prefix/command").publish(request, 1, false)
-                progress(InternetOpenStage.COMMAND_SENT, null)
+                val sealedRequest = InternetCrypto.seal(signingKey, "command", target, phone, request)
+                val delivery = client.getTopic("$prefix/0yF").publish(sealedRequest, 1, false)
+                progress(InternetOpenStage.COMMAND_SENT, null, null)
                 delivery.waitForCompletion(10_000)
-                progress(InternetOpenStage.BROKER_ACCEPTED, null)
+                progress(InternetOpenStage.BROKER_ACCEPTED, null, null)
                 val deadline = android.os.SystemClock.elapsedRealtime() + 90_000
                 var completed = false
                 var lastResult = ""
@@ -60,9 +61,16 @@ object InternetOpen {
                 var doorWasOpened = false
                 while (android.os.SystemClock.elapsedRealtime() < deadline) {
                     val bytes = replies.poll(1, TimeUnit.SECONDS) ?: continue
-                    val reply = runCatching { JSONObject(bytes.toString(Charsets.UTF_8)) }.getOrNull() ?: continue
+                    val plain = InternetCrypto.open(signingKey, "result", target, phone, bytes) ?: continue
+                    val reply = try { JSONObject(plain.toString(Charsets.UTF_8)) } catch (_: Exception) { continue }
                     val hasDoorState = reply.has("door")
-                    if (reply.length() != (if (hasDoorState) 7 else 6) || reply.optString("phone") != phone ||
+                    val hasCloseRemaining = reply.has("close_remaining_ms")
+                    val expectedFields = when {
+                        hasDoorState && hasCloseRemaining -> 8
+                        hasDoorState -> 7
+                        else -> 6
+                    }
+                    if (reply.length() != expectedFields || reply.optString("phone") != phone ||
                         reply.optString("id") != id.toString()) continue
                     val stampString = reply.optString("time")
                     val stamp = stampString.toLongOrNull() ?: continue
@@ -73,16 +81,18 @@ object InternetOpen {
                     val door = if (hasDoorState) reply.optString("door") else "unknown"
                     if (door !in listOf("unknown", "open", "closed")) continue
                     val faults = reply.optLong("faults", -1)
+                    val closeRemainingMs = if (hasCloseRemaining) reply.optLong("close_remaining_ms", -1) else null
+                    if (closeRemainingMs != null && closeRemainingMs !in 0L..INTERNET_CLOSE_DELAY_MS) continue
                     if (faults !in 0..4294967295L || !InternetAuth.verify(signingKey,
                             InternetAuth.result(target, phone, stamp, id, result, faults,
-                                if (hasDoorState) door else null), reply.optString("mac"))) continue
+                                if (hasDoorState) door else null, closeRemainingMs), reply.optString("mac"))) continue
                     val eventKey = "$result|$door|$faults"
                     if (eventKey == lastResult) continue
                     lastResult = eventKey
                     if (result == "opened" && faults == 0L) lockWasOpened = true
                     if (hasDoorState && door == "open") doorWasOpened = true
                     val stage = internetOpenStageForReply(result, faults, door, lockWasOpened, doorWasOpened)
-                    progress(stage, if (hasDoorState) door else null)
+                    progress(stage, if (hasDoorState) door else null, closeRemainingMs)
                     if (result == "closed" && door == "open") {
                         onError(app.getString(R.string.internet_door_still_open))
                         completed = true
@@ -95,9 +105,9 @@ object InternetOpen {
                     }
                     if (completed) break
                 }
-                if (!completed) { progress(InternetOpenStage.ERROR, null); onError(app.getString(R.string.internet_completion_missing)) }
+                if (!completed) { progress(InternetOpenStage.ERROR, null, null); onError(app.getString(R.string.internet_completion_missing)) }
             } catch (e: Exception) {
-                progress(InternetOpenStage.ERROR, null)
+                progress(InternetOpenStage.ERROR, null, null)
                 onError(if (e is IllegalStateException) e.message ?: app.getString(R.string.internet_error) else app.getString(R.string.internet_connection_failed))
             } finally {
                 key?.fill(0)
@@ -108,4 +118,6 @@ object InternetOpen {
         }.apply { name = "internet-open"; start() }
         return true
     }
+
+    private const val INTERNET_CLOSE_DELAY_MS = 20_000L
 }

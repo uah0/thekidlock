@@ -38,7 +38,6 @@ class PhoneBeacon(private val context: Context) {
         val MQTT_ACCESS_UUID: UUID = UUID.fromString("6f4f001d-9a7b-4c21-8d32-5e6f708192a3")
         val SERVICE_RESULT_UUID: UUID = UUID.fromString("6f4f001c-9a7b-4c21-8d32-5e6f708192a3")
         const val ACTION_HOLD_OPEN_RESULT = "com.blelock.app.HOLD_OPEN_RESULT"
-        const val ACTION_HOME_WIFI_FINISHED = "com.blelock.app.HOME_WIFI_FINISHED"
         const val EXTRA_SUCCESS = "success"
         const val EXTRA_ERROR = "error"
         private const val HOLD_REQUEST_TIMEOUT_MS = 30_000L
@@ -86,12 +85,9 @@ class PhoneBeacon(private val context: Context) {
     private var sessionId = 0
     private val handler = Handler(Looper.getMainLooper())
     private var holdRequest: ServiceBeaconProtocol.HoldRequest? = null
-    private var homeRequestId = 0
-    private val homeTimeout = Runnable { synchronized(this) { finishHomeWifiRequest() } }
     private val holdTimeout = Runnable { synchronized(this) { finishHoldRequest(false, context.getString(R.string.lock_reply_timeout)) } }
     val isHoldRequestActive: Boolean get() = synchronized(this) { holdRequest != null }
-    val isHomeWifiRequestActive: Boolean get() = synchronized(this) { homeRequestId != 0 }
-    val isServiceRequestActive: Boolean get() = isWifiProvisioningActive || isWebUiIpRequestActive || isHoldRequestActive || isHomeWifiRequestActive
+    val isServiceRequestActive: Boolean get() = isWifiProvisioningActive || isWebUiIpRequestActive || isHoldRequestActive
 
     val isWifiProvisioningActive: Boolean get() = wifiProvisioningRequested
     val isWebUiIpRequestActive: Boolean get() = webUiIpRequest
@@ -114,7 +110,7 @@ class PhoneBeacon(private val context: Context) {
                     runCatching { server?.cancelConnection(device) }
                         .onFailure { Log.w(TAG, "Could not reject GATT connection while Auto Open is off", it) }
                 }
-                if (newState == BluetoothGatt.STATE_DISCONNECTED && (autoOpenWanted || webUiIpRequest || isHoldRequestActive || isHomeWifiRequestActive) &&
+                if (newState == BluetoothGatt.STATE_DISCONNECTED && (autoOpenWanted || webUiIpRequest || isHoldRequestActive) &&
                     !isWifiProvisioningActive && advertiserCallback == null && !hasConnectedPeers()) {
                     startAdvertising()
                 }
@@ -127,7 +123,7 @@ class PhoneBeacon(private val context: Context) {
                 provisioningCredentials = null
                 provisioningReadPeer = null
                 wifiProvisioningRequested = false
-                if (autoOpenWanted || webUiIpRequest || isHoldRequestActive || isHomeWifiRequestActive) restartAdvertising() else stop()
+                if (autoOpenWanted || webUiIpRequest || isHoldRequestActive) restartAdvertising() else stop()
                 Log.i(TAG, "Wi-Fi provisioning read completed; returning to normal beacon mode")
                 context.sendBroadcast(
                     Intent(ACTION_WIFI_PROVISIONING_DISCONNECTED).setPackage(context.packageName)
@@ -177,7 +173,7 @@ class PhoneBeacon(private val context: Context) {
                 val nameValue = if (characteristic.uuid == NAME_UUID) currentNameBytes() else null
                 val nameRead = wanted && autoOpenWanted && bonded && nameValue != null && offset <= nameValue.size
                 val autoOpenDisabledProof = wanted && !effectiveAutoOpen && bonded && characteristic.uuid == PROOF_UUID
-                val serviceValue = ServiceBeaconProtocol.request(provisioningCredentials != null, webUiIpRequest, holdRequest, homeRequestId)
+                val serviceValue = ServiceBeaconProtocol.request(provisioningCredentials != null, webUiIpRequest, holdRequest)
                 val serviceRead = wanted && isServiceRequestActive && bonded &&
                     characteristic.uuid == SERVICE_REQUEST_UUID && offset in 0..serviceValue.size
                 val status = when {
@@ -266,8 +262,7 @@ class PhoneBeacon(private val context: Context) {
                     )
                 }
                 val serviceResult = if (wanted && bonded && characteristic.uuid == SERVICE_RESULT_UUID &&
-                    !preparedWrite && offset == 0) ServiceBeaconProtocol.result(value,
-                        holdRequest ?: homeRequestId.takeIf { it != 0 }?.let { ServiceBeaconProtocol.HoldRequest(it, null) }) else null
+                    !preparedWrite && offset == 0) ServiceBeaconProtocol.result(value, holdRequest) else null
                 if (responseNeeded) {
                     val status = if (valid || webUiIp != null || serviceResult != null) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_FAILURE
                     try { current.sendResponse(device, requestId, status, offset, null) }
@@ -275,15 +270,7 @@ class PhoneBeacon(private val context: Context) {
                 }
                 if (serviceResult != null) {
                     val acceptedRequest = holdRequest
-                    val acceptedHomeId = homeRequestId
                     handler.post { synchronized(this@PhoneBeacon) {
-                        if (acceptedHomeId != 0) {
-                            if (generation == serverGeneration && homeRequestId == acceptedHomeId) {
-                                Log.i(TAG, "Home Wi-Fi request acknowledged code=${serviceResult.code}")
-                                finishHomeWifiRequest()
-                            }
-                            return@synchronized
-                        }
                         if (generation != serverGeneration || holdRequest != acceptedRequest) return@synchronized
                         if (serviceResult.code == 0) {
                             if (acceptedRequest?.enabled == null) {
@@ -325,7 +312,6 @@ class PhoneBeacon(private val context: Context) {
 
     @Synchronized
     fun requestToggleHoldOpen(): Boolean {
-        finishHomeWifiRequest()
         if (holdRequest != null) return false
         holdRequest = ServiceBeaconProtocol.HoldRequest(nextRequestId(), null)
         handler.postDelayed(holdTimeout, HOLD_REQUEST_TIMEOUT_MS)
@@ -341,27 +327,6 @@ class PhoneBeacon(private val context: Context) {
             .putExtra(EXTRA_SUCCESS, success).putExtra(EXTRA_ERROR, error))
         if (wanted) {
             if (autoOpenWanted || webUiIpRequest || provisioningCredentials != null) restartAdvertising()
-            else if (wifiProvisioningRequested) stopAdvertising()
-            else stop()
-        }
-    }
-
-    @Synchronized
-    fun requestHomeWifi(): Boolean {
-        if (isServiceRequestActive) return false
-        homeRequestId = nextRequestId()
-        handler.postDelayed(homeTimeout, 15_000L)
-        if (!wanted) startServer() else restartAdvertising()
-        return homeRequestId != 0
-    }
-
-    private fun finishHomeWifiRequest() {
-        if (homeRequestId == 0) return
-        homeRequestId = 0
-        handler.removeCallbacks(homeTimeout)
-        context.sendBroadcast(Intent(ACTION_HOME_WIFI_FINISHED).setPackage(context.packageName))
-        if (wanted) {
-            if (autoOpenWanted || webUiIpRequest || provisioningCredentials != null || isHoldRequestActive) restartAdvertising()
             else if (wifiProvisioningRequested) stopAdvertising()
             else stop()
         }
@@ -413,7 +378,6 @@ class PhoneBeacon(private val context: Context) {
 
     @Synchronized
     fun startWebUiIpRequest() {
-        finishHomeWifiRequest()
         webUiIpRequest = true
         if (!wanted) startServer() else restartAdvertising()
     }
@@ -421,7 +385,7 @@ class PhoneBeacon(private val context: Context) {
     @Synchronized
     fun finishWebUiIpRequest() {
         webUiIpRequest = false
-        if (wifiProvisioningRequested || isHoldRequestActive || isHomeWifiRequestActive) return
+        if (wifiProvisioningRequested || isHoldRequestActive) return
         if (autoOpenWanted) {
             if (!wanted) startServer() else restartAdvertising()
         } else {
@@ -431,7 +395,6 @@ class PhoneBeacon(private val context: Context) {
 
     @Synchronized
     fun startWifiProvisioning(ssid: String, password: String, hotspotIp: ByteArray?) {
-        finishHomeWifiRequest()
         val ssidBytes = ssid.toByteArray(Charsets.UTF_8)
         val passwordBytes = password.toByteArray(Charsets.UTF_8)
         require(ssidBytes.isNotEmpty() && ssidBytes.size <= 32) { "Invalid Wi-Fi SSID length" }
@@ -448,7 +411,6 @@ class PhoneBeacon(private val context: Context) {
     /** Suppress ordinary AUTO advertising while Android creates/resolves its hotspot. */
     @Synchronized
     fun prepareWifiProvisioning(resumeAutoOpen: Boolean) {
-        finishHomeWifiRequest()
         autoOpenWanted = resumeAutoOpen
         wifiProvisioningRequested = true
         provisioningCredentials = null
@@ -465,7 +427,7 @@ class PhoneBeacon(private val context: Context) {
         provisioningCredentials = null
         provisioningReadPeer = null
         setHotspotIp(null)
-        if (autoOpenWanted || webUiIpRequest || isHoldRequestActive || isHomeWifiRequestActive) {
+        if (autoOpenWanted || webUiIpRequest || isHoldRequestActive) {
             if (!wanted) startServer() else restartAdvertising()
         } else stop()
         Log.i(TAG, "Wi-Fi provisioning cancelled; beacon restored")
@@ -480,7 +442,7 @@ class PhoneBeacon(private val context: Context) {
     fun stopAutoOpen() {
         autoOpenWanted = false
         if (isServiceRequestActive) {
-            if (provisioningCredentials != null || webUiIpRequest || isHoldRequestActive || isHomeWifiRequestActive) restartAdvertising()
+            if (provisioningCredentials != null || webUiIpRequest || isHoldRequestActive) restartAdvertising()
             else {
                 stopAdvertising()
             }
@@ -612,7 +574,7 @@ class PhoneBeacon(private val context: Context) {
             }
         }
         if (wifiProvisioningRequested && provisioningCredentials == null && !webUiIpRequest && !isHoldRequestActive) return
-        val modeByte = if (provisioningCredentials != null || webUiIpRequest || isHoldRequestActive || isHomeWifiRequestActive)
+        val modeByte = if (provisioningCredentials != null || webUiIpRequest || isHoldRequestActive)
             ServiceBeaconProtocol.MODE.toByte() else 1.toByte()
         val payload = byteArrayOf('L'.code.toByte(), 'O'.code.toByte(), 'C'.code.toByte(), 'K'.code.toByte(), modeByte) +
             intBytes(id) + intBytes(sessionId)
@@ -704,7 +666,6 @@ class PhoneBeacon(private val context: Context) {
     @Synchronized
     fun stop() {
         wanted = false
-        finishHomeWifiRequest()
         if (holdRequest != null) finishHoldRequest(false, context.getString(R.string.ble_session_interrupted))
         serviceReady = false
         serverGeneration++

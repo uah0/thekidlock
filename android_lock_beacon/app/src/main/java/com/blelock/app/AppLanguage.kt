@@ -10,7 +10,7 @@ import java.util.Locale
 internal object AppLanguage {
     private const val PREFS = "app_language"
     private const val TAG = "language_tag"
-    val supportedTags = listOf("en", "ru", "uk")
+    val supportedTags = listOf("en", "ru", "uk", "pl", "be", "lt", "lv", "de", "ja")
 
     fun currentTag(context: Context): String {
         if (Build.VERSION.SDK_INT >= 33) {
