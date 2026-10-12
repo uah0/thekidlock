@@ -46,7 +46,7 @@ typedef struct {const char *duration;} httpd_req_t;
 static app_config_t s_cfg;
 static SemaphoreHandle_t s_config_mutex;
 static int scenario,writes,commits,closes,locks,setting;
-static bool exists,pending;
+static bool exists,pending,beep_enabled,beep_staged,beep_pending;
 static uint32_t stored,staged;
 static SemaphoreHandle_t xSemaphoreCreateMutex(void){return (void*)1;}
 static void xSemaphoreTake(void *h,int timeout){locks++;}
@@ -55,13 +55,13 @@ static int nvs_open(const char *name,int mode,nvs_handle_t *h){
  if(setting&&scenario==8)return 9;*h=1;return ESP_OK;
 }
 static int nvs_get_i8(int h,const char *k,int8_t *v){return ESP_ERR_NVS_NOT_FOUND;}
-static int nvs_get_u8(int h,const char *k,uint8_t *v){*v=0;return ESP_OK;}
+static int nvs_get_u8(int h,const char *k,uint8_t *v){*v=!strcmp(k,"departure_beep")?beep_enabled:0;return ESP_OK;}
 static int nvs_get_u32(int h,const char *k,uint32_t *v){
  if(strcmp(k,"departure_ms"))return ESP_ERR_NVS_NOT_FOUND;
  if(scenario==3)return 6;
  if(!exists)return ESP_ERR_NVS_NOT_FOUND;*v=stored;return ESP_OK;
 }
-static int nvs_set_u8(int h,const char *k,uint8_t v){return 99;}
+static int nvs_set_u8(int h,const char *k,uint8_t v){if(strcmp(k,"departure_beep"))return 99;if(setting&&scenario==23)return 10;beep_staged=v!=0;beep_pending=true;return 0;}
 static int nvs_set_u32(int h,const char *k,uint32_t v){
  if(strcmp(k,"departure_ms"))return 99;writes++;
  if(scenario==4||(setting&&scenario==6))return 7;
@@ -69,9 +69,9 @@ static int nvs_set_u32(int h,const char *k,uint32_t v){
 }
 static int nvs_commit(int h){
  commits++;if(scenario==5||(setting&&scenario==7))return 8;
- if(pending){stored=staged;exists=true;pending=false;}return ESP_OK;
+ if(pending){stored=staged;exists=true;pending=false;}if(beep_pending){beep_enabled=beep_staged;beep_pending=false;}return ESP_OK;
 }
-static void nvs_close(int h){closes++;pending=false;}
+static void nvs_close(int h){closes++;pending=false;beep_pending=false;}
 static int nvs_erase_key(int h,const char *k){return ESP_ERR_NVS_NOT_FOUND;}
 static void remote_log_set_serial_enabled(bool enabled){}
 static int httpd_req_get_url_query_str(httpd_req_t *r,char *out,unsigned len){
@@ -117,8 +117,12 @@ FUNCTIONS
 int run_tests(int test){
  scenario=test;exists=test==1||test>=6;stored=test==1?60:20;
  if(test==2){exists=true;stored=161;}
+ if(test==24){stored=160;beep_enabled=true;}
+ if(test==25){stored=0;beep_enabled=true;}
  int result=app_config_init();
  if(test>=3&&test<=5){CHECK(result==test+3);CHECK(closes==1);return 0;}
+ if(test==24){CHECK(result==0&&stored==120&&s_cfg.departure_buzzer_enabled&&s_cfg.departure_buzzer_pulse_ms==120);CHECK(writes==1&&commits==1);return 0;}
+ if(test==25){CHECK(result==0&&!s_cfg.departure_buzzer_enabled&&s_cfg.departure_buzzer_pulse_ms==0);CHECK(writes==0);return 0;}
  CHECK(result==0);CHECK(!s_cfg.departure_buzzer_enabled);CHECK(!s_cfg.serial_log_enabled);
  CHECK(s_cfg.departure_buzzer_pulse_ms==(test==1?60:20));
  if(test==0||test==2){CHECK(writes==1&&commits==1&&stored==20);CHECK(app_config_init()==0);CHECK(writes==1&&commits==1);}
@@ -132,24 +136,24 @@ int run_tests(int test){
   CHECK(app_config_set_departure_buzzer_pulse_ms(100)==0);CHECK(writes==1&&commits==1);
  }
  if(test==10){
-  uint32_t invalid[]={0,1,4,161,UINT32_MAX};for(unsigned i=0;i<5;i++)CHECK(app_config_set_departure_buzzer_pulse_ms(invalid[i])==4);
+  uint32_t invalid[]={121,160,161,UINT32_MAX};for(unsigned i=0;i<4;i++)CHECK(app_config_set_departure_buzzer_pulse_ms(invalid[i])==4);
   CHECK(writes==0&&commits==0&&locks==0);
  }
- if(test==11){CHECK(app_config_set_departure_buzzer_pulse_ms(5)==0);CHECK(app_config_set_departure_buzzer_pulse_ms(160)==0);CHECK(stored==160&&s_cfg.departure_buzzer_pulse_ms==160);}
+ if(test==11){CHECK(app_config_set_departure_buzzer_pulse_ms(0)==0);CHECK(stored==0&&!beep_enabled&&!s_cfg.departure_buzzer_enabled);CHECK(app_config_set_departure_buzzer_pulse_ms(1)==0);CHECK(beep_enabled&&s_cfg.departure_buzzer_enabled);CHECK(app_config_set_departure_buzzer_pulse_ms(120)==0);CHECK(stored==120&&s_cfg.departure_buzzer_pulse_ms==120);}
  if(test==12){
-  const char *bad[]={NULL,"","-10","+20"," 20","20x","4","161","200","42949672960"};
+  const char *bad[]={NULL,"","-10","+20"," 20","20x","121","161","200","42949672960"};
   for(unsigned i=0;i<10;i++){httpd_req_t r={bad[i]};CHECK(departure_buzzer_pulse_post(&r)==400);}CHECK(writes==0);
   httpd_req_t r={"61"};CHECK(departure_buzzer_pulse_post(&r)==0);CHECK(stored==61);
  }
  if(test==13){setting=1;scenario=6;httpd_req_t r={"80"};CHECK(departure_buzzer_pulse_post(&r)==500);CHECK(stored==20&&s_cfg.departure_buzzer_pulse_ms==20);}
  if(test==14){s_config_mutex=0;CHECK(app_config_set_departure_buzzer_pulse_ms(60)==5);}
  if(test==15){
-  for(uint32_t width=5;width<=160;width++){
+  for(uint32_t width=1;width<=120;width++){
    ticks=0;off_at=0;CHECK(departure_buzzer_tone((void*)1,width,0));
    CHECK(ticks==18&&on_timeout==width*1000&&off_at==width*1000&&level==1&&!timer_active);
   }
  }
- if(test==16){ticks=0;overlap=1;CHECK(!departure_buzzer_tone((void*)1,160,0));CHECK(ticks==2&&level==1&&!timer_active);}
+ if(test==16){ticks=0;overlap=1;CHECK(!departure_buzzer_tone((void*)1,120,0));CHECK(ticks==2&&level==1&&!timer_active);}
  if(test==17){ticks=0;timer_error=1;CHECK(!departure_buzzer_tone((void*)1,5,0));CHECK(level==1&&!timer_active);}
  if(test==18){CHECK(!departure_buzzer_tone(0,5,0));CHECK(!timer_active);}
  if(test==19){
@@ -162,12 +166,12 @@ int run_tests(int test){
  if(test==20){
   uint32_t width=0;s_departure_preview_ready=true;now_us=1000000;
   CHECK(app_buzzer_request_departure_preview(5)==0);now_us=5900000;
-  CHECK(app_buzzer_request_departure_preview(160)==0);CHECK(s_departure_preview_until_us==10900000);
-  now_us=6000000;CHECK(departure_preview_active(&width)&&width==160);
+  CHECK(app_buzzer_request_departure_preview(120)==0);CHECK(s_departure_preview_until_us==10900000);
+  now_us=6000000;CHECK(departure_preview_active(&width)&&width==120);
   now_us=10900000;CHECK(!departure_preview_active(&width));CHECK(writes==0&&s_cfg.departure_buzzer_pulse_ms==20);
  }
  if(test==21){
-  s_departure_preview_ready=true;CHECK(app_buzzer_request_departure_preview(4)==4);CHECK(app_buzzer_request_departure_preview(161)==4);CHECK(s_departure_preview_until_us==0);
+  s_departure_preview_ready=true;CHECK(app_buzzer_request_departure_preview(121)==4);CHECK(app_buzzer_request_departure_preview(161)==4);CHECK(s_departure_preview_until_us==0);
   s_departure_preview_ready=false;CHECK(app_buzzer_request_departure_preview(20)==5);CHECK(s_departure_preview_until_us==0);
  }
  if(test==22){
@@ -176,6 +180,10 @@ int run_tests(int test){
   s_departure_preview_ready=true;now_us=42;CHECK(departure_buzzer_preview_post(&good)==0);
   CHECK(s_departure_preview_pulse_ms==61&&s_departure_preview_until_us==5000042&&writes==0&&stored==20);
  }
+ if(test==23){setting=1;CHECK(app_config_set_departure_buzzer_pulse_ms(80)==10);CHECK(stored==20&&s_cfg.departure_buzzer_pulse_ms==20&&!s_cfg.departure_buzzer_enabled&&commits==0);}
+ if(test==26){uint32_t width=0;s_departure_preview_ready=true;CHECK(app_buzzer_request_departure_preview(80)==0);CHECK(departure_preview_active(&width));CHECK(app_buzzer_request_departure_preview(0)==0);CHECK(!departure_preview_active(&width)&&s_departure_preview_until_us==0);level=1;CHECK(!departure_buzzer_tone((void*)1,0,0));CHECK(level==1&&!timer_active);}
+ if(test==27){httpd_req_t zero={"0"};CHECK(departure_buzzer_pulse_post(&zero)==0);CHECK(stored==0&&!s_cfg.departure_buzzer_enabled);CHECK(app_config_init()==0);CHECK(s_cfg.departure_buzzer_pulse_ms==0&&!s_cfg.departure_buzzer_enabled);}
+ if(test==28){CHECK(app_config_set_departure_buzzer_pulse_ms(20)==0);CHECK(s_cfg.departure_buzzer_enabled&&beep_enabled&&writes==1);CHECK(app_config_set_departure_buzzer_pulse_ms(20)==0);CHECK(writes==1&&commits==1);}
  CHECK(locks==0);return 0;
 }
 '''.replace('FUNCTIONS', functions)
@@ -190,7 +198,7 @@ int run_tests(int test){
     segments = [s for s in elf.iter_segments() if s['p_type'] == 'PT_LOAD']
     base = min(s['p_vaddr'] for s in segments) & ~4095
     end = (max(s['p_vaddr'] + s['p_memsz'] for s in segments) + 4095) & ~4095
-    for test in range(23):
+    for test in range(29):
         cpu = Uc(UC_ARCH_RISCV, UC_MODE_RISCV32)
         cpu.mem_map(base, end - base)
         cpu.mem_map(0x800000, 0x20000)

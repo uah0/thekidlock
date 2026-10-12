@@ -150,28 +150,43 @@ static esp_err_t config_get(httpd_req_t *req)
              "\"serial_log_enabled\":%s,"
              "\"departure_buzzer_enabled\":%s,"
              "\"departure_buzzer_pulse_ms\":%lu,"
-             "\"timer_a_ms\":%lu}",
+             "\"timer_a_ms\":%lu,"
+             "\"beacon_reopen_protection_ms\":%lu}",
              cfg.phone_rssi_threshold,
              cfg.shunt_gpio,
              cfg.serial_log_enabled ? "true" : "false",
              cfg.departure_buzzer_enabled ? "true" : "false",
              (unsigned long)cfg.departure_buzzer_pulse_ms,
-             (unsigned long)cfg.timer_a_ms);
+             (unsigned long)cfg.timer_a_ms,
+             (unsigned long)cfg.beacon_reopen_protection_ms);
     return send_json(req, json);
 }
 
 static esp_err_t config_post(httpd_req_t *req)
 {
-    char query[500], rssi[16], timer_a[16];
+    char query[500], rssi[16], timer_a[16], reopen_protection[16];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "phone_rssi_threshold", rssi, sizeof(rssi)) != ESP_OK ||
         httpd_query_key_value(query, "timer_a_ms", timer_a, sizeof(timer_a)) != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, отсутствуют параметры; query='%s'", query);
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing parameters");
     }
-    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s A=%s", rssi, timer_a);
+    esp_err_t reopen_err = httpd_query_key_value(query, "beacon_reopen_protection_ms",
+                                                  reopen_protection,
+                                                  sizeof(reopen_protection));
+    if (reopen_err == ESP_ERR_NOT_FOUND) {
+        app_config_t cfg;
+        app_config_get(&cfg);
+        snprintf(reopen_protection, sizeof(reopen_protection), "%lu",
+                 (unsigned long)cfg.beacon_reopen_protection_ms);
+    } else if (reopen_err != ESP_OK) {
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid protection delay");
+    }
+    ESP_LOGI(TAG, "Настройки замка: запрос zone=%s A=%s reopen=%s",
+             rssi, timer_a, reopen_protection);
     esp_err_t err = app_config_set_logic(atoi(rssi),
-                                         strtoul(timer_a, NULL, 10));
+                                         strtoul(timer_a, NULL, 10),
+                                         strtoul(reopen_protection, NULL, 10));
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Настройки замка: HTTP 400, app_config_set_logic отказал: %s", esp_err_to_name(err));
         return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, esp_err_to_name(err));
@@ -322,8 +337,7 @@ static bool departure_pulse_from_request(httpd_req_t *req, uint32_t *pulse_ms)
     char *end;
     errno = 0;
     unsigned long value = strtoul(duration, &end, 10);
-    if (errno || *end || value < APP_DEPARTURE_PULSE_MIN_MS ||
-        value > APP_DEPARTURE_PULSE_MAX_MS ||
+    if (errno || *end || value > APP_DEPARTURE_PULSE_MAX_MS ||
         value % APP_DEPARTURE_PULSE_STEP_MS != 0) return false;
     *pulse_ms = (uint32_t)value;
     return true;

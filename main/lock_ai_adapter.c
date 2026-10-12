@@ -29,7 +29,7 @@ static bool s_battery_adc_cali_attempted;
 #define BATTERY_DIVIDER_HIGH_KOHM 150
 #define BATTERY_DIVIDER_LOW_KOHM 27
 
-static int battery_mv_from_raw(int raw)
+int lock_ai_battery_mv_from_raw(int raw)
 {
     if (raw < 0) return -1;
     if (!s_battery_adc_cali_attempted) {
@@ -161,7 +161,7 @@ esp_err_t lock_ai_ulp_json(char *json, size_t capacity)
             verify_contact_threshold_raw = d.calibration_verify_contact_raw + verify_tolerance;
         }
     }
-    const int battery_mv = battery_mv_from_raw(d.vbat_raw);
+    const int battery_mv = lock_ai_battery_mv_from_raw(d.vbat_raw);
     int length = snprintf(json, capacity,
              "{\"lock_state\":%u,\"lock_state_name\":\"%s\","
              "\"fsm_state\":%u,\"fsm_state_name\":\"%s\","

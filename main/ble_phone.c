@@ -639,6 +639,17 @@ bool ble_phone_is_owner(const char *phone)
     return strcmp(id, phone) == 0;
 }
 
+esp_err_t ble_phone_owner_id(char out[14])
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    ble_addr_t owner;
+    esp_err_t err = owner_load(&owner);
+    if (err != ESP_OK || owner.type > 1) return err == ESP_OK ? ESP_ERR_INVALID_STATE : err;
+    snprintf(out, 14, "%x%02x%02x%02x%02x%02x%02x", (unsigned)owner.type,
+             owner.val[5], owner.val[4], owner.val[3], owner.val[2], owner.val[1], owner.val[0]);
+    return ESP_OK;
+}
+
 esp_err_t ble_phone_mqtt_key(const char *phone, uint8_t out[16])
 {
     if (!phone || strlen(phone)!=13 || !out) return ESP_ERR_INVALID_ARG;
@@ -1068,7 +1079,9 @@ static void central_service_send_result(uint16_t handle, uint8_t result)
     uint8_t response[7] = {1};
     memcpy(response + 1, s_central_service_request_id, 4);
     response[5] = result;
-    response[6] = lock_control_is_hold_open() ? 1 : 0;
+    response[6] = s_central_service_flags == PHONE_SERVICE_HOME_WIFI
+        ? (wifi_ota_home_network_configured() ? 1 : 0)
+        : (lock_control_is_hold_open() ? 1 : 0);
     central_set_phase(CENTRAL_PHASE_SERVICE_RESULT_WRITE, CENTRAL_GATT_TIMEOUT_MS);
     event_log_add("BLE service: hold result=%u hold=%u", result, response[6]);
     if (!s_central_service_result_handle ||

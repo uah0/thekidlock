@@ -9,7 +9,7 @@ static esp_err_t identity(mqtt_config_t *cfg)
     esp_err_t err = esp_read_mac(mac, ESP_MAC_WIFI_STA);
     if (err != ESP_OK) return err;
     snprintf(cfg->client_id,sizeof(cfg->client_id),"lock-%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
-    snprintf(cfg->prefix,sizeof(cfg->prefix),"locks/%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
+    snprintf(cfg->prefix,sizeof(cfg->prefix),"j%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     return ESP_OK;
 }
 esp_err_t mqtt_config_get(mqtt_config_t *out)

@@ -84,7 +84,7 @@ static const char *wifi_source(void)
 
 static bool home_auto_connect(void)
 {
-    return s_auto_connect || atomic_load(&s_mqtt_required);
+    return s_auto_connect;
 }
 
 static esp_err_t connect_with_diagnostics_locked(const char *trigger);
@@ -258,6 +258,11 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
             }
             return;
         }
+        if (!atomic_load(&s_runtime_source) && !home_auto_connect()) {
+            set_status("IDLE");
+            xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT);
+            return;
+        }
         set_status("ERROR_WIFI");
         /* A disconnect event can belong to the previous connection when
          * runtime credentials replace an already running Web UI.  Do not
@@ -273,6 +278,11 @@ static void wifi_event_handler_locked(void *arg, esp_event_base_t base,
             }
         }
     } else if (base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        if (!atomic_load(&s_runtime_source) && !home_auto_connect()) {
+            stop_current_web_connection();
+            set_status("IDLE");
+            return;
+        }
         const ip_event_got_ip_t *e = event_data;
         wifi_ap_record_t ap = {0};
         esp_err_t ap_err = esp_wifi_sta_get_ap_info(&ap);
@@ -513,6 +523,15 @@ bool wifi_ota_password_configured(void)
     xSemaphoreGiveRecursive(s_state_mutex);
     return result;
 }
+
+bool wifi_ota_home_network_configured(void)
+{
+    if (!s_state_mutex) return false;
+    xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    bool result = s_saved_ssid[0] != '\0' && s_saved_password[0] != '\0' && home_auto_connect();
+    xSemaphoreGiveRecursive(s_state_mutex);
+    return result;
+}
 static bool wifi_ota_password_configured_locked(void)
 {
     return s_saved_password[0] != '\0';
@@ -582,6 +601,11 @@ static esp_err_t wifi_ota_set_auto_connect_locked(bool enabled)
     if (err == ESP_OK) {
         s_auto_connect = enabled;
         ESP_LOGI(TAG, "WiFiDiag auto_connect changed=%d saved_ssid='%s'", enabled, s_saved_ssid);
+        if (!enabled && !atomic_load(&s_runtime_source)) {
+            if (s_wifi_stack_ready) stop_current_web_connection();
+            if (s_wifi_events) xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT | WIFI_FAILED_BIT);
+            set_status("IDLE");
+        }
     }
     return err;
 }
@@ -622,6 +646,10 @@ failed_netif:
 static esp_err_t connect_wifi(void)
 {
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    if (!atomic_load(&s_runtime_source) && !home_auto_connect()) {
+        xSemaphoreGiveRecursive(s_state_mutex);
+        return ESP_ERR_INVALID_STATE;
+    }
     ESP_LOGI(TAG, "WiFiDiag connect source=%s target='%s' connected=%d status=%s wait_ip_ms=30000",
              wifi_source(), s_ssid, s_wifi_connected, s_status);
     esp_err_t err = ensure_wifi_stack();
@@ -754,6 +782,8 @@ static void web_task(void *arg)
     set_status("CONNECTING_WEB");
     esp_err_t err = connect_wifi();
     xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY);
+    if (err == ESP_OK && !atomic_load(&s_runtime_source) && !home_auto_connect())
+        err = ESP_ERR_INVALID_STATE;
     if (err == ESP_OK) {
         err = web_ui_start();
         if (err == ESP_OK) {
@@ -771,8 +801,11 @@ static void web_task(void *arg)
             ESP_LOGE(TAG, "Web UI start failed: %s", esp_err_to_name(err));
         }
     } else {
-        set_status("ERROR_WIFI");
-        ESP_LOGE(TAG, "Web Wi-Fi connection failed: %s", esp_err_to_name(err));
+        if (!atomic_load(&s_runtime_source) && !home_auto_connect()) set_status("IDLE");
+        else {
+            set_status("ERROR_WIFI");
+            ESP_LOGE(TAG, "Web Wi-Fi connection failed: %s", esp_err_to_name(err));
+        }
     }
     s_web_task_running = false;
     xSemaphoreGiveRecursive(s_state_mutex);
@@ -825,7 +858,7 @@ void wifi_ota_set_mqtt_required(bool enabled)
         xSemaphoreTakeRecursive(s_state_mutex, 0) != pdTRUE) return;
     int64_t now = esp_timer_get_time();
     if (changed) s_mqtt_wifi_retry_us = 0;
-    if (s_initialized && !atomic_load(&s_runtime_source) && !s_task_running &&
+    if (s_initialized && home_auto_connect() && !atomic_load(&s_runtime_source) && !s_task_running &&
         !s_web_task_running && !s_wifi_connected && now >= s_mqtt_wifi_retry_us) {
         s_mqtt_wifi_retry_us = now + 30000000;
         if (!s_reconnect_enabled) {

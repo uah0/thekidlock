@@ -146,6 +146,9 @@ static void lock_task(void *arg)
     bool test_open_active = false;
     bool hold_open = s_hold_open;
     bool open_armed = false;
+    bool beacon_auto_cycle = false;
+    bool beacon_door_open_confirmed = false;
+    int64_t beacon_reopen_block_until_ms = 0;
 
     for (;;) {
         lock_event_item_t item;
@@ -185,10 +188,19 @@ static void lock_task(void *arg)
                     break;
                 }
                 case LOCK_EVENT_OPEN:
-                    if (!lock_control_requested_open()) {
+                    if (!strcmp(item.source, "ble") && now_ms < beacon_reopen_block_until_ms) {
+                        event_log_add("Замок: BLE-открытие отклонено защитным таймером");
+                    } else if (!lock_control_requested_open()) {
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
                             test_open_active = false;
+                            if (!strcmp(item.source, "ble") && !hold_open) {
+                                if (!beacon_auto_cycle) beacon_door_open_confirmed = false;
+                                beacon_auto_cycle = true;
+                            } else {
+                                beacon_auto_cycle = false;
+                                beacon_door_open_confirmed = false;
+                            }
                             event_log_add("Замок: запрос открытия по единому интерфейсу");
                         }
                     }
@@ -261,6 +273,9 @@ static void lock_task(void *arg)
                     }
                     break;
                 case LOCK_EVENT_RSSI_HIGH:
+                    if (now_ms < beacon_reopen_block_until_ms) {
+                        break;
+                    }
                     if (lock_control_requested_open()) {
                         last_sufficient_ms = now_ms;
                     } else if (open_armed) {
@@ -294,6 +309,25 @@ static void lock_task(void *arg)
         }
 
         refresh_feedback(now_ms);
+        if (beacon_auto_cycle) {
+            lock_feedback_t feedback;
+            lock_control_get_feedback(&feedback);
+            if (feedback.valid && feedback.plate_state <= PLATE_FAR) {
+                if (feedback.plate_state == PLATE_FAR) {
+                    beacon_door_open_confirmed = true;
+                } else if (feedback.plate_state == PLATE_CONTACT && beacon_door_open_confirmed) {
+                    if (apply_state(false) == ESP_OK) {
+                        beacon_reopen_block_until_ms = now_ms + cfg.beacon_reopen_protection_ms;
+                        event_log_add("Замок: дверь закрылась после BLE-автооткрытия; повторное BLE-открытие заблокировано на %lu мс",
+                                      (unsigned long)cfg.beacon_reopen_protection_ms);
+                    } else {
+                        event_log_add("Замок: ошибка закрытия после перехода двери в закрытое состояние");
+                    }
+                    beacon_auto_cycle = false;
+                    beacon_door_open_confirmed = false;
+                }
+            }
+        }
         if(atomic_load(&s_internet)) {
             lock_feedback_t f; lock_control_get_feedback(&f);
             if(f.valid && (f.fault_flags || f.state==LOCK_STATE_FAULT)) {
@@ -307,7 +341,7 @@ static void lock_task(void *arg)
             } else if(s_internet_phase==2) {
                 ulp_diagnostics_t d;
                 bool removed=ulp_controller_read_diagnostics(&d) && d.plate_state==PLATE_FAR;
-                if(removed || now_ms-s_internet_opened_ms>=20000) {
+                if(removed || now_ms-s_internet_opened_ms>=INTERNET_OPEN_AUTO_CLOSE_MS) {
                     if(apply_state(false)==ESP_OK) {
                         s_internet_phase=3;
                     }
@@ -464,6 +498,13 @@ static void refresh_feedback(int64_t now_ms)
     s_feedback.cloud_command_id = s_cloud_id;
     s_feedback.internet_phase = s_internet_phase;
     s_feedback.internet_started_us=s_internet_started_us;
+    s_feedback.internet_close_remaining_ms = 0;
+    if (s_internet_phase == 2 && s_internet_opened_ms > 0) {
+        int64_t elapsed = now_ms - s_internet_opened_ms;
+        if (elapsed < INTERNET_OPEN_AUTO_CLOSE_MS) {
+            s_feedback.internet_close_remaining_ms = (uint32_t)(INTERNET_OPEN_AUTO_CLOSE_MS - elapsed);
+        }
+    }
     s_feedback.mode_persisted = s_mode_persisted;
     lock_feedback_t current = s_feedback;
     xSemaphoreGive(s_mutex);

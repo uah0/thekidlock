@@ -1,5 +1,5 @@
-"""Реальные cloud_auth (mbedTLS/cJSON) и accept/PUBACK в RISC-V/Unicorn.
-BLE, NVS и исполнитель замка заменены стендом; криптография не заменяется.
+"""Реальные cloud_auth (HMAC/cJSON) и accept/PUBACK в RISC-V/Unicorn.
+BLE, NVS, исполнитель и AEAD-конверт заменены стендом; AES-GCM проверяет прошивка.
 """
 import argparse, importlib.util, io, json, re, subprocess, sys
 from pathlib import Path
@@ -15,7 +15,9 @@ def main():
     source=(ROOT/"main/cloud_commands.c").read_text(encoding="utf-8")
     types=re.search(r"typedef struct \{.*?\} record_t;",source,re.S)[0]
     functions="\n".join(mod.function(source,n) for n in ("cloud_commands_home_ip_ready","reconnect_after_home_ip","accept","puback","mqtt_event","publish_result"))
-    functions=mod.function((ROOT/"main/ble_phone.c").read_text(encoding="utf-8"),"ble_phone_is_owner")+"\n"+functions
+    phone_source=(ROOT/"main/ble_phone.c").read_text(encoding="utf-8")
+    functions=(mod.function(phone_source,"ble_phone_is_owner")+"\n"+
+               mod.function(phone_source,"ble_phone_owner_id")+"\n"+functions)
     work=ROOT/".device-agent/cloud-auth-tests";work.mkdir(parents=True,exist_ok=True)
     (work/"minimal.h").write_text("#define MBEDTLS_MD_C\n#define MBEDTLS_SHA256_C\n")
     code=r"""
@@ -38,12 +40,14 @@ void *_sbrk(ptrdiff_t increment){
     void *result=test_heap+test_heap_used;test_heap_used+=(size_t)increment;return result;
 }
 #define ESP_OK 0
+#define ESP_ERR_INVALID_ARG 1
+#define ESP_ERR_INVALID_STATE 3
 #define ESP_ERR_NVS_NOT_FOUND 2
 #define NVS_READWRITE 1
 typedef int esp_err_t;
 typedef int nvs_handle_t;
 TYPES
-typedef struct { int ack_id; char text[385]; } message_t;
+typedef struct { int ack_id; char text[1025]; } message_t;
 typedef const char *esp_event_base_t;
 typedef struct { int esp_tls_cert_verify_flags,esp_tls_last_esp_err,esp_tls_stack_err,esp_transport_sock_errno; } fake_error;
 static void event_log_add(const char *s,...){}
@@ -62,7 +66,9 @@ static void *s_client;
 static int reconnect_calls,reconnect_result;
 static bool cloud_commands_connected(void){return atomic_load(&s_connected);}
 static int esp_mqtt_client_reconnect(void *client){reconnect_calls++;return reconnect_result;}
-static const char *s_command_topic="locks/a0f262f114b8/command";
+static const char *s_command_topic="ja0f262f114b8/0yF";
+static const char *s_legacy_command_topic="locks/a0f262f114b8/command";
+static const char *s_legacy_state_topic="locks/a0f262f114b8/state";
 static int s_messages;
 static message_t s_fragment,queued;
 static size_t s_fragment_size;
@@ -70,10 +76,12 @@ static bool s_fragment_valid;
 static int queues,subscriptions,last_qos;
 static int xQueueSend(int q,const message_t *m,int wait){queued=*m;queues++;return 1;}
 static int esp_mqtt_client_subscribe(void *client,const char *topic,int qos){subscriptions++;last_qos=qos;return 1;}
+static int esp_mqtt_client_unsubscribe(void *client,const char *topic){return 1;}
+static int esp_mqtt_client_publish(void *client,const char *topic,const char *payload,int len,int qos,int retain){return 1;}
 static record_t s_record;
 static const char *s_door="unknown",*s_result_topic="result";
 static int64_t s_published_us;
-static char published[384];
+static char published[1025];
 static int publish_count;
 static int esp_mqtt_client_enqueue(void *client,const char *topic,const char *payload,int len,int qos,int retain,bool store){
     if(qos!=1||retain)return -1;
@@ -99,6 +107,14 @@ static int64_t now_s(void){return 1000;}
 static int64_t esp_timer_get_time(void){return 10000000;}
 static esp_err_t ble_phone_mqtt_key(const char *phone,uint8_t out[16]){
     if(!has_bond || strcmp(phone,"04c8e193a7065"))return 1;memcpy(out,key,16);return 0;
+}
+static bool cloud_crypto_open(const uint8_t ltk[16],const char *target,const char *direction,
+                              const char *phone,const char *envelope,char *plain,size_t capacity){
+    if(strlen(envelope)>=capacity)return false;strcpy(plain,envelope);return true;
+}
+static bool cloud_crypto_seal(const uint8_t ltk[16],const char *target,const char *direction,
+                              const char *phone,const char *plain,char *envelope,size_t capacity){
+    if(strlen(plain)>=capacity)return false;strcpy(envelope,plain);return true;
 }
 static esp_err_t nvs_open(const char*n,int mode,nvs_handle_t*h){*h=1;return nvs_fail==1?1:0;}
 static esp_err_t nvs_get_u64(nvs_handle_t h,const char*k,uint64_t*out){*out=last_id;return 0;}
@@ -188,8 +204,8 @@ int run_tests(int test){
         if(test==23)e.current_data_offset=1;
         if(test==24)payload[20]=0;
         if(test==25)atomic_store(&s_probe,true);
-        if(test==26){e.topic="other";e.topic_len=5;}
-        if(test==27)e.total_data_len=385;
+        if(test==26){e.topic=(char*)s_legacy_command_topic;e.topic_len=strlen(s_legacy_command_topic);}
+        if(test==27)e.total_data_len=1025;
         if(test==22){
             int total=e.data_len;e.data_len=20;mqtt_event(NULL,NULL,MQTT_EVENT_DATA,&e);
             e.current_data_offset=20;e.data=payload+20;e.data_len=total-20;

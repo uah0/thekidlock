@@ -351,7 +351,7 @@ static bool beacon_departure_alarm_active(uint32_t *pulse_ms)
     app_config_t cfg;
     lock_feedback_t feedback;
     app_config_get(&cfg);
-    if (!cfg.departure_buzzer_enabled) return false;
+    if (!cfg.departure_buzzer_enabled || cfg.departure_buzzer_pulse_ms == 0) return false;
     *pulse_ms = cfg.departure_buzzer_pulse_ms;
     lock_control_get_feedback(&feedback);
     return feedback.valid && feedback.state == LOCK_STATE_UNLOCKED &&
@@ -395,7 +395,7 @@ static void departure_pulse_off(void *arg)
 static bool departure_buzzer_tone(esp_timer_handle_t timer, uint32_t pulse_ms,
                                  uint32_t overlap_seen)
 {
-    if (!timer) return false;
+    if (!timer || pulse_ms == 0) return false;
     TickType_t wake = xTaskGetTickCount();
     gpio_set_level(APP_BUZZER_GPIO, APP_BUZZER_ACTIVE_LEVEL);
     esp_err_t err = esp_timer_start_once(timer, (uint64_t)pulse_ms * 1000);
@@ -444,15 +444,14 @@ esp_err_t app_buzzer_request_test(uint32_t pattern)
 
 esp_err_t app_buzzer_request_departure_preview(uint32_t pulse_ms)
 {
-    if (pulse_ms < APP_DEPARTURE_PULSE_MIN_MS ||
-        pulse_ms > APP_DEPARTURE_PULSE_MAX_MS) return ESP_ERR_INVALID_ARG;
+    if (pulse_ms > APP_DEPARTURE_PULSE_MAX_MS) return ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&s_departure_preview_mux);
     if (!s_departure_preview_ready) {
         portEXIT_CRITICAL(&s_departure_preview_mux);
         return ESP_ERR_INVALID_STATE;
     }
     s_departure_preview_pulse_ms = pulse_ms;
-    s_departure_preview_until_us = esp_timer_get_time() + 5000000;
+    s_departure_preview_until_us = pulse_ms ? esp_timer_get_time() + 5000000 : 0;
     portEXIT_CRITICAL(&s_departure_preview_mux);
     return ESP_OK;
 }
@@ -464,7 +463,7 @@ static bool departure_preview_active(uint32_t *pulse_ms)
     uint32_t width_ms = s_departure_preview_pulse_ms;
     portEXIT_CRITICAL(&s_departure_preview_mux);
     const int64_t remaining_ms = (until_us - esp_timer_get_time()) / 1000;
-    if (remaining_ms <= 0) return false;
+    if (remaining_ms <= 0 || width_ms == 0) return false;
     *pulse_ms = remaining_ms < width_ms ? (uint32_t)remaining_ms : width_ms;
     return true;
 }

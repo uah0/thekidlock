@@ -5,6 +5,8 @@ unsigned lock_control_stack_free(void);
 #include "esp_err.h"
 #include "shared_state.h"
 
+#define INTERNET_OPEN_AUTO_CLOSE_MS 20000U
+
 typedef struct {
     lock_state_t state;
     uint32_t fault_flags;
@@ -16,6 +18,7 @@ typedef struct {
     uint8_t internet_phase;
     plate_state_t plate_state;
     int64_t internet_started_us;
+    uint32_t internet_close_remaining_ms;
 } lock_feedback_t;
 void lock_control_get_feedback(lock_feedback_t *out);
 const char *lock_control_feedback_name(const lock_feedback_t *state);

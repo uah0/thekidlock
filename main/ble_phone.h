@@ -34,3 +34,4 @@ esp_err_t ble_phone_delete_all_bonds(void);
 /* Returns only the currently bonded peer LTK; never log the output. */
 esp_err_t ble_phone_mqtt_key(const char *phone, uint8_t out[16]);
 bool ble_phone_is_owner(const char *phone);
+esp_err_t ble_phone_owner_id(char out[14]);

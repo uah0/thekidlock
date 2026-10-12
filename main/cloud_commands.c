@@ -6,6 +6,8 @@
 #include <string.h>
 #include <sys/time.h>
 #include "cloud_auth.h"
+#include "cloud_admin.h"
+#include "cloud_crypto.h"
 #include "cloud_link.h"
 #include "mqtt_config.h"
 #include "wifi_ota.h"
@@ -28,7 +30,7 @@ typedef struct {
     bool active,opened,opened_ack,final_ack;
     uint8_t phase;
 } record_t;
-typedef struct { int ack_id; char text[385]; } message_t;
+typedef struct { int ack_id; bool admin; char text[1025]; } message_t;
 static record_t s_record;
 static const char *s_door="unknown";
 static QueueHandle_t s_messages;
@@ -37,6 +39,8 @@ static atomic_bool s_connected,s_busy,s_probe,s_test_requested,s_clock_needed;
 static atomic_bool s_home_ip_reconnect;
 static _Atomic(const char*) s_status="disabled",s_test_status="idle";
 static char s_mac[18],s_command_topic[64],s_result_topic[64];
+static char s_admin_topic[64],s_admin_reply_topic[64];
+static char s_legacy_command_topic[64],s_legacy_state_topic[64];
 static message_t s_fragment;
 static size_t s_fragment_size;
 static bool s_fragment_valid,s_dirty,s_ack_open;
@@ -89,7 +93,13 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data)
     if(id==MQTT_EVENT_CONNECTED){
         atomic_store(&s_connected,true);s_status="connected";
         event_log_add("MQTT: TCP connected");
-        if(!atomic_load(&s_probe))esp_mqtt_client_subscribe(e->client,s_command_topic,1);
+        if(!atomic_load(&s_probe)){
+            esp_mqtt_client_unsubscribe(e->client,s_legacy_command_topic);
+            esp_mqtt_client_subscribe(e->client,s_command_topic,1);
+            esp_mqtt_client_subscribe(e->client,s_admin_topic,1);
+            /* Remove the retained plaintext dashboard value from earlier releases. */
+            esp_mqtt_client_publish(e->client,s_legacy_state_topic,NULL,0,1,1);
+        }
     }else if(id==MQTT_EVENT_SUBSCRIBED){
         if(!atomic_load(&s_probe))event_log_add("MQTT: command subscription ready");
     }else if(id==MQTT_EVENT_DISCONNECTED||id==MQTT_EVENT_ERROR){
@@ -103,26 +113,36 @@ static void mqtt_event(void *arg,esp_event_base_t base,int32_t id,void *data)
     }else if(id==MQTT_EVENT_DATA){
         if(e->current_data_offset==0){
             s_fragment_size=0;s_fragment.ack_id=0;
+            s_fragment.admin=e->topic&&e->topic_len==(int)strlen(s_admin_topic)&&
+                !memcmp(e->topic,s_admin_topic,e->topic_len);
             s_fragment_valid=!atomic_load(&s_probe)&&!e->retain&&e->topic&&
-                e->topic_len==(int)strlen(s_command_topic)&&!memcmp(e->topic,s_command_topic,e->topic_len)&&
-                e->total_data_len>0&&e->total_data_len<=384;
+                (s_fragment.admin||(e->topic_len==(int)strlen(s_command_topic)&&
+                 !memcmp(e->topic,s_command_topic,e->topic_len)))&&
+                e->total_data_len>0&&e->total_data_len<=1024;
         }
         if(!s_fragment_valid||e->data_len<=0||e->current_data_offset!=(int)s_fragment_size||
-           (size_t)e->data_len>384-s_fragment_size||memchr(e->data,0,e->data_len)){s_fragment_valid=false;return;}
+           (size_t)e->data_len>1024-s_fragment_size||memchr(e->data,0,e->data_len)){s_fragment_valid=false;return;}
         memcpy(s_fragment.text+s_fragment_size,e->data,e->data_len);s_fragment_size+=e->data_len;
         if(s_fragment_size==(size_t)e->total_data_len){
-            s_fragment.text[s_fragment_size]=0;xQueueSend(s_messages,&s_fragment,0);s_fragment_valid=false;
+            s_fragment.text[s_fragment_size]=0;
+            BaseType_t queued=xQueueSend(s_messages,&s_fragment,0);
+            if(s_fragment.admin)event_log_add("MQTT admin: request %s",queued==pdTRUE?"queued":"queue full");
+            s_fragment_valid=false;
         }
     }
 }
 static void accept(const char *text)
 {
-    cloud_open_t cmd;uint8_t key[16]={0};char canonical[192];
+    cloud_open_t cmd;uint8_t key[16]={0};char canonical[192],phone[14],plain[385];
     if(s_record.active||s_dirty||lock_control_internet_active()||
        (s_record.id&&(!s_record.final_ack||(s_record.opened&&!s_record.opened_ack))))return;
-    if(!cloud_auth_parse(text,&cmd)||!cloud_auth_time(cmd.time,now_s(),cloud_link_time_ready()))return;
-    if(!ble_phone_is_owner(cmd.phone))return;
-    if(ble_phone_mqtt_key(cmd.phone,key)!=ESP_OK)return;
+    if(ble_phone_owner_id(phone)!=ESP_OK||!ble_phone_is_owner(phone))return;
+    if(ble_phone_mqtt_key(phone,key)!=ESP_OK)return;
+    bool decrypted=cloud_crypto_open(key,s_mac,"command",phone,text,plain,sizeof(plain));
+    if(!decrypted||!cloud_auth_parse(plain,&cmd)||strcmp(cmd.phone,phone)||
+       !cloud_auth_time(cmd.time,now_s(),cloud_link_time_ready())){
+        mbedtls_platform_zeroize(key,sizeof(key));return;
+    }
     snprintf(canonical,sizeof(canonical),"BLELOCK1|command|%s|%s|%" PRId64 "|%" PRIu64 "|open",s_mac,cmd.phone,cmd.time,cmd.id);
     bool valid=cloud_auth_verify(key,canonical,cmd.mac);mbedtls_platform_zeroize(key,sizeof(key));
     if(!valid)return;
@@ -178,25 +198,31 @@ static void publish_result(void)
     if(!opened&&(!s_record.phase||s_record.final_ack))return;
     int64_t now=esp_timer_get_time();
     if(s_ack_id>=0&&now-s_published_us<30000000)return;
-    uint8_t key[16]={0};char canonical[224],tag[65],payload[384];
+    uint8_t key[16]={0};char canonical[224],tag[65],payload[384],sealed[1025];
     if(ble_phone_mqtt_key(s_record.phone,key)!=ESP_OK){
         /* Revoked bonds must not receive signed replies or keep the queue blocked. */
         s_record.opened_ack=true;s_record.final_ack=true;persist();return;
     }
     const char *result=opened?"opened":s_record.phase==3?"closing":s_record.phase==4?"closed":s_record.phase==6?"interrupted":"error";
     int64_t utc=now_s();
-    snprintf(canonical,sizeof(canonical),"BLELOCK1|result|%s|%s|%" PRId64 "|%" PRIu64 "|%s|%" PRIu32 "|%s",
-             s_mac,s_record.phone,utc,s_record.id,result,s_record.faults,s_door);
-    bool ok=cloud_auth_sign(key,canonical,tag);mbedtls_platform_zeroize(key,sizeof(key));if(!ok)return;
-    snprintf(payload,sizeof(payload),"{\"phone\":\"%s\",\"time\":\"%" PRId64 "\",\"id\":\"%" PRIu64 "\",\"result\":\"%s\",\"faults\":%" PRIu32 ",\"door\":\"%s\",\"mac\":\"%s\"}",
-             s_record.phone,utc,s_record.id,result,s_record.faults,s_door,tag);
-    int id=esp_mqtt_client_enqueue(s_client,s_result_topic,payload,0,1,0,true);
+    lock_feedback_t lock_feedback={0};
+    lock_control_get_feedback(&lock_feedback);
+    uint32_t close_remaining_ms=opened?lock_feedback.internet_close_remaining_ms:0;
+    snprintf(canonical,sizeof(canonical),"BLELOCK1|result|%s|%s|%" PRId64 "|%" PRIu64 "|%s|%" PRIu32 "|%s|%" PRIu32,
+             s_mac,s_record.phone,utc,s_record.id,result,s_record.faults,s_door,close_remaining_ms);
+    bool ok=cloud_auth_sign(key,canonical,tag);if(!ok){mbedtls_platform_zeroize(key,sizeof(key));return;}
+    snprintf(payload,sizeof(payload),"{\"phone\":\"%s\",\"time\":\"%" PRId64 "\",\"id\":\"%" PRIu64 "\",\"result\":\"%s\",\"faults\":%" PRIu32 ",\"door\":\"%s\",\"close_remaining_ms\":%" PRIu32 ",\"mac\":\"%s\"}",
+             s_record.phone,utc,s_record.id,result,s_record.faults,s_door,close_remaining_ms,tag);
+    ok=cloud_crypto_seal(key,s_mac,"result",s_record.phone,payload,sealed,sizeof(sealed));
+    mbedtls_platform_zeroize(key,sizeof(key));if(!ok)return;
+    int id=esp_mqtt_client_enqueue(s_client,s_result_topic,sealed,0,1,0,true);
     if(id>=0){s_ack_id=id;s_ack_open=opened;s_published_us=now;}
 }
 static void stop_client(void)
 {
     if(s_client){esp_mqtt_client_stop(s_client);esp_mqtt_client_destroy(s_client);s_client=NULL;}
     atomic_store(&s_connected,false);s_fragment_valid=false;s_ack_id=-1;xQueueReset(s_messages);
+    cloud_admin_reset();
 }
 static void command_task(void *arg)
 {
@@ -215,8 +241,13 @@ static void command_task(void *arg)
             if(!cloud_link_time_ready())s_status="waiting_time";
             if(!s_client&&cloud_link_time_ready()&&esp_timer_get_time()>=retry){
                 atomic_store(&s_probe,!cfg.enabled);
-                snprintf(s_command_topic,sizeof(s_command_topic),"%s/command",active.prefix);
-                snprintf(s_result_topic,sizeof(s_result_topic),"%s/result",active.prefix);
+                snprintf(s_command_topic,sizeof(s_command_topic),"%s/0yF",active.prefix);
+                snprintf(s_result_topic,sizeof(s_result_topic),"%s/7qK",active.prefix);
+                snprintf(s_admin_topic,sizeof(s_admin_topic),"%s/5mN",active.prefix);
+                snprintf(s_admin_reply_topic,sizeof(s_admin_reply_topic),"%s/2bL",active.prefix);
+                event_log_add("MQTT: broker %s",active.host);
+                snprintf(s_legacy_command_topic,sizeof(s_legacy_command_topic),"locks/%s/command",active.prefix+1);
+                snprintf(s_legacy_state_topic,sizeof(s_legacy_state_topic),"locks/%s/state",active.prefix+1);
                 esp_mqtt_client_config_t c={
                     .broker.address.hostname=active.host,.broker.address.port=MQTT_PORT,
                     .broker.address.transport=MQTT_TRANSPORT_OVER_TCP,
@@ -237,15 +268,21 @@ static void command_task(void *arg)
         }
         if(s_dirty)s_dirty=save_record()!=ESP_OK;
         message_t m;
-        while(xQueueReceive(s_messages,&m,0)==pdTRUE){if(m.ack_id)puback(m.ack_id);else if(cfg.enabled)accept(m.text);}
+        while(xQueueReceive(s_messages,&m,0)==pdTRUE){
+            if(m.ack_id)puback(m.ack_id);
+            else if(cfg.enabled&&m.admin){
+                cloud_admin_handle(m.text,s_client,s_mac,s_admin_reply_topic);
+            }
+            else if(cfg.enabled)accept(m.text);
+        }
         feedback();if(enabled)publish_result();
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 esp_err_t cloud_commands_init(void)
 {
-    if(!cloud_auth_selftest()){event_log_add("MQTT HMAC selftest FAIL");return ESP_FAIL;}
-    event_log_add("MQTT HMAC selftest PASS");
+    if(!cloud_auth_selftest()||!cloud_crypto_selftest()){event_log_add("MQTT crypto selftest FAIL");return ESP_FAIL;}
+    event_log_add("MQTT crypto selftest PASS");
     s_record=(record_t){.version=1};nvs_handle_t h;
     esp_err_t err=nvs_open("mqtt_open",NVS_READONLY,&h);
     if(err==ESP_OK){size_t size=sizeof(s_record);err=nvs_get_blob(h,"record",&s_record,&size);nvs_close(h);
@@ -258,5 +295,5 @@ esp_err_t cloud_commands_init(void)
 }
 esp_err_t cloud_commands_start(void)
 {
-    return s_messages&&xTaskCreate(command_task,"cloud_commands",6144,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM;
+    return s_messages&&xTaskCreate(command_task,"cloud_commands",12288,NULL,2,NULL)==pdPASS?ESP_OK:ESP_ERR_NO_MEM;
 }
