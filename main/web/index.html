@@ -45,11 +45,6 @@ button,input,select{font-family:inherit;font-size:14px;color:var(--text)}
 
 [hidden]{display:none!important}
 .settings-title{font-size:17px;margin:0 0 14px}
-/* top bar */
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:4px 2px 18px;flex-wrap:wrap}
-.brand{display:flex;align-items:baseline;gap:10px}
-.brand h1{font-size:19px;margin:0;font-weight:700;letter-spacing:-.01em}
-.brand .meta{font-family:var(--mono);font-size:12px;color:var(--text-faint)}
 .versions{display:flex;flex-wrap:wrap;gap:14px 28px;padding:14px 16px;margin:0 0 18px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface)}
 .version-item{flex:1;min-width:200px;display:flex;flex-direction:column;gap:5px}
 .version-item[hidden]{display:none}
@@ -236,27 +231,7 @@ table.bonds td:first-child{font-family:var(--mono)}
 
 <div id="notice"></div>
 
-<div class="topbar">
-  <div class="brand">
-    <h1>BLE Lock</h1>
-  </div>
-</div>
-
 <h2 class="settings-title" data-wui="settings_title"></h2>
-<div class="versions" data-wui-aria="device_version">
-  <div class="version-item">
-    <span class="version-label" data-wui="device_lock"></span>
-    <span class="version-date" id="uptimeTxt"></span>
-    <span class="version-value" id="verTxt"></span>
-    <span class="version-date" id="buildTxt"></span>
-  </div>
-  <div class="version-update">
-    <div class="actions-row">
-      <button class="btn-primary" id="uploadFwButton" data-wui="install_update" onclick="uploadFw()"></button>
-    </div>
-    <div id="ota"></div>
-  </div>
-</div>
 
 <section class="panel">
   <div class="actions-row">
@@ -297,13 +272,23 @@ table.bonds td:first-child{font-family:var(--mono)}
         <button id="restartButton" class="btn-danger" data-wui="restart_lock" onclick="restartEsp()"></button>
         <span class="saved-msg" id="wifiSaved"></span>
       </div>
-      <p class="footnote" data-wui="rssi_note"></p>
+      <div class="field" style="margin-top:20px">
+        <label for="mHost" data-wui="broker_domain"></label>
+        <div id="mqttBrokerField" class="mqtt-broker-picker">
+          <div class="mqtt-broker-input">
+            <input id="mHost" type="text" maxlength="192" data-wui-aria="public_broker_address" data-wui-placeholder="broker_domain" autocomplete="off" oninput="closeMqttBrokerList();mSaved.textContent=''">
+            <button id="mqttBrokerButton" type="button" data-wui-aria="choose_broker" aria-expanded="false" aria-controls="mqttBrokerList" onclick="toggleMqttBrokerList()" disabled>▾</button>
+          </div>
+          <div id="mqttBrokerList" class="mqtt-broker-list" data-wui-aria="broker_addresses" hidden></div>
+        </div>
+        <div class="actions-row"><button id="mSave" class="btn-primary" data-wui="save" onclick="saveMqtt()"></button><span class="saved-msg" id="mSaved"></span></div>
+      </div>
     </section>
 
 
 <section class="panel">
     <div class="panel-head"><span class="tag">CFG</span><h2 data-wui="lock_settings"></h2></div>
-  <div class="actions-row" style="margin-bottom:18px"><button data-wui="calibration_wizard" onclick="window.open('/calibration','lockCalibration','width=720,height=820')"></button></div>
+  <div class="actions-row" style="margin-bottom:18px"><button class="btn-primary" data-wui="calibration_wizard" onclick="window.open('/calibration','lockCalibration','width=720,height=820')"></button></div>
 
     <div class="field">
       <label for="pr"><span data-wui="opening_zone"></span></label>
@@ -343,19 +328,22 @@ table.bonds td:first-child{font-family:var(--mono)}
   </table>
   <div class="seq-line" id="ulpStatus"></div>
     </div>
-    <div class="field" style="margin-top:20px">
-        <label for="mHost" data-wui="broker_domain"></label>
-      <div id="mqttBrokerField" class="mqtt-broker-picker">
-        <div class="mqtt-broker-input">
-          <input id="mHost" type="text" maxlength="192" data-wui-aria="public_broker_address" data-wui-placeholder="broker_domain" autocomplete="off" oninput="closeMqttBrokerList();mSaved.textContent=''">
-          <button id="mqttBrokerButton" type="button" data-wui-aria="choose_broker" aria-expanded="false" aria-controls="mqttBrokerList" onclick="toggleMqttBrokerList()" disabled>▾</button>
-        </div>
-        <div id="mqttBrokerList" class="mqtt-broker-list" data-wui-aria="broker_addresses" hidden></div>
-      </div>
-    </div>
-    <div class="actions-row"><button id="mSave" class="btn-primary" data-wui="save" onclick="saveMqtt()"></button><span class="saved-msg" id="mSaved"></span></div>
   </section>
 
+<div class="versions" data-wui-aria="device_version">
+  <div class="version-item">
+    <span class="version-label" data-wui="device_lock"></span>
+    <span class="version-date" id="uptimeTxt"></span>
+    <span class="version-value" id="verTxt"></span>
+    <span class="version-date" id="buildTxt"></span>
+  </div>
+  <div class="version-update">
+    <div class="actions-row">
+      <button class="btn-primary" id="uploadFwButton" data-wui="install_update" onclick="uploadFw()"></button>
+    </div>
+    <div id="ota"></div>
+  </div>
+</div>
 </div>
 
 <script>
