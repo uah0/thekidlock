@@ -1373,3 +1373,10 @@ GitHub API подтвердил опубликованный релиз с дв�
 - PASS: release 1.0.446 собран и установлен на `192.168.1.65:43881`; Package Manager подтвердил `versionCode=446`, `versionName=1.0.446`.
 - PASS: снимки `.android/internet-button-after-446.png` и `.android/internet-button-after-446-360x800.png` подтверждают центрирование надписи и брокера между иконкой и правым краем; все плитки остаются видимыми.
 - PASS: исходные `accelerometer_rotation`, `user_rotation` и `stay_on_while_plugged_in` сохранены до установки и восстановлены после неё; размеры экрана сброшены.
+
+## 14.10.2026 — публикация проекта и релизов GitHub
+
+- PASS: commit `7923eb7` отправлен в `origin/feature/remove-locked-current`.
+- PASS: `publish-android.ps1` опубликовал `app-v1.0.446`; SHA-256 APK `3cd857ddc490b8e97b9684db82e41b02c6a80220132f6a19e76657e494e0f260`, сертификат совпадает с постоянной подписью проекта. Предыдущий Android release 1.0.422 удалён по политике одного актуального релиза.
+- PASS: ESP signed-dev 10.0.600 publisher проверил зашифрованный контейнер, расшифрованный образ и RSA-подпись; публичный latest SHA-256 `399e974442dcf1d9c9f276AAF31C452E0757B15C690BFB09DCA30D45234F5D35` совпал с локальным. Предыдущие ESP release/tag удалены, `esp-v10.0.600` оставлен актуальным.
+- INFO: локальные ZIP с машинными данными, OTA-ключами и кэш зависимостей намеренно не отправлялись.
