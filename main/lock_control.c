@@ -18,6 +18,7 @@ static SemaphoreHandle_t s_mutex;
 static bool s_initialized;
 static bool s_requested_open;
 static volatile bool s_hold_open;
+static atomic_bool s_web_test_active;
 static QueueHandle_t s_events;
 static TaskHandle_t s_lock_task;
 unsigned lock_control_stack_free(void)
@@ -32,6 +33,7 @@ static void refresh_feedback(int64_t now_ms);
 #define LOCK_MODE_NVS_NAMESPACE "lock_mode"
 #define LOCK_MODE_NVS_KEY       "hold_open"
 #define TEST_OPEN_DURATION_MS   10000LL
+#define WEB_TEST_LEASE_MS       6000LL
 
 static bool load_hold_open(void)
 {
@@ -57,6 +59,8 @@ typedef enum {
     LOCK_EVENT_OPEN,
     LOCK_EVENT_ARM_OPEN,
     LOCK_EVENT_TEST_OPEN,
+    LOCK_EVENT_WEB_TEST_ON,
+    LOCK_EVENT_WEB_TEST_OFF,
     LOCK_EVENT_TOGGLE_HOLD_OPEN,
     LOCK_EVENT_SET_HOLD_OPEN,
     LOCK_EVENT_SET_AUTO,
@@ -144,6 +148,9 @@ static void lock_task(void *arg)
     int64_t last_sufficient_ms = 0;
     int64_t test_open_deadline_ms = 0;
     bool test_open_active = false;
+    bool web_test_active = false;
+    int64_t web_test_started_ms = 0;
+    int64_t web_test_deadline_ms = 0;
     bool hold_open = s_hold_open;
     bool open_armed = false;
     bool beacon_auto_cycle = false;
@@ -194,7 +201,7 @@ static void lock_task(void *arg)
                     if(!can_open) { atomic_store(&s_internet_pending,false); break; }
                     s_mode_persisted=save_hold_open(false)==ESP_OK;
                     if(!s_mode_persisted) { atomic_store(&s_internet_pending,false); break; }
-                    hold_open=false; s_hold_open=false; open_armed=false; test_open_active=false;
+                    hold_open=false; s_hold_open=false; open_armed=false; test_open_active=false; web_test_active=false;
                     if(apply_state(true)!=ESP_OK) { atomic_store(&s_internet_pending,false); break; }
                     s_internet_started_ms=now_ms; s_internet_opened_ms=0;
                     s_internet_phase=1; atomic_store(&s_internet,true); atomic_store(&s_internet_pending,false);
@@ -207,6 +214,7 @@ static void lock_task(void *arg)
                         if (apply_state(true) == ESP_OK) {
                             last_sufficient_ms = now_ms;
                             test_open_active = false;
+                            web_test_active = false;
                             if (!strcmp(item.source, "ble") && !hold_open) {
                                 if (!beacon_auto_cycle) beacon_door_open_confirmed = false;
                                 beacon_auto_cycle = true;
@@ -233,11 +241,40 @@ static void lock_task(void *arg)
                         }
                     }
                     break;
+                case LOCK_EVENT_WEB_TEST_ON: {
+                    if (web_test_active) {
+                        web_test_deadline_ms = now_ms + WEB_TEST_LEASE_MS;
+                        break;
+                    }
+                    lock_feedback_t feedback;
+                    lock_control_get_feedback(&feedback);
+                    if (hold_open || !feedback.valid || feedback.fault_flags ||
+                        feedback.calibrating || feedback.calibration_required ||
+                        feedback.state == LOCK_STATE_FAULT ||
+                        now_ms * 1000 - feedback.sampled_at_us > 300000) break;
+                    if (apply_state(true) == ESP_OK) {
+                        web_test_active = true;
+                        test_open_active = false;
+                        beacon_auto_cycle = false;
+                        beacon_door_open_confirmed = false;
+                        web_test_started_ms = now_ms;
+                        web_test_deadline_ms = now_ms + WEB_TEST_LEASE_MS;
+                        event_log_add("Замок: фиксируемый тест открытия включён");
+                    }
+                    break;
+                }
+                case LOCK_EVENT_WEB_TEST_OFF:
+                    if (web_test_active && apply_state(false) == ESP_OK) {
+                        web_test_active = false;
+                        event_log_add("Замок: фиксируемый тест открытия выключен");
+                    }
+                    break;
                 case LOCK_EVENT_TOGGLE_HOLD_OPEN:
                 case LOCK_EVENT_SET_HOLD_OPEN:
                 case LOCK_EVENT_SET_AUTO: {
                     bool was_hold_open = hold_open;
                     test_open_active = false;
+                    web_test_active = false;
                     hold_open = event == LOCK_EVENT_TOGGLE_HOLD_OPEN ? !hold_open :
                                 event == LOCK_EVENT_SET_HOLD_OPEN;
                     s_hold_open = hold_open;
@@ -266,6 +303,7 @@ static void lock_task(void *arg)
                 }
                 case LOCK_EVENT_DISABLE_AUTO_CLOSE:
                     test_open_active = false;
+                    web_test_active = false;
                     open_armed = false;
                     hold_open = false;
                     s_hold_open = false;
@@ -280,6 +318,7 @@ static void lock_task(void *arg)
                     break;
                 case LOCK_EVENT_CLOSE:
                     test_open_active = false;
+                    web_test_active = false;
                     open_armed = false;
                     if (!hold_open && lock_control_requested_open() && apply_state(false) == ESP_OK) {
                         event_log_add("Замок: запрос закрытия по единому интерфейсу");
@@ -304,7 +343,14 @@ static void lock_task(void *arg)
             }
         }
 
-        if (lock_control_requested_open() && !hold_open && !lock_control_internet_active()) {
+        if (web_test_active && now_ms >= web_test_deadline_ms) {
+            if (apply_state(false) == ESP_OK) {
+                web_test_active = false;
+                event_log_add("Замок: фиксируемый тест завершён по таймауту связи");
+            }
+        }
+        atomic_store(&s_web_test_active, web_test_active);
+        if (lock_control_requested_open() && !hold_open && !web_test_active && !lock_control_internet_active()) {
             bool close_a = !test_open_active && cfg.timer_a_ms > 0 &&
                            now_ms - last_sufficient_ms > (int64_t)cfg.timer_a_ms;
             bool close_test = test_open_active &&
@@ -322,6 +368,22 @@ static void lock_task(void *arg)
         }
 
         refresh_feedback(now_ms);
+        if (web_test_active) {
+            lock_feedback_t feedback;
+            lock_control_get_feedback(&feedback);
+            if (feedback.valid && (feedback.fault_flags ||
+                feedback.state == LOCK_STATE_FAULT ||
+                feedback.calibrating || feedback.calibration_required)) {
+                web_test_active = false;
+                atomic_store(&s_web_test_active, false);
+            } else if (feedback.valid && feedback.state == LOCK_STATE_LOCKED &&
+                       now_ms - web_test_started_ms >= 2000 &&
+                       apply_state(false) == ESP_OK) {
+                web_test_active = false;
+                atomic_store(&s_web_test_active, false);
+                event_log_add("Замок: фиксируемый тест не достиг открытия за 2 секунды");
+            }
+        }
         if (beacon_auto_cycle) {
             lock_feedback_t feedback;
             lock_control_get_feedback(&feedback);
@@ -421,6 +483,22 @@ esp_err_t lock_request_test_open(void)
     if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
     lock_event_item_t event = {.kind = LOCK_EVENT_TEST_OPEN};
     return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+esp_err_t lock_request_web_test_open(bool enabled)
+{
+    if (lock_control_internet_active()) return ESP_ERR_INVALID_STATE;
+    lock_event_item_t event = {.kind = enabled ? LOCK_EVENT_WEB_TEST_ON : LOCK_EVENT_WEB_TEST_OFF};
+    return s_events && xQueueSend(s_events, &event, 0) == pdTRUE ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
+bool lock_control_web_test_active(void)
+{
+    lock_feedback_t feedback;
+    lock_control_get_feedback(&feedback);
+    return atomic_load(&s_web_test_active) && feedback.valid && !feedback.fault_flags &&
+        !feedback.calibrating && !feedback.calibration_required &&
+        feedback.state == LOCK_STATE_UNLOCKED && feedback.requested_open;
 }
 
 esp_err_t lock_request_manual_open(void)

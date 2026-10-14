@@ -48,7 +48,7 @@ static esp_err_t index_get(httpd_req_t *req)
 
 static esp_err_t status_get(httpd_req_t *req)
 {
-    char json[640];
+    char json[704];
     esp_err_t err = lock_ai_status_json(json, sizeof(json));
     return err == ESP_OK ? send_json(req, json) :
         httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
@@ -597,9 +597,15 @@ static esp_err_t bonds_delete(httpd_req_t *req)
 
 static esp_err_t lock_test_post(httpd_req_t *req)
 {
-    esp_err_t err = lock_request_test_open();
+    char query[32], enabled[8];
+    bool set_mode = httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK;
+    if (set_mode && (httpd_query_key_value(query, "enabled", enabled, sizeof(enabled)) != ESP_OK ||
+        (strcmp(enabled, "0") != 0 && strcmp(enabled, "1") != 0)))
+        return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "Invalid test state");
+    esp_err_t err = set_mode ? lock_request_web_test_open(strcmp(enabled, "1") == 0) :
+        lock_request_test_open();
     if (err != ESP_OK) return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, esp_err_to_name(err));
-    event_log_add("Web: тестовый запрос открытия");
+    if (!set_mode) event_log_add("Web: тестовый запрос открытия");
     return send_json(req, "{\"ok\":true}");
 }
 

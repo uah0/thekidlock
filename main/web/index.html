@@ -139,6 +139,10 @@ input[type=number],input[type=text],input[type=password],select,textarea{
 input:focus,select:focus{border-color:var(--accent)}
 .field{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
 .field label{font-size:12.5px;color:var(--text-dim)}
+.knob-card{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-2);padding:16px 12px;margin-bottom:14px}
+.knob-card label{display:block;text-align:center;color:var(--text);font-size:13px;font-weight:600}
+.test-open-button.active{background:var(--good-dim);border-color:var(--good);color:var(--good)}
+.test-open-action{font-weight:700;margin-left:8px}
 .field-input{display:flex;align-items:center;gap:8px}
 .field-input .unit{font-family:var(--mono);font-size:11.5px;color:var(--text-faint);white-space:nowrap}
 .mqtt-broker-picker{position:relative}
@@ -153,7 +157,7 @@ input:focus,select:focus{border-color:var(--accent)}
 .saved-msg{font-size:12.5px;color:var(--good);font-family:var(--mono)}
 
 .zone-slider{display:none}
-.knob-control{display:block;width:225px;height:225px;margin:8px auto 2px;touch-action:pan-y;-webkit-user-select:none;user-select:none;cursor:grab;border-radius:50%;-webkit-tap-highlight-color:transparent}
+.knob-control{display:block;width:min(225px,100%);aspect-ratio:1;margin:8px auto 2px;touch-action:pan-y;-webkit-user-select:none;user-select:none;cursor:grab;border-radius:50%;-webkit-tap-highlight-color:transparent}
 .knob-control:active{cursor:grabbing}
 .knob-control:focus-visible{outline:2px solid var(--accent);outline-offset:5px}
 .knob-control svg{width:100%;height:100%;display:block;overflow:visible}
@@ -190,7 +194,7 @@ input:focus,select:focus{border-color:var(--accent)}
 .reg td{padding:7px 4px;border-bottom:1px solid var(--border-soft)}
 .reg tr:last-child td{border-bottom:none}
 .reg td:first-child{color:var(--text-dim)}
-.reg td:last-child{font-family:var(--mono);text-align:right;color:var(--text)}
+.reg td:last-child{font-family:var(--mono);text-align:right;color:var(--text);white-space:nowrap}
 .badge-hex{
   font-family:var(--mono);font-size:12px;padding:1px 7px;border-radius:5px;
   background:var(--surface-3);border:1px solid var(--border)
@@ -290,26 +294,24 @@ table.bonds td:first-child{font-family:var(--mono)}
     <div class="panel-head"><span class="tag">CFG</span><h2 data-wui="lock_settings"></h2></div>
   <div class="actions-row" style="margin-bottom:18px"><button class="btn-primary" data-wui="calibration_wizard" onclick="window.open('/calibration','lockCalibration','width=720,height=820')"></button></div>
 
-    <div class="field">
+    <div class="field knob-card">
       <label for="pr"><span data-wui="opening_zone"></span></label>
       <input id="pr" class="zone-slider" type="range" min="30" max="127" step="1" value="75" data-wui-aria="opening_zone_aria" oninput="updateZoneValue()" onchange="saveConfig('prKnob')">
       <div id="prKnob" class="knob-control" data-input="pr" data-unit="dBm" data-format="opening-zone" data-wui-aria="opening_zone_aria"></div>
 
     </div>
-    <div class="field">
+    <div class="field knob-card">
         <label for="departurePulse"><span data-wui="open_lock_sound_duration"></span></label>
       <input id="departurePulse" class="zone-slider" type="range" min="0" max="1000" step="1" value="635" oninput="updateDeparturePulseValue(true)" onchange="saveDeparturePulse()">
       <div id="departurePulseKnob" class="knob-control" data-input="departurePulse" data-unit="ms" data-format="pulse" data-wui-aria="open_lock_sound_duration"></div>
     </div>
 
-    <div class="field-row">
-      <div class="field" style="flex:1">
+    <div class="field knob-card">
         <label for="ta"><span data-wui="lock_close_delay"></span></label>
         <input id="ta" class="zone-slider" type="range" min="3000" max="10000" step="100" value="3000" oninput="updateTimerAValue()" onchange="saveConfig('taKnob')">
         <div id="taKnob" class="knob-control" data-input="ta" data-unit="s" data-format="seconds" data-wui-aria="lock_close_delay"></div>
-      </div>
     </div>
-    <div class="field">
+    <div class="field knob-card">
       <label for="beaconReopenProtection"><span data-wui="beacon_reopen_protection"></span></label>
       <input id="beaconReopenProtection" class="zone-slider" type="range" min="3000" max="8000" step="100" value="3000" oninput="updateBeaconReopenProtectionValue()" onchange="saveConfig('beaconReopenProtectionKnob')">
       <div id="beaconReopenProtectionKnob" class="knob-control" data-input="beaconReopenProtection" data-unit="s" data-format="seconds" data-wui-aria="beacon_reopen_protection"></div>
@@ -317,12 +319,11 @@ table.bonds td:first-child{font-family:var(--mono)}
     <!-- Diagnostics and the unlock test remain in the lower part of the configuration panel. -->
     <div class="cfg-diagnostics">
   <div class="actions-row" style="margin-bottom:14px">
-    <button class="btn-primary" data-wui="test_open" onclick="testOpen()"></button>
+    <button class="btn-primary test-open-button" id="testOpenButton" type="button" aria-pressed="false" onclick="testOpen()"><span data-wui="test_open"></span><span class="test-open-action" id="testOpenAction"></span></button>
   </div>
   <table class="reg">
     <tr><td data-wui="battery"></td><td id="ubattery">—</td></tr>
-    <tr><td data-wui="impulse_measurement"></td><td id="usense">—</td></tr>
-    <tr><td data-wui="calibration_closed"></td><td id="ucalcontact">—</td></tr>
+    <tr><td data-wui="current_gap"></td><td id="usense">—</td></tr>
     <tr><td data-wui="calibration_open"></td><td id="ucalopen">—</td></tr>
     <tr><td data-wui="door_not_closed_boundary"></td><td id="ucontactraw">—</td></tr>
   </table>
@@ -393,28 +394,45 @@ async function inlineConfirm(key,message,action){let now=Date.now();if(pendingCo
 
 document.addEventListener('click',e=>{if(e.target.closest('button')&&window.BleLockHaptics)window.BleLockHaptics.tick()});
 
+let testActive=false,testKnown=false,testRequestPending=false,testLeaseRequest=null;
+function renderTestState(active){
+  testKnown=active!==null;testActive=active===true;
+  testOpenButton.classList.toggle('active',testActive);
+  testOpenButton.setAttribute('aria-pressed',String(testActive));
+  testOpenButton.disabled=!testKnown||testRequestPending;
+  testOpenAction.textContent=wui(testActive?'test_open_disable':'test_open_enable');
+  if(!testActive||!testKnown)usense.textContent='—';
+}
+
 async function loadStatus(){
   try{
     let s=await j('/api/status');
     verTxt.textContent=wui('version',{value:s.version});
     buildTxt.textContent=wui('build',{value:s.build});
     uptimeTxt.textContent=formatUptime(s.uptime_s);
+    renderTestState(s.test_open_active===true);
+    return s;
   }catch(e){
     verTxt.textContent=wui('version_unknown');
     uptimeTxt.textContent=wui('uptime_unknown');
     buildTxt.textContent=wui('state_unavailable',{error:uiError(e)});
+    renderTestState(null);
+    return null;
   }
+}
+function relativeRaw(raw,zero,calibrated){
+  return calibrated&&Number.isInteger(raw)&&raw>=0&&Number.isInteger(zero)&&zero>=0?String(raw-zero):'—';
 }
 async function loadUlp(){
   try{
     let u=await j('/api/ulp');
     ubattery.textContent=u.battery_mv>=0?wui('voltage',{value:(u.battery_mv/1000).toFixed(2)}):'—';
-    usense.textContent=u.sense_raw;
-    ucalcontact.textContent=u.calibration_contact_raw;
-    ucalopen.textContent=u.calibration_open_raw;
-    ucontactraw.textContent=u.contact_threshold_raw+' ('+u.contact_boundary_percent+'%)';
+    const calibrated=u.calibration_valid===true,zero=u.calibration_contact_raw;
+    usense.textContent=testKnown&&testActive&&!testRequestPending?relativeRaw(u.sense_raw,zero,calibrated):'—';
+    ucalopen.textContent=relativeRaw(u.calibration_open_raw,zero,calibrated);
+    ucontactraw.textContent=relativeRaw(u.contact_threshold_raw,zero,calibrated);
     ulpStatus.textContent=wui('updated');
-  }catch(e){ulpStatus.textContent=uiError(e)}
+  }catch(e){ubattery.textContent='—';usense.textContent='—';ucalopen.textContent='—';ucontactraw.textContent='—';ulpStatus.textContent=uiError(e)}
 }
 // Slider values map to the negative RSSI threshold expected by the API.
 function zoneSliderToRssi(){return -Number(pr.value)}
@@ -435,9 +453,10 @@ function renderMqttBrokerChoices(hosts){closeMqttBrokerList();mqttBrokerList.rep
 document.addEventListener('click',e=>{if(!mqttBrokerField.contains(e.target))closeMqttBrokerList()});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!mqttBrokerList.hidden){closeMqttBrokerList();mqttBrokerButton.focus()}});
 async function loadMqtt(){try{let c=await j('/api/mqtt');mHost.value=c.host;renderMqttBrokerChoices(c.broker_choices??[]);mSave.disabled=!!c.busy}catch(e){mSaved.textContent=uiError(e)}}
-async function refreshMqttBusy(){try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){}}
+async function refreshMqttBusy(){if(mqttSaveRunning)return;try{let c=await j('/api/mqtt');mSave.disabled=!!c.busy}catch(e){mSave.disabled=false}}
 // Remote unlock stays enabled; this field is not a user-configurable setting.
-async function saveMqtt(){let cfg={enabled:true,host:mHost.value.trim()};try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});await loadMqtt();mSaved.textContent=wui('saved');return true}catch(e){mSaved.textContent=uiError(e);return false}}
+let mqttSaveRunning=false;
+async function saveMqtt(){if(mqttSaveRunning)return false;const cfg={enabled:true,host:mHost.value.trim()};mqttSaveRunning=true;mSave.disabled=true;mHost.disabled=true;mqttBrokerButton.disabled=true;try{await j('/api/mqtt',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cfg)});if(!window.BleLockMqttConfig||!window.BleLockMqttConfig.saveBrokerHost(cfg.host))throw Error('WUI_E_APP_SYNC');mSaved.textContent=wui('saved');return true}catch(e){mSaved.textContent=uiError(e);return false}finally{mqttSaveRunning=false;mHost.disabled=false;mqttBrokerButton.disabled=mqttBrokerList.childElementCount===0;await refreshMqttBusy()}}
 async function loadWifi(){try{let c=await j('/api/wifi');wssid.value=c.ssid;wpass.value='';wauto.checked=c.auto_connect;wifiSaved.textContent=c.password_configured?wui('wifi_password_saved'):wui('wifi_password_not_set')}catch(e){wifiSaved.textContent=uiError(e)}}
 async function saveAutoConnect(){try{let q=new URLSearchParams({auto_connect:wauto.checked?'1':'0'});await j('/api/wifi/auto?'+q,{method:'POST'});autoSaved.textContent=wui('saved');setTimeout(()=>autoSaved.textContent='',2000)}catch(e){autoSaved.textContent=wui('save_error');throw e}}
 async function saveWifi(){try{let q=new URLSearchParams({ssid:wssid.value,password:wpass.value});await j('/api/wifi',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:q});await saveAutoConnect();wpass.value='';wifiSaved.textContent=wui('saved')}catch(e){wifiSaved.textContent=uiError(e)}}
@@ -446,7 +465,32 @@ function updateTimerAValue(){const value=wui('seconds',{value:(Number(ta.value)/
 function updateBeaconReopenProtectionValue(){const value=wui('seconds',{value:(Number(beaconReopenProtection.value)/1000).toFixed(1).replace('.',wui('decimal_separator'))});beaconReopenProtection.setAttribute('aria-valuetext',value);beaconReopenProtectionKnob.setAttribute('aria-valuetext',value)}
 let configSaveRunning=false;const configSavePendingKnobs=new Set();
 async function saveConfig(knobId){if(knobId)configSavePendingKnobs.add(knobId);if(configSaveRunning)return;configSaveRunning=true;try{while(configSavePendingKnobs.size){const changedKnobs=[...configSavePendingKnobs];configSavePendingKnobs.clear();let q=new URLSearchParams({phone_rssi_threshold:zoneSliderToRssi(),timer_a_ms:ta.value,beacon_reopen_protection_ms:beaconReopenProtection.value});await j('/api/config?'+q,{method:'POST'});changedKnobs.forEach(id=>document.getElementById(id)?.flashSavedValue())}}catch(e){configSavePendingKnobs.clear();showNotice(uiError(e),true)}finally{configSaveRunning=false}}
-async function testOpen(){try{await j('/api/lock/test',{method:'POST'});showNotice(wui('open_command_sent'))}catch(e){showNotice(uiError(e),true)}}
+async function testOpen(){
+  if(!testKnown||testRequestPending)return;
+  const desired=!testActive;
+  testRequestPending=true;testOpenButton.disabled=true;
+  if(!desired)usense.textContent='—';
+  try{
+    if(!desired&&testLeaseRequest)await testLeaseRequest.catch(()=>{});
+    await j('/api/lock/test?enabled='+(desired?'1':'0'),{method:'POST'});
+    let confirmed=false;
+    for(let attempt=0;attempt<20;attempt++){
+      await new Promise(resolve=>setTimeout(resolve,150));
+      const status=await loadStatus();
+      if(!status)throw Error('WUI_E_REQUEST');
+      if(status.test_open_active===desired){confirmed=true;break}
+    }
+    if(!confirmed)throw Error('WUI_E_REQUEST');
+  }catch(e){showNotice(uiError(e),true);await loadStatus()}
+  finally{testRequestPending=false;testOpenButton.disabled=!testKnown}
+}
+async function refreshTestLease(){
+  if(!testKnown||!testActive||testRequestPending||testLeaseRequest)return;
+  testLeaseRequest=j('/api/lock/test?enabled=1',{method:'POST'});
+  try{await testLeaseRequest}
+  catch(e){renderTestState(null);ulpStatus.textContent=uiError(e)}
+  finally{testLeaseRequest=null}
+}
 async function loadPairing(){try{let p=await j('/api/ble/registration');pairingButton.textContent=p.allowed?wui('pairing_remaining',{seconds:p.remaining_s}):wui('allow_phone_registration');pairingButton.title=''}catch(e){pairingButton.textContent=wui('pairing_offline');pairingButton.title=uiError(e)}}
 async function allowPairing(){try{await j('/api/ble/registration',{method:'POST'});await loadPairing();showNotice(wui('pairing_allowed'))}catch(e){showNotice(uiError(e),true)}}
 async function loadBonds(){try{let a=await j('/api/ble/bonds');bonds.innerHTML=a.map(b=>`<tr><td>${esc(b.name||wui('unnamed_phone'))}</td><td>${esc(b.address)}</td><td><button class="btn-danger" onclick='deleteBond(${JSON.stringify(b.address)})'>${wui('delete')}</button></td></tr>`).join('')||`<tr class="muted-row"><td colspan='3'>${wui('no_registered_phones')}</td></tr>`}catch(e){bonds.innerHTML=`<tr><td colspan='3'>${esc(uiError(e))}</td></tr>`}}
@@ -497,7 +541,7 @@ async function uploadFw(){
 let fastRefreshBusy=false,slowRefreshBusy=false;
 async function refreshFast(){if(fastRefreshBusy)return;fastRefreshBusy=true;try{await loadStatus();await loadUlp();await loadPairing()}finally{fastRefreshBusy=false}}
 async function refreshSlow(){if(slowRefreshBusy)return;slowRefreshBusy=true;try{await loadBonds()}finally{slowRefreshBusy=false}}
-async function initPage(){await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();resumeFwUpdate();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000)}
+async function initPage(){renderTestState(null);await loadConfig();await loadWifi();await loadMqtt();await refreshFast();await refreshSlow();resumeFwUpdate();setInterval(refreshFast,1000);setInterval(refreshSlow,3000);setInterval(refreshMqttBusy,2000);setInterval(refreshTestLease,2000)}
 window.initializeLocalizedPage=initPage;
 </script>
 </body>

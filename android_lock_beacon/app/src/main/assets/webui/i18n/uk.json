@@ -118,6 +118,7 @@
   "api.WUI_E_MQTT_TOO_LARGE": "Запит MQTT завеликий",
   "api.WUI_E_MQTT_INVALID_CONFIG": "Перевірте адресу брокера та налаштування MQTT",
   "api.WUI_E_MQTT_SAVE_FAILED": "Не вдалося зберегти MQTT",
+  "api.WUI_E_APP_SYNC": "Адресу збережено в замку, але не передано в застосунок",
   "api.WUI_E_MQTT_CONFIG_REQUIRED": "Збережіть коректні налаштування MQTT і дочекайтеся завершення поточної команди",
   "api.WUI_E_PHONE_ONLY_UPDATE": "Оновлення доступне лише з телефона",
   "api.WUI_E_OTA_FAILED": "Не вдалося встановити прошивку",

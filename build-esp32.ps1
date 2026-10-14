@@ -2,7 +2,7 @@
 param(
     [ValidateSet("build","fullclean","flash","monitor","flash-monitor")]
     [string]$Action = "build",
-    [ValidateSet("default","signed-dev","factory-test","release","finalize-existing")]
+    [ValidateSet("default","signed-dev","factory-test","release","finalize-existing","factory-usb")]
     [string]$Profile = "signed-dev",
     [string]$IdfVersion = "v5.4.4",
     [string]$Port = ""
@@ -10,7 +10,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-if ($Profile -in @("factory-test", "release", "finalize-existing") -and $Action -in @("flash", "flash-monitor")) {
+if ($Profile -in @("factory-test", "release", "finalize-existing", "factory-usb") -and $Action -in @("flash", "flash-monitor")) {
     throw "Фабричный профиль изменяет eFuse при первом запуске. Обычная прошивка запрещена; требуется отдельный согласованный фабричный этап."
 }
 
@@ -97,6 +97,9 @@ function Invoke-ProjectIdf {
         throw "Для профиля '$Profile' нужен закрытый ключ $SigningKey. Создайте его командой: idf.py secure-generate-signing-key $SigningKey"
         }
         $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.$Profile"
+        if ($Profile -in @("factory-test", "factory-usb")) {
+            $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.release;$ProjectRoot/sdkconfig.defaults.$Profile"
+        }
         if ($Profile -eq "factory-test") {
             $defaults = "$ProjectRoot/sdkconfig.defaults;$ProjectRoot/sdkconfig.defaults.release;$ProjectRoot/sdkconfig.defaults.factory-test"
         }

@@ -118,6 +118,7 @@
   "api.WUI_E_MQTT_TOO_LARGE": "The MQTT request is too large",
   "api.WUI_E_MQTT_INVALID_CONFIG": "Check the broker address and MQTT setting",
   "api.WUI_E_MQTT_SAVE_FAILED": "Could not save MQTT settings",
+  "api.WUI_E_APP_SYNC": "Адрас захаваны ў замку, але не перададзены ў праграму",
   "api.WUI_E_MQTT_CONFIG_REQUIRED": "Save valid MQTT settings and wait for the current command to finish",
   "api.WUI_E_PHONE_ONLY_UPDATE": "Firmware updates are available only from the phone",
   "api.WUI_E_OTA_FAILED": "Could not install firmware",

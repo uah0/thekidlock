@@ -29,6 +29,8 @@ esp_err_t lock_request_open(void);
 esp_err_t lock_request_arm_open(void);
 esp_err_t lock_request_manual_open(void);
 esp_err_t lock_request_test_open(void);
+esp_err_t lock_request_web_test_open(bool enabled);
+bool lock_control_web_test_active(void);
 esp_err_t lock_request_toggle_hold_open(void);
 esp_err_t lock_request_set_hold_open(bool enabled);
 esp_err_t lock_request_disable_auto_and_close(void);

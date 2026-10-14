@@ -42,6 +42,14 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
         }
     }
 
+    private inner class MqttBrokerBridge {
+        @JavascriptInterface
+        fun saveBrokerHost(host: String): Boolean {
+            if (!trustedPage) return false
+            return runCatching { InternetAccess(context).saveBrokerHost(host) }.getOrDefault(false)
+        }
+    }
+
     private inner class HapticsBridge {
         private var lastTickMs = 0L
 
@@ -158,6 +166,7 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
         webView.addJavascriptInterface(wizardSpeech, "BleLockWizardSpeech")
         webView.addJavascriptInterface(HapticsBridge(), "BleLockHaptics")
         webView.addJavascriptInterface(TransferBridge(), "BleLockFirmwareTransfer")
+        webView.addJavascriptInterface(MqttBrokerBridge(), "BleLockMqttConfig")
         if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         layout.addView(webView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(layout)
@@ -189,6 +198,7 @@ internal class LockWebUiDialog(private val activity: Activity, private val url: 
         webView.removeJavascriptInterface("BleLockWizardSpeech")
         webView.removeJavascriptInterface("BleLockHaptics")
         webView.removeJavascriptInterface("BleLockFirmwareTransfer")
+        webView.removeJavascriptInterface("BleLockMqttConfig")
         webView.stopLoading()
         webView.destroy()
         super.onStop()

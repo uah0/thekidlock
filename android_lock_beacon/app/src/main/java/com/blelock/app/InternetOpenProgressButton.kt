@@ -57,7 +57,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private val internetAccess = InternetAccess(context.applicationContext)
     private var brokerAddress = ""
     private val brokerChanges = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "sealed") post { refreshBrokerAddress() }
+        if (key == "sealed" || key == "broker_host") post { refreshBrokerAddress() }
     }
     private val rect = RectF()
     private val progressRect = RectF()
@@ -224,8 +224,30 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
-        setMeasuredDimension(resolveSize(minimumWidth, widthMeasureSpec),
-            resolveSize(suggestedMinimumHeight, heightMeasureSpec))
+        val measuredWidth = resolveSize(minimumWidth, widthMeasureSpec)
+        val desiredHeight = if (stage == InternetOpenStage.IDLE || statusShownAboveButton) {
+            val textWidth = (measuredWidth - dp(88f).toInt()).coerceAtLeast(1)
+            val layout = createIdleTextLayout(textWidth)
+            maxOf(suggestedMinimumHeight, layout.height + dp(16f).toInt())
+        } else suggestedMinimumHeight
+        setMeasuredDimension(measuredWidth, resolveSize(desiredHeight, heightMeasureSpec))
+    }
+
+    private fun createIdleTextLayout(textWidth: Int): android.text.StaticLayout {
+        val subtitlePaint = android.text.TextPaint(textPaint).apply { textSize *= 0.72f }
+        val address = TextUtils.ellipsize(brokerAddress.ifBlank { "—" }, subtitlePaint,
+            textWidth.toFloat(), TextUtils.TruncateAt.END)
+        val label = android.text.SpannableString("$idleLabel\n$address").apply {
+            setSpan(android.text.style.RelativeSizeSpan(0.72f), idleLabel.length + 1, length, 0)
+            setSpan(android.text.style.ForegroundColorSpan(context.getColor(R.color.secondary_text)), idleLabel.length + 1, length, 0)
+        }
+        val paint = android.text.TextPaint(textPaint).apply {
+            color = context.getColor(R.color.primary_text)
+            textAlign = Paint.Align.LEFT
+        }
+        return android.text.StaticLayout.Builder.obtain(label, 0, label.length, paint, textWidth)
+            .setAlignment(android.text.Layout.Alignment.ALIGN_CENTER)
+            .build()
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -250,19 +272,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             val iconTop = (height - dp(28f).toInt()) / 2
             icon.setBounds(dp(20f).toInt(), iconTop, dp(48f).toInt(), iconTop + dp(28f).toInt())
             icon.draw(canvas)
-            val subtitlePaint = android.text.TextPaint(textPaint).apply { textSize *= 0.72f }
-            val address = TextUtils.ellipsize(brokerAddress.ifBlank { "—" }, subtitlePaint,
-                (width - dp(88f)).coerceAtLeast(1f), TextUtils.TruncateAt.END)
-            val label = android.text.SpannableString("$idleLabel\n$address").apply {
-                setSpan(android.text.style.RelativeSizeSpan(0.72f), idleLabel.length + 1, length, 0)
-                setSpan(android.text.style.ForegroundColorSpan(context.getColor(R.color.secondary_text)), idleLabel.length + 1, length, 0)
-            }
-            val paint = android.text.TextPaint(textPaint).apply {
-                color = context.getColor(R.color.primary_text)
-                textAlign = Paint.Align.LEFT
-            }
-            val layout = android.text.StaticLayout.Builder.obtain(label, 0, label.length, paint,
-                (width - dp(88f).toInt()).coerceAtLeast(1)).build()
+            val layout = createIdleTextLayout((width - dp(88f).toInt()).coerceAtLeast(1))
             canvas.save()
             canvas.translate(dp(64f), (height - layout.height) / 2f)
             layout.draw(canvas)

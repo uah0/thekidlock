@@ -60,7 +60,7 @@ esp_err_t lock_ai_status_json(char *json, size_t capacity)
     ble_phone_get_status(&status);
     lock_feedback_t lock;
     lock_control_get_feedback(&lock);
-    if (!json || capacity < 640) return ESP_ERR_INVALID_SIZE;
+    if (!json || capacity < 704) return ESP_ERR_INVALID_SIZE;
     bool known = lock.valid && !lock.fault_flags &&
         (lock.state == LOCK_STATE_LOCKED || lock.state == LOCK_STATE_UNLOCKED);
     nvs_stats_t nvs_stats;
@@ -71,13 +71,14 @@ esp_err_t lock_ai_status_json(char *json, size_t capacity)
     int n = snprintf(json, capacity,
              "{\"version\":\"%s\",\"build\":\"%s\",\"open\":%s,\"hold_open\":%s,"
              "\"state\":\"%s\",\"locked\":%s,\"fault_flags\":%lu,"
-             "\"requested_open\":%s,\"close_rejected\":%s,\"connected\":%s,"
+             "\"requested_open\":%s,\"test_open_active\":%s,\"close_rejected\":%s,\"connected\":%s,"
              "\"encrypted\":%s,\"bonded\":%s,\"rssi\":%s,\"uptime_s\":%lld,\"stack_lock_bytes\":%u,\"stack_ble_bytes\":%u,\"stack_http_bytes\":%u,\"nvs_free_entries\":%d,\"calibration_required\":%s,\"rom_download_disabled\":%s}",
              APP_VERSION, APP_BUILD_TIMESTAMP,
              !known ? "null" : lock.state == LOCK_STATE_UNLOCKED ? "true" : "false",
              lock.hold_open ? "true" : "false", lock_control_feedback_name(&lock),
              known && lock.state == LOCK_STATE_LOCKED ? "true" : "false",
              (unsigned long)lock.fault_flags, lock.requested_open ? "true" : "false",
+             lock_control_web_test_active() ? "true" : "false",
              lock.close_rejected ? "true" : "false", status.connected ? "true" : "false",
              status.encrypted ? "true" : "false", status.bonded ? "true" : "false",
              rssi, (long long)(esp_timer_get_time() / 1000000),

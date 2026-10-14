@@ -39,6 +39,7 @@ import android.widget.AdapterView
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Toast
@@ -54,11 +55,6 @@ import androidx.core.content.ContextCompat
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import java.io.File
 import java.util.concurrent.Executors
-
-internal fun calculateMainActionButtonHeightPx(
-    availableHeightPx: Int, buttonCount: Int, minHeightPx: Int
-): Int = if (buttonCount <= 0) 0 else
-    (availableHeightPx / buttonCount).coerceAtLeast(minHeightPx)
 
 class MainActivity : Activity() {
     private enum class WebUiConnectionState {
@@ -804,7 +800,7 @@ class MainActivity : Activity() {
         val outerPadding = dp(16)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(outerPadding, dp(12), outerPadding, dp(12))
+            setPadding(outerPadding, dp(6), outerPadding, dp(6))
         }
 
         val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -814,16 +810,21 @@ class MainActivity : Activity() {
             setTypeface(typeface, Typeface.BOLD)
             setTextColor(getColor(R.color.primary_text))
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        header.addView(ImageView(this).apply {
+            setImageResource(R.drawable.thekidlock_characters)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(104), dp(76)))
         header.addView(android.widget.ImageButton(this).apply {
             setImageResource(R.drawable.ic_handoff_settings)
             background = selectableBackground()
             contentDescription = getString(R.string.application_settings)
             setHapticClickListener { showOptionsPage() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        root.addView(header, fullWidth().apply { bottomMargin = dp(20) })
+        root.addView(header, fullWidth().apply { bottomMargin = dp(8) })
 
         permissionButton = filledButton(R.string.grant_permissions) { requestMissingPermissions() }
-        root.addView(permissionButton, mainScreenControlParams(topMarginDp = 14))
+        root.addView(permissionButton, mainScreenControlParams(topMarginDp = 8))
 
         // Main controls intentionally resemble a simple industrial pendant:
         // large, well-separated tiles that are easy to hit with one hand.
@@ -835,18 +836,18 @@ class MainActivity : Activity() {
         manualKeepOpenButton = controlTile(R.string.mode_always_open) { toggleKeepOpenMode() }.apply {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_unlock, 0, 0, 0)
         }
-        accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 16))
+        accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 8))
         internetGroup = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setPadding(dp(8), dp(4), dp(8), dp(4))
             background = getDrawable(R.drawable.bg_internet_group)
             visibility = View.GONE
         }
-        accessCard.addView(internetGroup, controlTileParams(topMarginDp = 16))
+        accessCard.addView(internetGroup, controlTileParams(topMarginDp = 8))
         internetStatusPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setPadding(dp(8), dp(6), dp(8), dp(6))
             background = getDrawable(R.drawable.bg_handoff_card)
         }
         val statusBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -873,7 +874,7 @@ class MainActivity : Activity() {
             gravity = Gravity.CENTER
             setTextColor(getColor(R.color.primary_text))
         }
-        internetStatusPanel.addView(internetStatusLabel, fullWidth().apply { topMargin = dp(8) })
+        internetStatusPanel.addView(internetStatusLabel, fullWidth().apply { topMargin = dp(4) })
         internetGroup.addView(internetStatusPanel, controlTileParams())
         internetOpenButton = InternetOpenProgressButton(this).apply {
             setHapticClickListener {
@@ -900,13 +901,13 @@ class MainActivity : Activity() {
                 }
             }
         }
-        internetGroup.addView(internetOpenButton, controlTileParams(topMarginDp = 10))
+        internetGroup.addView(internetOpenButton, controlTileParams(topMarginDp = 6))
 
         revokeKeysButton = controlTile(R.string.revoke_keys) { openRemoteKeys() }.apply {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_revoke_key, 0, 0, 0)
             contentDescription = getString(R.string.revoke_keys)
         }
-        internetGroup.addView(revokeKeysButton, controlTileParams(topMarginDp = 10))
+        internetGroup.addView(revokeKeysButton, controlTileParams(topMarginDp = 6))
 
         hotspotOpenButton = WebUiProgressButton(this).apply {
             text = getString(R.string.control_settings)
@@ -918,10 +919,10 @@ class MainActivity : Activity() {
             compoundDrawablePadding = dp(16)
             minHeight = 0
             minWidth = 0
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            gravity = Gravity.CENTER
             maxLines = 4
             elevation = dp(4).toFloat()
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(20), dp(8), dp(20), dp(8))
             setHapticClickListener { openEspWebUi() }
             val settingsIcon = requireNotNull(getDrawable(R.drawable.ic_handoff_settings))
                 .mutate().apply { setTint(Color.BLACK) }
@@ -931,9 +932,9 @@ class MainActivity : Activity() {
         }
         hotspotOpenButton.isEnabled = true
         hotspotOpenButton.visibility = View.GONE
-        accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 16))
+        accessCard.addView(hotspotOpenButton, controlTileParams(topMarginDp = 8))
         accessCardView = accessCard
-        root.addView(accessCard, mainScreenControlParams().apply { bottomMargin = dp(24) })
+        root.addView(accessCard, mainScreenControlParams().apply { bottomMargin = dp(12) })
 
         // --- Admin container: everything that only appears once the lock exposes admin mode ---
         adminContainer = LinearLayout(this).apply {
@@ -1052,10 +1053,10 @@ class MainActivity : Activity() {
             setText(R.string.privacy_policy_button)
             minimumHeight = dp(48)
             textSize = 14f
-            gravity = Gravity.CENTER
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             setTextColor(getColor(R.color.accent_blue))
             paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
-            setPadding(dp(8), dp(12), dp(8), dp(12))
+            setPadding(dp(8), 0, dp(8), 0)
             isClickable = true
             isFocusable = true
             setHapticClickListener { showPrivacyPolicy() }
@@ -1109,7 +1110,7 @@ class MainActivity : Activity() {
             val appInfo = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
-                setPadding(dp(8), dp(4), dp(8), 0)
+                setPadding(dp(8), 0, dp(8), 0)
                 addView(TextView(this@MainActivity).apply {
                     text = getString(
                         R.string.app_version_release,
@@ -1144,8 +1145,10 @@ class MainActivity : Activity() {
             appInfo.addOnLayoutChangeListener { _, _, top, _, bottom, _, _, _, _ ->
                 val params = swipeRefresh.layoutParams as FrameLayout.LayoutParams
                 val footerHeight = bottom - top
-                if (params.bottomMargin != footerHeight) {
-                    params.bottomMargin = footerHeight
+                val footerLowering = dp(12)
+                val scrollBottomMargin = (footerHeight - footerLowering).coerceAtLeast(0)
+                if (params.bottomMargin != scrollBottomMargin) {
+                    params.bottomMargin = scrollBottomMargin
                     swipeRefresh.layoutParams = params
                 }
             }
@@ -1154,6 +1157,7 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM
             ))
+            appInfo.translationY = dp(12).toFloat()
             post { requestApplyInsets() }
         }
     }
@@ -1716,10 +1720,10 @@ class MainActivity : Activity() {
             compoundDrawablePadding = dp(16)
             minHeight = 0
             minWidth = 0
-            gravity = Gravity.CENTER_VERTICAL or Gravity.START
+            gravity = Gravity.CENTER
             maxLines = 4
             elevation = dp(4).toFloat()
-            setPadding(dp(20), dp(20), dp(20), dp(20))
+            setPadding(dp(20), dp(8), dp(20), dp(8))
         }
 
     private fun controlTileParams(topMarginDp: Int = 0) =
@@ -1736,7 +1740,7 @@ class MainActivity : Activity() {
         heightPx
     ).apply {
         val availableWidth = resources.displayMetrics.widthPixels - 2 * dp(16)
-        val sideMargin = (availableWidth * 0.1f).toInt()
+        val sideMargin = (availableWidth * 0.06f).toInt()
         leftMargin = sideMargin
         rightMargin = sideMargin
         topMargin = dp(topMarginDp)
@@ -1763,46 +1767,95 @@ class MainActivity : Activity() {
         val permissionLp = permissionButton.layoutParams as? LinearLayout.LayoutParams ?: return
         val headerLp = header.layoutParams as? LinearLayout.LayoutParams ?: return
         val accessLp = accessCardView.layoutParams as? LinearLayout.LayoutParams ?: return
+        val accessChildren = (0 until accessCardView.childCount)
+            .map { accessCardView.getChildAt(it) }
+            .filter { it.visibility == View.VISIBLE }
         val visibleTiles = (0 until accessCardView.childCount)
             .map { accessCardView.getChildAt(it) }
             .filter { it.visibility == View.VISIBLE && it !== internetGroup } +
             if (internetGroup.visibility == View.VISIBLE) listOf(internetOpenButton, revokeKeysButton)
             else emptyList()
-        val count = visibleTiles.size + if (permissionButton.visibility == View.VISIBLE) 1 else 0
-        if (count == 0) return
-        val tileMargins = visibleTiles.sumOf {
-            (it.layoutParams as? LinearLayout.LayoutParams)?.topMargin ?: 0
+        val heightCandidates = visibleTiles +
+            if (permissionButton.visibility == View.VISIBLE) listOf(permissionButton) else emptyList()
+        if (heightCandidates.isEmpty()) return
+        val verticalButtonPadding = when {
+            mainScrollView.height < dp(600) -> 0
+            mainScrollView.height < dp(680) -> dp(4)
+            else -> dp(8)
         }
-        val adminHeight = if (root.childCount > 3 && root.getChildAt(3).visibility == View.VISIBLE)
-            root.getChildAt(3).height else 0
-        val fixed = root.paddingTop + root.paddingBottom + header.height + headerLp.bottomMargin +
+        heightCandidates.filterIsInstance<Button>().forEach { button ->
+            val contentGravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            if (button.gravity != contentGravity) button.gravity = contentGravity
+            if (button.paddingTop != verticalButtonPadding || button.paddingBottom != verticalButtonPadding) {
+                button.setPadding(button.paddingLeft, verticalButtonPadding,
+                    button.paddingRight, verticalButtonPadding)
+            }
+        }
+        val minimumHeights = heightCandidates.map { view ->
+            val width = view.width.takeIf { it > 0 } ?:
+                (accessCardView.width - accessCardView.paddingLeft - accessCardView.paddingRight)
+            if (width > 0) {
+                view.measure(
+                    View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+                    View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                )
+            }
+            val minimumTouchHeight = dp(48)
+            maxOf(minimumTouchHeight, view.measuredHeight)
+        }
+        val accessChildMargins = accessChildren.sumOf { view ->
+            val lp = view.layoutParams as? LinearLayout.LayoutParams
+            (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+        }
+        val adminHeight = if (root.getChildAt(3).visibility == View.VISIBLE)
+            root.getChildAt(3).height +
+                ((root.getChildAt(3).layoutParams as? LinearLayout.LayoutParams)?.let {
+                    it.topMargin + it.bottomMargin
+                } ?: 0)
+        else 0
+        val internetFixedHeight = if (internetGroup.visibility == View.VISIBLE) {
+            internetGroup.paddingTop + internetGroup.paddingBottom + internetStatusPanel.height +
+                ((internetStatusPanel.layoutParams as? LinearLayout.LayoutParams)?.let {
+                    it.topMargin + it.bottomMargin
+                } ?: 0) + heightCandidates.filter { it.parent === internetGroup }.sumOf { view ->
+                    val lp = view.layoutParams as? LinearLayout.LayoutParams
+                    (lp?.topMargin ?: 0) + (lp?.bottomMargin ?: 0)
+                }
+        } else 0
+        val fixedHeight = root.paddingTop + root.paddingBottom +
+            header.height + headerLp.topMargin + headerLp.bottomMargin +
             (if (permissionButton.visibility == View.VISIBLE)
                 permissionLp.topMargin + permissionLp.bottomMargin else 0) +
             accessLp.topMargin + accessLp.bottomMargin +
-            accessCardView.paddingTop + accessCardView.paddingBottom + tileMargins + adminHeight +
-            if (internetGroup.visibility == View.VISIBLE)
-                internetGroup.paddingTop + internetGroup.paddingBottom + internetStatusPanel.height +
-                (internetStatusPanel.layoutParams as LinearLayout.LayoutParams).topMargin +
-                (internetGroup.layoutParams as LinearLayout.LayoutParams).topMargin
-            else 0
-        val available = (mainScrollView.height - fixed).coerceAtLeast(0)
-        val target = calculateMainActionButtonHeightPx(available, count, dp(64))
-        if (target == 0) return
-        mainActionButtonHeightPx = target
-        fun setHeight(view: View) {
-            val lp = view.layoutParams ?: return
-            if (lp.height != target) {
-                lp.height = target
+            accessCardView.paddingTop + accessCardView.paddingBottom + accessChildMargins +
+            internetFixedHeight + adminHeight
+        val availableForButtons = (mainScrollView.height - fixedHeight).coerceAtLeast(0)
+        val freeBottomSpace = (availableForButtons - minimumHeights.sum()).coerceAtLeast(0)
+        val extraPerButton = freeBottomSpace / heightCandidates.size
+        val extraRemainder = freeBottomSpace % heightCandidates.size
+        val targetHeights = minimumHeights.mapIndexed { index, minimum ->
+            minimum + extraPerButton + if (index < extraRemainder) 1 else 0
+        }
+        mainActionButtonHeightPx = targetHeights.maxOrNull() ?: dp(48)
+        heightCandidates.zip(targetHeights).forEachIndexed { index, (view, targetHeight) ->
+            val lp = view.layoutParams ?: return@forEachIndexed
+            if (lp.height != targetHeight) {
+                lp.height = targetHeight
                 view.layoutParams = lp
             }
-            if (view is Button) view.minHeight = 0
+            if (view is Button) {
+                view.minHeight = 0
+                val extraHeight = (targetHeight - minimumHeights[index]).coerceAtLeast(0)
+                val extraTop = extraHeight / 2
+                val extraBottom = extraHeight - extraTop
+                view.setPadding(view.paddingLeft, verticalButtonPadding + extraTop,
+                    view.paddingRight, verticalButtonPadding + extraBottom)
+            }
         }
-        if (permissionButton.visibility == View.VISIBLE) setHeight(permissionButton)
-        visibleTiles.forEach(::setHeight)
         if (::appSettingsSystemButton.isInitialized) {
             val lp = appSettingsSystemButton.layoutParams as? LinearLayout.LayoutParams
-            if (lp != null && lp.height != target) {
-                lp.height = target
+            if (lp != null && lp.height != mainActionButtonHeightPx) {
+                lp.height = mainActionButtonHeightPx
                 appSettingsSystemButton.layoutParams = lp
             }
         }
@@ -2117,6 +2170,7 @@ class MainActivity : Activity() {
         manualKeepOpenButton.isEnabled = ui.alwaysOpenEnabled
         manualOpenButton.alpha = if (ui.autoEnabled) 1f else 0.38f
         manualKeepOpenButton.alpha = if (ui.alwaysOpenEnabled) 1f else 0.38f
+        if (::mainScrollView.isInitialized) mainScrollView.post { updateMainActionButtonHeights() }
     }
 
     private fun setManualButtonBlue(button: Button, blue: Boolean) {

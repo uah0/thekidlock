@@ -39,6 +39,8 @@ static atomic_bool s_connected,s_busy,s_probe,s_test_requested,s_clock_needed;
 static atomic_bool s_home_ip_reconnect;
 static _Atomic(const char*) s_status="disabled",s_test_status="idle";
 static char s_mac[18],s_command_topic[64],s_result_topic[64];
+static char s_state_topic[64];
+static char s_offline_message[440];
 static char s_admin_topic[64],s_admin_reply_topic[64];
 static char s_legacy_command_topic[64],s_legacy_state_topic[64];
 static message_t s_fragment;
@@ -218,9 +220,57 @@ static void publish_result(void)
     int id=esp_mqtt_client_enqueue(s_client,s_result_topic,sealed,0,1,0,true);
     if(id>=0){s_ack_id=id;s_ack_open=opened;s_published_us=now;}
 }
+static void publish_state(void)
+{
+    static char previous[80];
+    static int64_t published_us;
+    if(!s_client||!cloud_commands_connected()||atomic_load(&s_probe)||!cloud_link_time_ready()){
+        published_us=0;
+        return;
+    }
+    char phone[14];uint8_t key[16]={0};
+    if(ble_phone_owner_id(phone)!=ESP_OK||!ble_phone_is_owner(phone)||
+       ble_phone_mqtt_key(phone,key)!=ESP_OK)goto done;
+    lock_feedback_t f;lock_control_get_feedback(&f);
+    int64_t now=esp_timer_get_time();
+    bool valid=f.valid&&f.sampled_at_us>0&&now-f.sampled_at_us<=1000000;
+    const char *state=!valid?"unknown":f.fault_flags||f.state==LOCK_STATE_FAULT?"fault":
+        f.state==LOCK_STATE_LOCKED?"locked":f.state==LOCK_STATE_UNLOCKED?"unlocked":"unknown";
+    const char *door=!valid?"unknown":f.state==LOCK_STATE_LOCKED?"closed":
+        f.plate_state==PLATE_FAR?"open":f.plate_state==PLATE_CONTACT?"closed":"unknown";
+    char snapshot[80],payload[160],sealed[440];
+    snprintf(snapshot,sizeof(snapshot),"%s|%s|%" PRIu32,state,door,f.fault_flags);
+    if(published_us&&now-published_us<5000000&&!strcmp(snapshot,previous))goto done;
+    int n=snprintf(payload,sizeof(payload),
+        "{\"time\":\"%" PRId64 "\",\"state\":\"%s\",\"door\":\"%s\",\"faults\":%" PRIu32 "}",
+        now_s(),state,door,f.fault_flags);
+    if(n<=0||n>=(int)sizeof(payload)||
+       !cloud_crypto_seal(key,s_mac,"state",phone,payload,sealed,sizeof(sealed)))goto done;
+    if(esp_mqtt_client_enqueue(s_client,s_state_topic,sealed,0,1,1,true)<0)goto done;
+    strcpy(previous,snapshot);published_us=now;
+done:
+    mbedtls_platform_zeroize(key,sizeof(key));
+}
+static void prepare_offline_message(void)
+{
+    char phone[14];uint8_t key[16]={0};char payload[128];
+    s_offline_message[0]=0;
+    if(ble_phone_owner_id(phone)!=ESP_OK||!ble_phone_is_owner(phone)||
+       ble_phone_mqtt_key(phone,key)!=ESP_OK)goto done;
+    int n=snprintf(payload,sizeof(payload),
+        "{\"time\":\"%" PRId64 "\",\"state\":\"offline\",\"door\":\"unknown\",\"faults\":0}",now_s());
+    if(n>0&&n<(int)sizeof(payload))
+        cloud_crypto_seal(key,s_mac,"state",phone,payload,s_offline_message,sizeof(s_offline_message));
+done:
+    mbedtls_platform_zeroize(key,sizeof(key));
+}
 static void stop_client(void)
 {
-    if(s_client){esp_mqtt_client_stop(s_client);esp_mqtt_client_destroy(s_client);s_client=NULL;}
+    if(s_client){
+        if(cloud_commands_connected()&&!atomic_load(&s_probe)&&s_offline_message[0])
+            esp_mqtt_client_publish(s_client,s_state_topic,s_offline_message,0,1,1);
+        esp_mqtt_client_stop(s_client);esp_mqtt_client_destroy(s_client);s_client=NULL;
+    }
     atomic_store(&s_connected,false);s_fragment_valid=false;s_ack_id=-1;xQueueReset(s_messages);
     cloud_admin_reset();
 }
@@ -243,16 +293,21 @@ static void command_task(void *arg)
                 atomic_store(&s_probe,!cfg.enabled);
                 snprintf(s_command_topic,sizeof(s_command_topic),"%s/0yF",active.prefix);
                 snprintf(s_result_topic,sizeof(s_result_topic),"%s/7qK",active.prefix);
+                snprintf(s_state_topic,sizeof(s_state_topic),"%s/4sR",active.prefix);
                 snprintf(s_admin_topic,sizeof(s_admin_topic),"%s/5mN",active.prefix);
                 snprintf(s_admin_reply_topic,sizeof(s_admin_reply_topic),"%s/2bL",active.prefix);
                 event_log_add("MQTT: broker %s",active.host);
                 snprintf(s_legacy_command_topic,sizeof(s_legacy_command_topic),"locks/%s/command",active.prefix+1);
                 snprintf(s_legacy_state_topic,sizeof(s_legacy_state_topic),"locks/%s/state",active.prefix+1);
+                if(cfg.enabled)prepare_offline_message();else s_offline_message[0]=0;
                 esp_mqtt_client_config_t c={
                     .broker.address.hostname=active.host,.broker.address.port=MQTT_PORT,
                     .broker.address.transport=MQTT_TRANSPORT_OVER_TCP,
                     .credentials.client_id=active.client_id,
                     .session.protocol_ver=MQTT_PROTOCOL_V_3_1_1,.session.keepalive=25,
+                    .session.last_will.topic=s_offline_message[0]?s_state_topic:NULL,
+                    .session.last_will.msg=s_offline_message[0]?s_offline_message:NULL,
+                    .session.last_will.qos=1,.session.last_will.retain=1,
                     /* Preserve QoS1 commands across the phone/home Wi-Fi switch.
                      * HMAC timestamps and persisted IDs still bound execution. */
                     .session.disable_clean_session=cfg.enabled,
@@ -278,7 +333,7 @@ static void command_task(void *arg)
             }
             while(xQueueReceive(s_messages,&m,0)==pdTRUE);
         }
-        feedback();if(enabled)publish_result();
+        feedback();if(enabled){publish_result();publish_state();}
     }
 }
 esp_err_t cloud_commands_init(void)
