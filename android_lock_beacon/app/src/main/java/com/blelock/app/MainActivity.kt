@@ -80,6 +80,16 @@ class MainActivity : Activity() {
     private lateinit var manualOpenButton: Button
     private lateinit var manualKeepOpenButton: Button
     private lateinit var internetOpenButton: InternetOpenProgressButton
+    private lateinit var internetGroup: LinearLayout
+    private lateinit var internetStatusPanel: LinearLayout
+    private lateinit var internetStatusLabel: TextView
+    private lateinit var internetStatusSegments: List<View>
+    private var internetSnapshot: InternetLockStatus.Snapshot? = null
+    private var internetStatusAfterWebUiSeconds = 0L
+    private var internetCommandStage: InternetOpenStage? = null
+    private var internetCommandInFlight = false
+    private var internetCloseCountdownUntilMs = 0L
+    private var internetStatusStarted = false
     private lateinit var revokeKeysButton: Button
     private lateinit var hotspotStatusView: TextView
     private lateinit var hotspotWebUrlView: TextView
@@ -147,6 +157,12 @@ class MainActivity : Activity() {
     private var webUiBlePermissionPending = false
     private var webUiConnectionState = WebUiConnectionState.IDLE
     private val signalHandler = Handler(Looper.getMainLooper())
+    private val internetStatusTick = object : Runnable {
+        override fun run() {
+            if (::internetStatusPanel.isInitialized) renderInternetStatus()
+            if (activityResumed) signalHandler.postDelayed(this, 1000)
+        }
+    }
     private val firmwareCheckRunnable: Runnable = object : Runnable {
         override fun run() {
             if (firmwarePrefetchRunning) return
@@ -654,6 +670,7 @@ class MainActivity : Activity() {
         showLegacyBleLocationNoticeIfNeeded()
         if (webUiBrowserOpen && lockWebUiDialog?.isShowing != true) {
             webUiBrowserOpen = false
+            resetInternetStatusAfterWebUi()
             if (localHotspotReservation != null) {
                 closeLocalHotspot("Возврат из Web UI", completedNormally = true)
             } else {
@@ -664,11 +681,19 @@ class MainActivity : Activity() {
         refreshSettingsUpdateLabel()
         signalHandler.removeCallbacks(firmwareCheckRunnable)
         signalHandler.post(firmwareCheckRunnable)
+        internetSnapshot = null
+        renderInternetStatus()
+        startInternetStatus()
+        signalHandler.removeCallbacks(internetStatusTick)
+        signalHandler.post(internetStatusTick)
     }
 
     override fun onPause() {
         super.onPause()
         activityResumed = false
+        InternetLockStatus.stop()
+        internetStatusStarted = false
+        signalHandler.removeCallbacks(internetStatusTick)
         unregisterBackgroundReceiver()
     }
 
@@ -811,27 +836,77 @@ class MainActivity : Activity() {
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_unlock, 0, 0, 0)
         }
         accessCard.addView(manualKeepOpenButton, controlTileParams(topMarginDp = 16))
+        internetGroup = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = getDrawable(R.drawable.bg_internet_group)
+            visibility = View.GONE
+        }
+        accessCard.addView(internetGroup, controlTileParams(topMarginDp = 16))
+        internetStatusPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            background = getDrawable(R.drawable.bg_handoff_card)
+        }
+        val statusBar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val segmentColors = intArrayOf(
+            getColor(R.color.secondary_text), 0xFFFFC107.toInt(),
+            getColor(R.color.switch_track_on), 0xFFFFC107.toInt(), getColor(R.color.danger_red)
+        )
+        internetStatusSegments = (0 until 5).map { index ->
+            View(this).apply {
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    cornerRadius = dp(4).toFloat()
+                    setColor(segmentColors[index])
+                }
+                alpha = 0.2f
+                statusBar.addView(this, LinearLayout.LayoutParams(0, dp(9), 1f).apply {
+                    if (index > 0) leftMargin = dp(3)
+                })
+            }
+        }
+        internetStatusPanel.addView(statusBar, fullWidth())
+        internetStatusLabel = TextView(this).apply {
+            text = getString(R.string.internet_status_waiting)
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(getColor(R.color.primary_text))
+        }
+        internetStatusPanel.addView(internetStatusLabel, fullWidth().apply { topMargin = dp(8) })
+        internetGroup.addView(internetStatusPanel, controlTileParams())
         internetOpenButton = InternetOpenProgressButton(this).apply {
-            visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
             setHapticClickListener {
                 val started = InternetOpen.start(this@MainActivity,
-                    { stage, door, closeRemainingMs -> runOnUiThread { internetOpenButton.showStage(stage, door, closeRemainingMs) } },
+                    { stage, door, closeRemainingMs -> runOnUiThread {
+                        internetOpenButton.showStage(stage, door, closeRemainingMs)
+                        internetCommandStage = stage
+                        internetCloseCountdownUntilMs = if (stage == InternetOpenStage.UNLOCKED &&
+                            closeRemainingMs != null && closeRemainingMs > 0)
+                            android.os.SystemClock.elapsedRealtime() + closeRemainingMs else 0L
+                        renderInternetStatus()
+                    } },
                     { message -> runOnUiThread { Toast.makeText(this@MainActivity, message, Toast.LENGTH_LONG).show() } },
-                    { })
+                    { runOnUiThread {
+                        internetCommandInFlight = false
+                        renderInternetStatus()
+                    } })
                 if (started) {
+                    internetCommandInFlight = true
+                    internetCommandStage = InternetOpenStage.CONNECTING
+                    renderInternetStatus()
                     internetOpenButton.showStage(InternetOpenStage.CONNECTING)
                     isEnabled = false
                 }
             }
         }
-        accessCard.addView(internetOpenButton, controlTileParams(topMarginDp = 16))
+        internetGroup.addView(internetOpenButton, controlTileParams(topMarginDp = 10))
 
         revokeKeysButton = controlTile(R.string.revoke_keys) { openRemoteKeys() }.apply {
-            visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
             setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_handoff_revoke_key, 0, 0, 0)
             contentDescription = getString(R.string.revoke_keys)
         }
-        accessCard.addView(revokeKeysButton, controlTileParams(topMarginDp = 16))
+        internetGroup.addView(revokeKeysButton, controlTileParams(topMarginDp = 10))
 
         hotspotOpenButton = WebUiProgressButton(this).apply {
             text = getString(R.string.control_settings)
@@ -1152,16 +1227,16 @@ class MainActivity : Activity() {
                 if (Build.VERSION.SDK_INT < 33) recreate()
             }
         }
-        content.addView(languages, mainScreenControlParams())
+        content.addView(languages, optionsPageControlParams())
 
-        appSettingsSystemButton = filledButton(R.string.app_options_settings) {
+        appSettingsSystemButton = controlTile(R.string.app_options_settings) {
             startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:$packageName")))
         }
         content.addView(appSettingsSystemButton,
-            mainScreenControlParams(heightPx = mainActionButtonHeightPx, topMarginDp = 16))
+            optionsPageControlParams(heightPx = mainActionButtonHeightPx, topMarginDp = 16))
 
-        content.addView(createBeaconPowerControl(), topSpacedFullWidth(20))
+        content.addView(createBeaconPowerControl(), optionsPageControlParams(topMarginDp = 20))
         content.addView(TextView(this).apply {
             text = "https://github.com/uah0/thekidlock"
             textSize = 14f
@@ -1171,7 +1246,7 @@ class MainActivity : Activity() {
             setHapticClickListener {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/uah0/thekidlock")))
             }
-        }, mainScreenControlParams(topMarginDp = 24))
+        }, optionsPageControlParams(topMarginDp = 24))
         setContentView(root)
         root.post { root.requestApplyInsets() }
     }
@@ -1519,10 +1594,13 @@ class MainActivity : Activity() {
         if (!::manualOpenButton.isInitialized || !::manualKeepOpenButton.isInitialized) return
         renderWorkingMode()
         if (::internetOpenButton.isInitialized) {
-            internetOpenButton.visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
-        }
-        if (::revokeKeysButton.isInitialized) {
-            revokeKeysButton.visibility = if (settings.ownerAccessConfirmed) View.VISIBLE else View.GONE
+            if (settings.ownerAccessConfirmed) startInternetStatus()
+            else if (internetStatusStarted) {
+                InternetLockStatus.stop()
+                internetStatusStarted = false
+                internetSnapshot = null
+            }
+            renderInternetStatus()
         }
         if (::hotspotOpenButton.isInitialized) {
             val settingsEnabled = settings.ownerAccessConfirmed
@@ -1532,6 +1610,83 @@ class MainActivity : Activity() {
             refreshSettingsUpdateLabel()
         }
         if (::mainScrollView.isInitialized) mainScrollView.post { updateMainActionButtonHeights() }
+    }
+
+    private fun startInternetStatus() {
+        if (!activityResumed || !settings.ownerAccessConfirmed || internetStatusStarted) return
+        internetStatusStarted = true
+        InternetLockStatus.start(this) { snapshot ->
+            runOnUiThread {
+                if (activityResumed && settings.ownerAccessConfirmed) {
+                    if (snapshot != null && snapshot.state != "offline" &&
+                        snapshot.publishedAtSeconds < internetStatusAfterWebUiSeconds) return@runOnUiThread
+                    internetSnapshot = snapshot
+                    if (!internetCommandInFlight) renderInternetStatus()
+                }
+            }
+        }
+    }
+
+    private fun resetInternetStatusAfterWebUi() {
+        // A retained snapshot from before the Web UI session may still be fresh.
+        internetStatusAfterWebUiSeconds = System.currentTimeMillis() / 1000 + 1
+        InternetLockStatus.stop()
+        internetStatusStarted = false
+        internetSnapshot = null
+        renderInternetStatus()
+        startInternetStatus()
+    }
+
+    private fun renderInternetStatus() {
+        if (!::internetStatusPanel.isInitialized) return
+        val snapshot = internetSnapshot?.takeIf {
+            System.currentTimeMillis() - it.receivedAtMs in 0..15000
+        }
+        val showGroup = activityResumed && settings.ownerAccessConfirmed &&
+            snapshot != null && snapshot.state != "offline"
+        val targetVisibility = if (showGroup) View.VISIBLE else View.GONE
+        if (internetGroup.visibility != targetVisibility) {
+            internetGroup.visibility = targetVisibility
+            if (::mainScrollView.isInitialized) mainScrollView.post { updateMainActionButtonHeights() }
+        }
+        val stage = if (internetCommandInFlight) internetCommandStage else when {
+            snapshot == null -> null
+            snapshot.faults != 0L || snapshot.state == "fault" -> InternetOpenStage.ERROR
+            snapshot.state == "locked" && snapshot.door == "closed" -> InternetOpenStage.CLOSED
+            snapshot.door == "open" -> InternetOpenStage.DOOR_OPEN
+            snapshot.state == "unlocked" -> InternetOpenStage.UNLOCKED
+            else -> null
+        }
+        val count = when (stage) {
+            InternetOpenStage.CONNECTING, InternetOpenStage.COMMAND_SENT -> 1
+            InternetOpenStage.BROKER_ACCEPTED -> 2
+            InternetOpenStage.UNLOCKED -> 3
+            InternetOpenStage.DOOR_OPEN -> 4
+            InternetOpenStage.CLOSED, InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> 5
+            else -> 0
+        }
+        internetStatusSegments.forEachIndexed { index, view ->
+            view.alpha = if (stage == InternetOpenStage.ERROR) {
+                if (index == 4) 1f else 0.2f
+            } else if (if (internetCommandInFlight) index < count else count >= 3 && index == count - 1)
+                1f else 0.2f
+        }
+        internetStatusLabel.setText(when (stage) {
+            InternetOpenStage.CONNECTING, InternetOpenStage.COMMAND_SENT -> R.string.internet_command_sent
+            InternetOpenStage.BROKER_ACCEPTED -> R.string.internet_broker_accepted
+            InternetOpenStage.UNLOCKED -> R.string.internet_unlocked
+            InternetOpenStage.DOOR_OPEN -> R.string.internet_door_opened
+            InternetOpenStage.CLOSED, InternetOpenStage.CLOSED_WITHOUT_DOOR_OPEN -> R.string.internet_closed_locked
+            InternetOpenStage.ERROR -> R.string.internet_status_fault
+            else -> R.string.internet_status_waiting
+        })
+        if (internetCommandInFlight && stage == InternetOpenStage.UNLOCKED &&
+            internetCloseCountdownUntilMs > 0L) {
+            val seconds = internetCloseCountdownSeconds(
+                internetCloseCountdownUntilMs - android.os.SystemClock.elapsedRealtime())
+            if (seconds > 0) internetStatusLabel.text =
+                "${internetStatusLabel.text} · ${getString(R.string.internet_close_timer_unit, seconds)}"
+        }
     }
 
     private fun commandLabel(title: Int, subtitle: Int): CharSequence {
@@ -1588,6 +1743,17 @@ class MainActivity : Activity() {
         gravity = Gravity.CENTER_HORIZONTAL
     }
 
+    private fun optionsPageControlParams(
+        heightPx: Int = ViewGroup.LayoutParams.WRAP_CONTENT,
+        topMarginDp: Int = 0
+    ) = LinearLayout.LayoutParams(
+        ((resources.displayMetrics.widthPixels - 2 * dp(16)).coerceAtLeast(0) * 0.8f).toInt(),
+        heightPx
+    ).apply {
+        topMargin = dp(topMarginDp)
+        gravity = Gravity.CENTER_HORIZONTAL
+    }
+
     private fun updateMainActionButtonHeights() {
         if (!::mainScrollView.isInitialized || mainScrollView.height <= 0 ||
             !::permissionButton.isInitialized || !::accessCardView.isInitialized) return
@@ -1598,7 +1764,10 @@ class MainActivity : Activity() {
         val headerLp = header.layoutParams as? LinearLayout.LayoutParams ?: return
         val accessLp = accessCardView.layoutParams as? LinearLayout.LayoutParams ?: return
         val visibleTiles = (0 until accessCardView.childCount)
-            .map { accessCardView.getChildAt(it) }.filter { it.visibility == View.VISIBLE }
+            .map { accessCardView.getChildAt(it) }
+            .filter { it.visibility == View.VISIBLE && it !== internetGroup } +
+            if (internetGroup.visibility == View.VISIBLE) listOf(internetOpenButton, revokeKeysButton)
+            else emptyList()
         val count = visibleTiles.size + if (permissionButton.visibility == View.VISIBLE) 1 else 0
         if (count == 0) return
         val tileMargins = visibleTiles.sumOf {
@@ -1610,7 +1779,12 @@ class MainActivity : Activity() {
             (if (permissionButton.visibility == View.VISIBLE)
                 permissionLp.topMargin + permissionLp.bottomMargin else 0) +
             accessLp.topMargin + accessLp.bottomMargin +
-            accessCardView.paddingTop + accessCardView.paddingBottom + tileMargins + adminHeight
+            accessCardView.paddingTop + accessCardView.paddingBottom + tileMargins + adminHeight +
+            if (internetGroup.visibility == View.VISIBLE)
+                internetGroup.paddingTop + internetGroup.paddingBottom + internetStatusPanel.height +
+                (internetStatusPanel.layoutParams as LinearLayout.LayoutParams).topMargin +
+                (internetGroup.layoutParams as LinearLayout.LayoutParams).topMargin
+            else 0
         val available = (mainScrollView.height - fixed).coerceAtLeast(0)
         val target = calculateMainActionButtonHeightPx(available, count, dp(64))
         if (target == 0) return
@@ -2284,6 +2458,7 @@ class MainActivity : Activity() {
             }.apply {
                 setOnDismissListener {
                     webUiBrowserOpen = false
+                    resetInternetStatusAfterWebUi()
                     if (localHotspotReservation != null) closeLocalHotspot("Закрыт Web UI", completedNormally = true)
                     else finishWebUiIpRequest()
                 }

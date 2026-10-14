@@ -26,12 +26,19 @@ class AutoOpenWidget : AppWidgetProvider() {
                 .setAction(BleLockService.ACTION_AUTO_OPEN_TOGGLE)
             val click = PendingIntent.getForegroundService(context, 0, intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            val openApp = PendingIntent.getActivity(context, 0,
+                Intent(context, MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val views = RemoteViews(context.packageName, R.layout.widget_auto_open)
             views.setImageViewResource(R.id.widget_icon,
                 if (enabled) R.drawable.ic_launcher_open else R.drawable.ic_launcher)
             views.setContentDescription(R.id.widget_button, context.getString(
                 if (enabled) R.string.widget_auto_enabled else R.string.widget_auto_enable))
             views.setOnClickPendingIntent(R.id.widget_button, click)
+            listOf(R.id.widget_corner_top_left, R.id.widget_corner_top_right,
+                R.id.widget_corner_bottom_left, R.id.widget_corner_bottom_right).forEach {
+                views.setOnClickPendingIntent(it, openApp)
+            }
             ids.forEach { manager.updateAppWidget(it, views) }
         }
     }

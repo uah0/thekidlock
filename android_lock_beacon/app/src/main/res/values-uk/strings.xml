@@ -104,6 +104,8 @@
     <string name="internet_door_opened">Двері відчинилися</string>
     <string name="internet_closed_locked">Двері зачинено та замкнено</string>
     <string name="internet_error">Помилка відкриття через інтернет</string>
+    <string name="internet_status_waiting">Очікування актуального стану замка</string>
+    <string name="internet_status_fault">Помилка замка</string>
     <string name="done">Готово</string>
     <string name="hotspot_lock_connecting">Замок отримав параметри мережі та підключається до Wi-Fi</string>
     <string name="firmware_update_started">Оновлення прошивки розпочалося</string>

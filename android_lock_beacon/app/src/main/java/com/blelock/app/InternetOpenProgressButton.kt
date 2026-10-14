@@ -88,6 +88,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
     private val idleColor = context.getColor(R.color.card_background)
     private val inactiveColor = context.getColor(R.color.stepper_pill_background)
     private val idleLabel = context.getString(R.string.open_via_internet)
+    private val statusShownAboveButton = true
     private var stage = InternetOpenStage.IDLE
     private var displayedStage = InternetOpenStage.IDLE
     private var blinkOn = false
@@ -153,7 +154,8 @@ class InternetOpenProgressButton @JvmOverloads constructor(
             SystemClock.elapsedRealtime() + closeRemainingMs
         } else 0L
         if (closeCountdownUntilMs > 0) handler.postDelayed(closeCountdownTicker, 0L)
-        contentDescription = if (next == InternetOpenStage.IDLE) idleDescription() else descriptionFor(next, doorState)
+        contentDescription = if (statusShownAboveButton || next == InternetOpenStage.IDLE)
+            idleDescription() else descriptionFor(next, doorState)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) stateDescription = contentDescription
 
         when (next) {
@@ -240,7 +242,7 @@ class InternetOpenProgressButton @JvmOverloads constructor(
         canvas.clipPath(outerPath)
         fillPaint.color = idleColor
         canvas.drawRect(rect, fillPaint)
-        if (stage == InternetOpenStage.IDLE) {
+        if (statusShownAboveButton || stage == InternetOpenStage.IDLE) {
             canvas.restore()
             borderPaint.color = 0xFFDCE5F0.toInt()
             canvas.drawRoundRect(rect, radius, radius, borderPaint)

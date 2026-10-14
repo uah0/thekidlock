@@ -11,5 +11,21 @@
             android:layout_width="match_parent" android:layout_height="match_parent"
             android:scaleType="fitCenter"
             android:src="@drawable/ic_launcher" android:contentDescription="@null" />
+        <FrameLayout android:id="@+id/widget_corner_top_left"
+            android:layout_width="24dp" android:layout_height="24dp"
+            android:layout_gravity="top|start"
+            android:contentDescription="@string/app_name" />
+        <FrameLayout android:id="@+id/widget_corner_top_right"
+            android:layout_width="24dp" android:layout_height="24dp"
+            android:layout_gravity="top|end"
+            android:contentDescription="@string/app_name" />
+        <FrameLayout android:id="@+id/widget_corner_bottom_left"
+            android:layout_width="24dp" android:layout_height="24dp"
+            android:layout_gravity="bottom|start"
+            android:contentDescription="@string/app_name" />
+        <FrameLayout android:id="@+id/widget_corner_bottom_right"
+            android:layout_width="24dp" android:layout_height="24dp"
+            android:layout_gravity="bottom|end"
+            android:contentDescription="@string/app_name" />
     </FrameLayout>
 </LinearLayout>

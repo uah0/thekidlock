@@ -104,6 +104,8 @@
     <string name="internet_door_opened">Door opened</string>
     <string name="internet_closed_locked">Door closed and locked</string>
     <string name="internet_error">Internet opening failed</string>
+    <string name="internet_status_waiting">Warte auf aktuellen Schlossstatus</string>
+    <string name="internet_status_fault">Schlossfehler</string>
     <string name="done">Fertig</string>
     <string name="hotspot_lock_connecting">Lock received network settings and is connecting to Wi-Fi</string>
     <string name="firmware_update_started">Firmware update started</string>
