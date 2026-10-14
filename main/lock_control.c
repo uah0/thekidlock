@@ -175,10 +175,23 @@ static void lock_task(void *arg)
             }
             switch (event) {
                 case LOCK_EVENT_INTERNET_OPEN: {
-                    ulp_diagnostics_t feedback; bool current_valid=ulp_controller_read_diagnostics(&feedback);
+                    lock_feedback_t feedback;
+                    lock_control_get_feedback(&feedback);
+                    int64_t request_us = esp_timer_get_time();
+                    bool current_valid = feedback.valid && feedback.sampled_at_us > 0 &&
+                        request_us >= feedback.sampled_at_us &&
+                        request_us - feedback.sampled_at_us <= 300000;
+                    bool can_open = current_valid && !feedback.fault_flags &&
+                        !feedback.calibrating && !feedback.calibration_required;
+                    if (!current_valid) {
+                        ulp_diagnostics_t fresh;
+                        current_valid = ulp_controller_read_diagnostics(&fresh);
+                        can_open = current_valid && !fresh.fault_flags &&
+                            !fresh.calibration_mode && fresh.calibration_valid;
+                    }
                     s_internet_phase=5; s_internet_started_us=esp_timer_get_time();
                     xQueueReset(s_events);
-                    if(!current_valid || feedback.fault_flags || feedback.calibration_mode || !feedback.calibration_valid) { atomic_store(&s_internet_pending,false); break; }
+                    if(!can_open) { atomic_store(&s_internet_pending,false); break; }
                     s_mode_persisted=save_hold_open(false)==ESP_OK;
                     if(!s_mode_persisted) { atomic_store(&s_internet_pending,false); break; }
                     hold_open=false; s_hold_open=false; open_armed=false; test_open_active=false;
@@ -487,6 +500,7 @@ static void refresh_feedback(int64_t now_ms)
         s_feedback.calibrating = d.calibration_mode != 0;
         s_feedback.calibration_required = !d.calibration_valid;
         s_feedback.valid = true;
+        s_feedback.sampled_at_us = now_ms * 1000;
         s_feedback_time_ms = now_ms;
     } else if (now_ms - s_feedback_time_ms > 1000) {
         s_feedback.valid = false;
@@ -494,7 +508,6 @@ static void refresh_feedback(int64_t now_ms)
     }
     s_feedback.hold_open = s_hold_open;
     s_feedback.requested_open = s_requested_open;
-    s_feedback.sampled_at_us = now_ms * 1000;
     s_feedback.cloud_command_id = s_cloud_id;
     s_feedback.internet_phase = s_internet_phase;
     s_feedback.internet_started_us=s_internet_started_us;

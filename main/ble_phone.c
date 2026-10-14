@@ -1141,7 +1141,7 @@ static int central_service_request_cb(uint16_t handle, const struct ble_gatt_err
         central_disconnect(handle);
         return 0;
     }
-    if (request[1] != PHONE_SERVICE_HOLD && request[1] != PHONE_SERVICE_HOME_WIFI && !central_service_owner(handle)) {
+    if (request[1] != PHONE_SERVICE_HOME_WIFI && !central_service_owner(handle)) {
         event_log_add("BLE service: owner access denied for settings request");
         if (request[1] & PHONE_SERVICE_HOLD) central_service_send_result(handle, 1);
         else central_disconnect(handle);

@@ -3,6 +3,13 @@
 #include <string.h>
 #include "esp_mac.h"
 #include "nvs.h"
+#include "freertos/FreeRTOS.h"
+
+static portMUX_TYPE s_config_cache_lock = portMUX_INITIALIZER_UNLOCKED;
+static mqtt_config_t s_config_cache;
+static uint32_t s_config_cache_generation;
+static bool s_config_cache_valid;
+
 static esp_err_t identity(mqtt_config_t *cfg)
 {
     uint8_t mac[6];
@@ -12,9 +19,8 @@ static esp_err_t identity(mqtt_config_t *cfg)
     snprintf(cfg->prefix,sizeof(cfg->prefix),"j%02x%02x%02x%02x%02x%02x",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     return ESP_OK;
 }
-esp_err_t mqtt_config_get(mqtt_config_t *out)
+static esp_err_t load_config(mqtt_config_t *out)
 {
-    if (!out) return ESP_ERR_INVALID_ARG;
     memset(out,0,sizeof(*out)); out->version=2;
     nvs_handle_t h;
     esp_err_t err=nvs_open("mqtt",NVS_READONLY,&h);
@@ -28,6 +34,40 @@ esp_err_t mqtt_config_get(mqtt_config_t *out)
     if (!out->host[0]) strcpy(out->host,"broker.emqx.io");
     err=identity(out);
     return err==ESP_OK ? mqtt_config_validate(out) : err;
+}
+
+esp_err_t mqtt_config_get(mqtt_config_t *out)
+{
+    if (!out) return ESP_ERR_INVALID_ARG;
+    for (;;) {
+        portENTER_CRITICAL(&s_config_cache_lock);
+        if (s_config_cache_valid) {
+            *out = s_config_cache;
+            portEXIT_CRITICAL(&s_config_cache_lock);
+            return ESP_OK;
+        }
+        uint32_t generation = s_config_cache_generation;
+        portEXIT_CRITICAL(&s_config_cache_lock);
+
+        mqtt_config_t loaded;
+        esp_err_t err = load_config(&loaded);
+        if (err != ESP_OK) return err;
+
+        portENTER_CRITICAL(&s_config_cache_lock);
+        if (generation == s_config_cache_generation) {
+            s_config_cache = loaded;
+            s_config_cache_valid = true;
+            *out = loaded;
+            portEXIT_CRITICAL(&s_config_cache_lock);
+            return ESP_OK;
+        }
+        if (s_config_cache_valid) {
+            *out = s_config_cache;
+            portEXIT_CRITICAL(&s_config_cache_lock);
+            return ESP_OK;
+        }
+        portEXIT_CRITICAL(&s_config_cache_lock);
+    }
 }
 esp_err_t mqtt_config_validate(const mqtt_config_t *cfg)
 {
@@ -53,6 +93,12 @@ esp_err_t mqtt_config_save(const mqtt_config_t *config)
         }
         if(err==ESP_OK) err=nvs_commit(h);
         nvs_close(h);
+    }
+    if (err == ESP_OK) {
+        portENTER_CRITICAL(&s_config_cache_lock);
+        s_config_cache_valid = false;
+        s_config_cache_generation++;
+        portEXIT_CRITICAL(&s_config_cache_lock);
     }
     return err;
 }

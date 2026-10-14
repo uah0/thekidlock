@@ -252,11 +252,11 @@ static void command_task(void *arg)
                     .broker.address.hostname=active.host,.broker.address.port=MQTT_PORT,
                     .broker.address.transport=MQTT_TRANSPORT_OVER_TCP,
                     .credentials.client_id=active.client_id,
-                    .session.protocol_ver=MQTT_PROTOCOL_V_3_1_1,.session.keepalive=60,
+                    .session.protocol_ver=MQTT_PROTOCOL_V_3_1_1,.session.keepalive=25,
                     /* Preserve QoS1 commands across the phone/home Wi-Fi switch.
                      * HMAC timestamps and persisted IDs still bound execution. */
                     .session.disable_clean_session=cfg.enabled,
-                    .network.reconnect_timeout_ms=30000,.network.timeout_ms=8000,
+                    .network.reconnect_timeout_ms=3000,.network.timeout_ms=8000,
                     .task.stack_size=6144,.task.priority=2,.buffer.size=1024,.outbox.limit=4096
                 };
                 retry=esp_timer_get_time()+30000000;s_status="connecting";s_client=esp_mqtt_client_init(&c);
@@ -268,15 +268,17 @@ static void command_task(void *arg)
         }
         if(s_dirty)s_dirty=save_record()!=ESP_OK;
         message_t m;
-        while(xQueueReceive(s_messages,&m,0)==pdTRUE){
-            if(m.ack_id)puback(m.ack_id);
-            else if(cfg.enabled&&m.admin){
-                cloud_admin_handle(m.text,s_client,s_mac,s_admin_reply_topic);
+        if(xQueueReceive(s_messages,&m,pdMS_TO_TICKS(100))==pdTRUE){
+            do {
+                if(m.ack_id)puback(m.ack_id);
+                else if(cfg.enabled&&m.admin){
+                    cloud_admin_handle(m.text,s_client,s_mac,s_admin_reply_topic);
+                }
+                else if(cfg.enabled)accept(m.text);
             }
-            else if(cfg.enabled)accept(m.text);
+            while(xQueueReceive(s_messages,&m,0)==pdTRUE);
         }
         feedback();if(enabled)publish_result();
-        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 esp_err_t cloud_commands_init(void)

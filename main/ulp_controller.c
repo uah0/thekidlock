@@ -412,9 +412,13 @@ bool ulp_controller_read_state(lock_state_t *state, uint32_t *faults,
 bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
 {
     if (!s_initialized || !out) return false;
-    for (int tries = 0; tries < 4; tries++) {
+    const int64_t deadline_us = esp_timer_get_time() + 50000;
+    while (esp_timer_get_time() < deadline_us) {
         uint32_t before = ulp_sequence;
-        if (before & 1u) continue;
+        if (before & 1u) {
+            vTaskDelay(1);
+            continue;
+        }
         __sync_synchronize();
         ulp_diagnostics_t snapshot = {
             .lock_state = (lock_state_t)ulp_lock_state,
@@ -465,6 +469,7 @@ bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
             *out = snapshot;
             return true;
         }
+        vTaskDelay(1);
     }
     return false;
 }
