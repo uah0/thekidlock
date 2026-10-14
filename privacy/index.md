@@ -80,4 +80,4 @@ The current version will be published on this page with an updated revision date
 
 For privacy questions or support:
 
-**support@thekid.uk**
+
