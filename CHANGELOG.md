@@ -1,5 +1,21 @@
 # Журнал текущей версии
 
+## Буфер диагностических импульсов ULP — 17.10.2026
+
+Перевёл сбор импульсов с общего текстового журнала на собственное 256-записное
+кольцо во внутренней RAM ESP32. ULP ведёт отдельный sequence диагностических
+импульсов; задача повышенного приоритета опрашивает стабильный снимок каждый тик.
+Добавлен независимый курсорный API `/api/agent/pulses`; обычные логи не вытесняют
+импульсы. Агент сохраняет последовательность, значения и состояния в CSV,
+повторяет чтение после временной сетевой ошибки и предупреждает при разрыве sequence,
+пропуске на стороне ESP32 или переполнении буфера. При отключённом компьютере
+ёмкость ограничена 256 импульсами. Алгоритм замка, OTA, BLE и Web UI не менялись.
+Изменены `components/ai_agent/include/ai_agent.h`, `components/ai_agent/ai_agent.c`,
+`components/ai_agent/ai_agent_http.c`, `main/ulp/main.c`, `main/ulp/shared_state.h`,
+`main/main.c`, `main/ulp_controller.c`, `main/ulp_controller.h`,
+`main/lock_ai_adapter.c`, `device-agent.ps1`, `AUDIT.md`, `CHANGELOG.md`,
+`TEST_REPORT.md`, `BUILD_NUMBER`.
+
 ## Быстрое переподключение и RAM-кэш MQTT — 13.10.2026
 
 Keepalive MQTT уменьшен с 60 до 25 секунд, reconnect timeout — с 30 до 3 секунд.

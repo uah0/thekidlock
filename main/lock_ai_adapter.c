@@ -262,6 +262,12 @@ static size_t monitor_provider(uint64_t since, char *out, size_t capacity,
     (void)ctx;
     return remote_log_read(since, out, capacity, next, oldest, dropped);
 }
+static size_t pulses_provider(uint64_t since, char *out, size_t capacity,
+    uint64_t *next, uint64_t *oldest, bool *dropped, void *ctx)
+{
+    (void)ctx;
+    return ulp_controller_read_pulse_records(since, out, capacity, next, oldest, dropped);
+}
 static void prepare_restart(void *ctx)
 {
     (void)ctx;
@@ -363,6 +369,7 @@ esp_err_t lock_ai_adapter_init(void)
         .firmware_version = APP_VERSION, .device_id = device_id,
         .build = APP_BUILD_TIMESTAMP, .legacy_capabilities = legacy,
         .status = status_provider, .events = events_provider, .monitor = monitor_provider,
+        .pulses = pulses_provider,
         .prepare_restart = prepare_restart, .ota_complete = ota_complete,
     };
     if (!core_initialized) {

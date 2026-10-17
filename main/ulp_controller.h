@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stddef.h>
 #include "esp_err.h"
 #include "shared_state.h"
 
@@ -55,7 +56,23 @@ typedef struct {
     uint32_t event_sequence;
 } ulp_diagnostics_t;
 
+typedef struct {
+    uint64_t cursor;
+    uint32_t pulse_sequence;
+    uint32_t measurement_counter;
+    uint32_t pulse_actual_us;
+    int32_t baseline_raw, vbat_raw, sense_raw, delta_raw;
+    uint32_t normalized_feature;
+    uint32_t plate_state, fault_flags, lock_state, fsm_state;
+    uint32_t event_flags, requested_command;
+    uint32_t source_dropped_before;
+} ulp_pulse_record_t;
+
 bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out);
+/* Copies each newly published ULP pulse into a dedicated RAM ring. */
+bool ulp_controller_capture_latest_pulse(void);
+size_t ulp_controller_read_pulse_records(uint64_t since, char *out, size_t capacity,
+    uint64_t *next, uint64_t *oldest, bool *dropped);
 esp_err_t ulp_controller_calibration_start(void);
 void ulp_controller_calibration_cancel(void);
 esp_err_t ulp_controller_calibration_verify(void);

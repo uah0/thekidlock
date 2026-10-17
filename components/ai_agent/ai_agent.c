@@ -134,6 +134,7 @@ esp_err_t ai_agent_capabilities_json(char *out, size_t cap)
         cJSON_AddBoolToObject(f, "status", ai_agent_config.status != NULL) &&
         cJSON_AddBoolToObject(f, "events", ai_agent_config.events != NULL) &&
         cJSON_AddBoolToObject(f, "monitor", ai_agent_config.monitor != NULL) &&
+        cJSON_AddBoolToObject(f, "pulses", ai_agent_config.pulses != NULL) &&
         cJSON_AddBoolToObject(f, "restart", true) && cJSON_AddBoolToObject(f, "ota", true);
     for (size_t i = 0; ok && i < count; i++) {
         cJSON *cmd = cJSON_CreateObject();

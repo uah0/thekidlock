@@ -28,6 +28,7 @@ typedef struct {
     const char *const *legacy_capabilities;
     ai_agent_json_fn status, events;
     ai_agent_log_fn monitor;
+    ai_agent_log_fn pulses;
     void (*prepare_restart)(void *ctx);
     void (*ota_complete)(void *ctx);
     void *ctx;

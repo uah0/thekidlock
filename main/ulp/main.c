@@ -17,6 +17,7 @@ volatile uint32_t plate_state = PLATE_UNKNOWN;
 volatile uint32_t fault_flags = 0;
 volatile uint32_t measurement_counter = 0;
 volatile uint32_t pulse_actual_us = 0;
+volatile uint32_t pulse_sequence = 0;
 volatile uint32_t command_sequence = 0;
 volatile uint32_t command = ULP_CMD_UNLOCK;
 volatile uint32_t command_ack_sequence = 0;
@@ -259,6 +260,7 @@ static uint32_t measure_plate(void)
     fsm_state = faults ? LOCK_FSM_FAULT : LOCK_FSM_UNLOCKED_SCAN;
     measurement_counter++;
     pulse_actual_us = ULP_PULSE_US;
+    pulse_sequence++;
     command_ack_sequence = accepted_command_sequence;
 
     if (faults) {
@@ -367,6 +369,7 @@ static void open_from_locked(bool scan_after_open)
 
 static int run_iteration(void)
 {
+    pulse_actual_us = 0;
     setup_gate();
     if (calibration_mode) {
         gate_low();

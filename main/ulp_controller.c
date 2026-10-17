@@ -2,10 +2,13 @@
 #include "lock_control.h"
 
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include "driver/gpio.h"
 #include "esp_adc/adc_oneshot.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "esp_private/adc_share_hw_ctrl.h"
 #include "hal/adc_ll.h"
 #include "ulp_main.h"
@@ -30,6 +33,12 @@ static int64_t s_calibration_deadline_us;
 static uint32_t s_calibration_timeout_count;
 static uint8_t s_sense_gpio = APP_DEFAULT_SHUNT_GPIO;
 static adc_channel_t s_sense_adc_channel = ADC_SENSE_CHANNEL_DEFAULT;
+#define ULP_PULSE_RING_CAPACITY 256
+static ulp_pulse_record_t s_pulse_ring[ULP_PULSE_RING_CAPACITY];
+static uint64_t s_pulse_written;
+static uint32_t s_last_pulse_sequence;
+static uint32_t s_source_pulse_dropped;
+static portMUX_TYPE s_pulse_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static bool shunt_gpio_to_adc_channel(uint8_t gpio, adc_channel_t *channel)
 {
@@ -472,4 +481,110 @@ bool ulp_controller_read_diagnostics(ulp_diagnostics_t *out)
         vTaskDelay(1);
     }
     return false;
+}
+
+bool ulp_controller_capture_latest_pulse(void)
+{
+    if (!s_initialized) return false;
+    const uint32_t before = ulp_sequence;
+    if (before & 1U) return false;
+    __sync_synchronize();
+    const uint32_t measurement = ulp_measurement_counter;
+    const uint32_t pulse_us = ulp_pulse_actual_us;
+    const uint32_t pulse_sequence = ulp_pulse_sequence;
+    ulp_diagnostics_t d = {
+        .lock_state = (lock_state_t)ulp_lock_state,
+        .fsm_state = (lock_fsm_state_t)ulp_fsm_state,
+        .plate_state = (plate_state_t)ulp_plate_state,
+        .fault_flags = ulp_fault_flags,
+        .event_flags = ulp_event_flags,
+        .baseline_raw = ulp_baseline_raw,
+        .vbat_raw = ulp_vbat_raw,
+        .sense_raw = ulp_sense_raw,
+        .delta_raw = ulp_delta_raw,
+        .normalized_feature = ulp_normalized_feature,
+        .requested_command = ulp_command,
+        .measurement_counter = measurement,
+        .pulse_actual_us = pulse_us,
+    };
+    __sync_synchronize();
+    const uint32_t after = ulp_sequence;
+    if (before != after || (after & 1U) || !pulse_us || pulse_sequence == s_last_pulse_sequence)
+        return false;
+    const uint32_t missed = pulse_sequence - s_last_pulse_sequence - 1;
+    portENTER_CRITICAL(&s_pulse_lock);
+    s_source_pulse_dropped += missed;
+    const uint64_t cursor = s_pulse_written++;
+    s_pulse_ring[cursor % ULP_PULSE_RING_CAPACITY] = (ulp_pulse_record_t){
+        .cursor = cursor,
+        .pulse_sequence = pulse_sequence,
+        .measurement_counter = measurement,
+        .pulse_actual_us = pulse_us,
+        .baseline_raw = d.baseline_raw,
+        .vbat_raw = d.vbat_raw,
+        .sense_raw = d.sense_raw,
+        .delta_raw = d.delta_raw,
+        .normalized_feature = d.normalized_feature,
+        .plate_state = d.plate_state,
+        .fault_flags = d.fault_flags,
+        .lock_state = d.lock_state,
+        .fsm_state = d.fsm_state,
+        .event_flags = d.event_flags,
+        .requested_command = d.requested_command,
+        .source_dropped_before = s_source_pulse_dropped,
+    };
+    s_last_pulse_sequence = pulse_sequence;
+    portEXIT_CRITICAL(&s_pulse_lock);
+    return true;
+}
+
+size_t ulp_controller_read_pulse_records(uint64_t since, char *out, size_t capacity,
+    uint64_t *next, uint64_t *oldest, bool *dropped)
+{
+    if (!out || !capacity) return 0;
+    portENTER_CRITICAL(&s_pulse_lock);
+    uint64_t cursor = s_pulse_written > ULP_PULSE_RING_CAPACITY
+        ? s_pulse_written - ULP_PULSE_RING_CAPACITY : 0;
+    const uint64_t total = s_pulse_written;
+    bool lost = since < cursor || since > total;
+    if (lost) since = cursor;
+    portEXIT_CRITICAL(&s_pulse_lock);
+
+    size_t used = 0;
+    while (since < total && used < capacity) {
+        ulp_pulse_record_t record;
+        portENTER_CRITICAL(&s_pulse_lock);
+        const uint64_t current_oldest = s_pulse_written > ULP_PULSE_RING_CAPACITY
+            ? s_pulse_written - ULP_PULSE_RING_CAPACITY : 0;
+        if (since < current_oldest) {
+            lost = true;
+            since = current_oldest;
+        }
+        record = s_pulse_ring[since % ULP_PULSE_RING_CAPACITY];
+        portEXIT_CRITICAL(&s_pulse_lock);
+        if (record.cursor != since) { lost = true; break; }
+        int n = snprintf(out + used, capacity - used,
+            "%lu,%lu,%lu,%ld,%ld,%ld,%ld,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+            (unsigned long)record.pulse_sequence,
+            (unsigned long)record.measurement_counter,
+            (unsigned long)record.pulse_actual_us,
+            (long)record.baseline_raw, (long)record.vbat_raw,
+            (long)record.sense_raw, (long)record.delta_raw,
+            (unsigned long)record.normalized_feature,
+            (unsigned long)record.plate_state, (unsigned long)record.fault_flags,
+            (unsigned long)record.lock_state, (unsigned long)record.fsm_state,
+            (unsigned long)record.event_flags, (unsigned long)record.requested_command,
+            (unsigned long)record.source_dropped_before);
+        if (n < 0 || (size_t)n >= capacity - used) break;
+        used += (size_t)n;
+        since++;
+    }
+    portENTER_CRITICAL(&s_pulse_lock);
+    const uint64_t final_oldest = s_pulse_written > ULP_PULSE_RING_CAPACITY
+        ? s_pulse_written - ULP_PULSE_RING_CAPACITY : 0;
+    portEXIT_CRITICAL(&s_pulse_lock);
+    if (next) *next = since;
+    if (oldest) *oldest = final_oldest;
+    if (dropped) *dropped = lost;
+    return used;
 }

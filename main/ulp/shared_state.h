@@ -144,6 +144,7 @@ extern volatile uint32_t plate_state;
 extern volatile uint32_t fault_flags;
 extern volatile uint32_t measurement_counter;
 extern volatile uint32_t pulse_actual_us;
+extern volatile uint32_t pulse_sequence;
 
 // Command mailbox. The main CPU writes command first and increments
 // command_sequence last. ULP acknowledges the accepted sequence.

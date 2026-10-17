@@ -153,6 +153,46 @@ static esp_err_t monitor(httpd_req_t *req)
     free(text);
     return err;
 }
+static esp_err_t pulses(httpd_req_t *req)
+{
+    if (ai_agent_http_guard(req, "pulses") != ESP_OK) return ESP_OK;
+    if (!ai_agent_config.pulses) return ai_agent_http_error(req, "501 Not Implemented", "No pulse provider");
+    uint64_t since = 0;
+    char query[64] = {0}, value[32] = {0};
+    if (httpd_req_get_url_query_len(req) &&
+        (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
+         httpd_query_key_value(query, "since", value, sizeof(value)) != ESP_OK))
+        return ai_agent_http_error(req, "400 Bad Request", "Invalid cursor");
+    if (value[0]) {
+        char *end;
+        errno = 0;
+        since = strtoull(value, &end, 10);
+        if (errno || *end || value[0] == '-')
+            return ai_agent_http_error(req, "400 Bad Request", "Invalid cursor");
+    }
+    const size_t capacity = 16 * 1024;
+    char *text = malloc(capacity);
+    if (!text) return ai_agent_http_error(req, "500 Internal Server Error", "No memory");
+    uint64_t next = 0, oldest = 0;
+    bool dropped = false;
+    size_t length = ai_agent_config.pulses(since, text, capacity, &next, &oldest,
+                                           &dropped, ai_agent_config.ctx);
+    if (length > capacity) {
+        free(text);
+        return ai_agent_http_error(req, "500 Internal Server Error", "Invalid provider length");
+    }
+    char cursor[32], oldest_text[32];
+    snprintf(cursor, sizeof(cursor), "%llu", (unsigned long long)next);
+    snprintf(oldest_text, sizeof(oldest_text), "%llu", (unsigned long long)oldest);
+    httpd_resp_set_type(req, "text/csv; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    httpd_resp_set_hdr(req, "X-Pulse-Cursor", cursor);
+    httpd_resp_set_hdr(req, "X-Pulse-Oldest", oldest_text);
+    httpd_resp_set_hdr(req, "X-Pulse-Dropped", dropped ? "1" : "0");
+    esp_err_t err = httpd_resp_send(req, text, length);
+    free(text);
+    return err;
+}
 esp_err_t ai_agent_register_http_handlers(httpd_handle_t server)
 {
     if (!server) return ESP_ERR_INVALID_ARG;
@@ -164,6 +204,7 @@ esp_err_t ai_agent_register_http_handlers(httpd_handle_t server)
         {.uri="/api/agent/status", .method=HTTP_GET, .handler=status},
         {.uri="/api/agent/events", .method=HTTP_GET, .handler=events},
         {.uri="/api/agent/monitor", .method=HTTP_GET, .handler=monitor},
+        {.uri="/api/agent/pulses", .method=HTTP_GET, .handler=pulses},
         {.uri="/api/agent/command", .method=HTTP_POST, .handler=command},
         {.uri="/api/agent/restart", .method=HTTP_POST, .handler=ai_agent_http_restart},
         {.uri="/api/agent/ota", .method=HTTP_POST, .handler=ai_agent_http_ota},

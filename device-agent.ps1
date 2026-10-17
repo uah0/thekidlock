@@ -5,7 +5,7 @@ param(
                  'watch', 'open', 'close', 'auto', 'always-open',
                  'toggle-hold-open', 'arm-open', 'disable-auto-close',
                  'ulp-lock', 'ulp-unlock', 'ulp-gate-test', 'ulp-gate-test-stop', 'buzzer', 'diagnostics-on',
-                 'diagnostics-off', 'log', 'monitor', 'restart', 'flash')]
+                 'diagnostics-off', 'log', 'monitor', 'capture', 'restart', 'flash')]
     [string]$Action = 'snapshot',
     [Parameter(Position=1)]
     [string]$Operand = '',
@@ -17,7 +17,8 @@ param(
     [int]$IntervalMs = 500,
     [ValidateRange(1, 7)]
     [int]$BuzzerPattern = 1,
-    [string]$Firmware = ''
+    [string]$Firmware = '',
+    [string]$Output = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -208,6 +209,58 @@ switch ($Action) {
             if ($response.Content) { Write-Host -NoNewline $response.Content }
             $cursor = [uint64](@($response.Headers['X-Log-Cursor'])[0])
             Start-Sleep -Milliseconds ([Math]::Max(100, $IntervalMs))
+        }
+    }
+    'capture' {
+        $path = if ($Output) { $Output } else {
+            Join-Path (Get-Location) ("ulp-pulses-{0}.csv" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        }
+        $fullPath = [System.IO.Path]::GetFullPath($path)
+        $utf8 = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText($fullPath,
+            "captured_at,pulse_sequence,measurement_counter,pulse_us,baseline_raw,vbat_raw,sense_raw,delta_raw,normalized_feature,plate_state,fault_flags,lock_state,fsm_state,event_flags,command,source_dropped_before`r`n", $utf8)
+        Write-Host "Запись импульсов в $fullPath. Остановите Ctrl+C."
+        $cursor = [uint64]0
+        $lastSequence = [uint32]0
+        $warnedRingLoss = $false
+        $warnedSourceLoss = $false
+        while ($true) {
+            try {
+                do {
+                    $response = Invoke-WebRequest -Uri "$base/api/agent/pulses?since=$cursor" `
+                        -TimeoutSec 8
+                    if (@($response.Headers['X-Pulse-Dropped'])[0] -eq '1' -and !$warnedRingLoss) {
+                        Write-Warning 'Потеря: часть записей вышла за пределы кольца ESP32.'
+                        $warnedRingLoss = $true
+                    }
+                    $nextCursor = [uint64](@($response.Headers['X-Pulse-Cursor'])[0])
+                    foreach ($line in ([string]$response.Content -split "`n")) {
+                        $line = $line.Trim()
+                        if (!$line) { continue }
+                        $fields = $line.Split(',')
+                        if ($fields.Length -ne 15) { throw "Некорректная запись импульса: $line" }
+                        $sequence = [uint32]$fields[0]
+                        $sourceDropped = [uint32]$fields[14]
+                        if ($lastSequence -ne 0 -and $sequence -le $lastSequence) { continue }
+                        if (($lastSequence -ne 0 -and $sequence -ne [uint32]($lastSequence + 1)) -or
+                            $sourceDropped -gt 0) {
+                            if (!$warnedSourceLoss) {
+                                Write-Warning "Потеря импульсов источника обнаружена перед sequence=$sequence (source_dropped_before=$sourceDropped)."
+                                $warnedSourceLoss = $true
+                            }
+                        }
+                        $row = '{0},{1}' -f (Get-Date -Format 'o'), $line
+                        [System.IO.File]::AppendAllText($fullPath, "$row`r`n", $utf8)
+                        $lastSequence = $sequence
+                    }
+                    $cursor = $nextCursor
+                } while ([string]$response.Content.Length -ge 1024)
+            } catch {
+                Write-Warning "Временная ошибка связи с кольцом импульсов: $($_.Exception.Message). Повтор через 500 мс."
+                Start-Sleep -Milliseconds 500
+                continue
+            }
+            Start-Sleep -Milliseconds 50
         }
     }
     'restart' {

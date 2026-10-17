@@ -307,6 +307,15 @@ static void ulp_gate_diagnostic_task(void *arg)
     }
 }
 
+static void ulp_pulse_log_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        (void)ulp_controller_capture_latest_pulse();
+        vTaskDelay(1);
+    }
+}
+
 static unsigned close_failure_beep_count(uint32_t plate_state)
 {
     switch ((plate_state_t)plate_state) {
@@ -575,6 +584,8 @@ void app_main(void)
                                 4, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     ESP_ERROR_CHECK_WITHOUT_ABORT(xTaskCreate(ulp_gate_diagnostic_task, "ulp_gate_diag", 4096,
                                 NULL, 4, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK_WITHOUT_ABORT(xTaskCreate(ulp_pulse_log_task, "ulp_pulse_capture", 2048,
+                                NULL, 8, NULL) == pdPASS ? ESP_OK : ESP_ERR_NO_MEM);
     esp_err_t web_err = wifi_err == ESP_OK ? wifi_ota_start_web() : wifi_err;
     if (web_err != ESP_OK && web_err != ESP_ERR_INVALID_STATE) {
         ESP_LOGW(TAG, "Web UI start not scheduled: %s", esp_err_to_name(web_err));
