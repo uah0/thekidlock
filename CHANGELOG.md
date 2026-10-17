@@ -15,6 +15,9 @@
 `main/main.c`, `main/ulp_controller.c`, `main/ulp_controller.h`,
 `main/lock_ai_adapter.c`, `device-agent.ps1`, `AUDIT.md`, `CHANGELOG.md`,
 `TEST_REPORT.md`, `BUILD_NUMBER`.
+Опубликована прошивка 10.0.608: https://github.com/uah0/thekidlock/releases/tag/esp-v10.0.608.
+Android 1.0.446 уже являлся последней опубликованной версией; публичный APK проверен
+по SHA-256 без создания повторного релиза.
 
 ## Быстрое переподключение и RAM-кэш MQTT — 13.10.2026
 
